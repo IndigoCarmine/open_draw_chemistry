@@ -610,6 +610,32 @@ pub fn solve_distance(
     })
 }
 
+/// Atoms that should be bent or tetrahedral but sit on a straight line: C, N or O with two to
+/// four neighbours, all by single bonds, with two neighbours at more than 170°. (Linear
+/// centres are real only with a multiple bond — alkynes, nitriles, allenes — or around
+/// hypervalent atoms, which are left alone.) A 3D builder leaves these when the drawing had a
+/// straight run of atoms.
+pub fn straightened_centres(
+    coords: &[Vec3],
+    elements: &[&str],
+    graph: &Graph,
+    bond_order: impl Fn(usize, usize) -> u8,
+) -> Vec<usize> {
+    (0..coords.len().min(elements.len()).min(graph.len()))
+        .filter(|&i| matches!(elements[i], "C" | "N" | "O"))
+        .filter(|&i| {
+            let n = graph.neighbors(i);
+            (2..=4).contains(&n.len())
+                && n.iter().all(|&j| bond_order(i, j) == 1)
+                && n.iter().enumerate().any(|(k, &a)| {
+                    n[k + 1..]
+                        .iter()
+                        .any(|&b| angle(coords[a], coords[i], coords[b]) > 170.0)
+                })
+        })
+        .collect()
+}
+
 /// Bondi van der Waals radius in Å (1.8 for elements not listed).
 pub fn vdw_radius(element: &str) -> f64 {
     match element {
@@ -930,6 +956,28 @@ mod tests {
         let found = clashes(&coords, &["C", "H", "H", "H"], &graph);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!((found[0].a, found[0].b), (1, 3));
+    }
+
+    #[test]
+    fn straight_single_bonded_centres_are_found() {
+        // C0–C1–C2 straight, then bent at C2 towards C3.
+        let coords = vec![
+            [0.0, 0.0, 0.0],
+            [1.5, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [3.5, 1.4, 0.0],
+        ];
+        let graph = Graph::new(4, [(0, 1), (1, 2), (2, 3)]);
+        let elements = ["C", "C", "C", "C"];
+        assert_eq!(
+            straightened_centres(&coords, &elements, &graph, |_, _| 1),
+            vec![1]
+        );
+        // The same line through a triple bond is an alkyne, not a fault.
+        let alkyne = |a: usize, b: usize| if (a.min(b), a.max(b)) == (1, 2) { 3 } else { 1 };
+        assert!(straightened_centres(&coords, &elements, &graph, alkyne).is_empty());
+        // Only C, N and O are judged.
+        assert!(straightened_centres(&coords, &["C", "S", "C", "C"], &graph, |_, _| 1).is_empty());
     }
 
     #[test]

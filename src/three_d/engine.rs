@@ -25,15 +25,89 @@ pub fn generate(molfile: &str, force_field: ForceField, steps: u32) -> Result<Mo
         if !mol.generate_3d_with(speed) {
             continue;
         }
-        let energy = mol
-            .optimize_geometry(force_field.id(), steps)
-            .ok_or(Error::ForceField(force_field))?;
+        let mut energy = relax(&mut mol, force_field, steps)?;
+        // A drawing with a straight run of atoms (say a chain drawn along one line) often
+        // comes out of the builder with that run still straight: sp³ centres at 180°. That is
+        // a saddle point the minimiser cannot leave, because every force along the line is
+        // symmetric, so the model keeps an absurd energy and its torsions are undefined —
+        // a dihedral set or restrained there lands anywhere. A small kick off the line breaks
+        // the symmetry and the same minimisation then relaxes it properly.
+        for kick in 0..KICKS {
+            let straight = model(&mol, force_field, energy)
+                .map(|m| has_straightened_centre(&m))
+                .unwrap_or(false);
+            if !straight {
+                break;
+            }
+            jitter(&mut mol, kick);
+            energy = relax(&mut mol, force_field, steps)?;
+        }
         match model(&mol, force_field, energy) {
+            Ok(model) if has_straightened_centre(&model) => last = Error::GenerationFailed,
             Ok(model) => return Ok(model),
             Err(e) => last = e,
         }
     }
     Err(last)
+}
+
+/// Minimise in rounds of `steps` until a round no longer lowers the energy noticeably (at most
+/// [`RELAX_ROUNDS`]). One round is enough from a builder's usual output, but a geometry coming
+/// off a saddle point is still sliding downhill after it — hundreds of kJ/mol above the
+/// minimum — and would be handed back half-relaxed.
+fn relax(mol: &mut ObMol, force_field: ForceField, steps: u32) -> Result<f64, Error> {
+    let mut energy = mol
+        .optimize_geometry(force_field.id(), steps)
+        .ok_or(Error::ForceField(force_field))?;
+    for _ in 1..RELAX_ROUNDS {
+        let next = mol
+            .optimize_geometry(force_field.id(), steps)
+            .ok_or(Error::ForceField(force_field))?;
+        let settled = (energy - next).abs() < 0.01 * energy.abs().max(1.0);
+        energy = next;
+        if settled {
+            break;
+        }
+    }
+    Ok(energy)
+}
+
+const RELAX_ROUNDS: u32 = 8;
+
+/// How many times a straightened model is kicked and re-minimised before the next attempt.
+const KICKS: u32 = 3;
+
+fn has_straightened_centre(model: &Model3d) -> bool {
+    let coords: Vec<[f64; 3]> = model.atoms.iter().map(|a| a.pos).collect();
+    let elements: Vec<&str> = model.atoms.iter().map(|a| a.element.as_str()).collect();
+    let graph = super::edit::graph(model);
+    !super::geom::straightened_centres(&coords, &elements, &graph, |a, b| {
+        super::edit::bond_order(model, a, b)
+    })
+    .is_empty()
+}
+
+/// Move every atom by up to 0.15 Å in each direction, deterministically (a fixed sequence
+/// per `round`), so a builder's symmetric saddle point can relax.
+fn jitter(mol: &mut ObMol, round: u32) {
+    let mut state = 0x9E37_79B9_7F4A_7C15u64 ^ u64::from(round).wrapping_mul(0xD1B5_4A32_D192_ED03);
+    let mut next = || {
+        // xorshift64*: plenty for a reproducible kick.
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        let x = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+        (x >> 11) as f64 / (1u64 << 53) as f64 * 0.3 - 0.15
+    };
+    let flat: Vec<f64> = mol
+        .atoms()
+        .flat_map(|a| {
+            let (x, y, z) = a.coords();
+            [x, y, z]
+        })
+        .map(|c| c + next())
+        .collect();
+    mol.set_coordinates(&flat);
 }
 
 /// Minimise an existing 3D model (a molfile written by [`model`]) further, holding
@@ -209,5 +283,42 @@ mod tests {
             geom::distance(out.atoms[2].pos, fixed) < 1e-3,
             "the fixed atom stayed"
         );
+    }
+
+    fn butane_drawing() -> chembuider_rs::Molecule {
+        let mut drawing = chembuider_rs::Molecule::default();
+        let mut prev = drawing.add_atom("C".to_owned(), [0.0, 0.0], 0);
+        for i in 1..4 {
+            let next = drawing.add_atom("C".to_owned(), [1.3 * i as f32, 0.0], 0);
+            drawing.add_bond(prev, next, chembuider_rs::BondOrder::Single);
+            prev = next;
+        }
+        drawing
+    }
+
+    /// A chain drawn along one straight line used to come out of the builder about half the
+    /// time still straight (C–C–C at 180°, E ≈ 470 kJ/mol under UFF): a saddle point that
+    /// minimisation cannot leave, with undefined torsions — so a dihedral set and restrained
+    /// there drifted anywhere on optimisation. Generation must never hand one back.
+    #[test]
+    fn a_straight_drawing_gives_a_relaxed_chain() {
+        let drawing = butane_drawing();
+        for _ in 0..12 {
+            let m = crate::three_d::generate(
+                &drawing,
+                &chembuider_rs::Config::default(),
+                ForceField::Uff,
+            )
+            .expect("generate");
+            assert!(
+                !has_straightened_centre(&m),
+                "a straight sp3 centre was kept"
+            );
+            let c = edit::coords(&m);
+            let bend = geom::angle(c[0], c[1], c[2]);
+            assert!((100.0..125.0).contains(&bend), "C-C-C {bend}");
+            // Relaxed butane is ~3 kJ/mol (UFF); the straight saddle ~470, half-way off it ~300.
+            assert!(m.energy < 30.0, "unrelaxed: E {}", m.energy);
+        }
     }
 }

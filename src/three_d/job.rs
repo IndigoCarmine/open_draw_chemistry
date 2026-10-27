@@ -344,6 +344,12 @@ mod tests {
         let (model, edit3d) = job.model_and_edit().unwrap();
         let energy_before = model.energy;
         let g = edit::graph(model);
+        let c = edit::coords(model);
+        let bend = geom::angle(c[0], c[1], c[2]);
+        assert!(
+            (100.0..125.0).contains(&bend),
+            "generated C-C-C angle {bend}"
+        );
         let coords = geom::set_dihedral(&edit::coords(model), &g, chain, 60.0, None).unwrap();
         edit3d.apply(model, coords, "二面角");
         edit3d.constrain(&chain, 60.0);
@@ -361,8 +367,9 @@ mod tests {
         let model = job.model().unwrap_or_else(|| panic!("{message}"));
         let c = edit::coords(model);
         let torsion = geom::dihedral(c[0], c[1], c[2], c[3]);
+        // Within a degree: on a properly built chain the restraint holds to ~0.02°.
         assert!(
-            (torsion - 60.0).abs() < 3.0,
+            (torsion - 60.0).abs() < 1.0,
             "restrained torsion: {torsion}"
         );
 
