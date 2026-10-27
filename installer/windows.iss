@@ -76,7 +76,14 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Run]
+; The OLE server for ChemDraw objects in Word/PowerPoint (per user, HKCU\Software\Classes):
+; registers this app's class, and points ChemDraw's class here only when ChemDraw is absent.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--register-ole"; StatusMsg: "Registering the OLE server..."; Flags: runhidden waituntilterminated runasoriginaluser
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; Removes exactly what --register-ole wrote.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--unregister-ole"; Flags: runhidden waituntilterminated; RunOnceId: "UnregisterOle"
 
 ; --- Optional: file associations ---
 ; Uncomment, add `ChangesAssociations=yes` to [Setup], and add an "associate" task

@@ -19,6 +19,8 @@ use crate::three_d::{self, Export3d};
 use crate::ui::fragments::{FragmentAction, FragmentManager, ManagerContext};
 use crate::ui::{self, Command, ViewMode, menu::MenuState};
 
+mod ole;
+
 /// How many files "Open Recent" remembers.
 const MAX_RECENT: usize = 10;
 
@@ -82,6 +84,9 @@ pub struct OpenDrawApp {
     /// The atom the canvas was last right-clicked on, for the context menu's 3D化.
     #[serde(skip)]
     context_atom: Option<u32>,
+    /// Set when the process is the OLE server: the link to its COM objects (see [`ole`]).
+    #[serde(skip)]
+    ole: Option<crate::ole_server::AppBridge>,
 }
 
 impl Default for OpenDrawApp {
@@ -107,6 +112,7 @@ impl Default for OpenDrawApp {
             fragment_entries: Vec::new(),
             fragment_manager: FragmentManager::default(),
             context_atom: None,
+            ole: None,
         }
     }
 }
@@ -260,6 +266,9 @@ impl OpenDrawApp {
     /// Save the document at `index` to its own file, asking for one when it has none. Returns
     /// whether it was saved.
     fn save_doc(&mut self, index: usize) -> bool {
+        if self.docs[index].embedded.is_some() {
+            return self.save_embedded(index);
+        }
         match self.docs[index].save() {
             Ok(true) => {
                 let doc = &self.docs[index];
@@ -380,6 +389,9 @@ impl OpenDrawApp {
         if index >= self.docs.len() {
             return;
         }
+        if self.docs[index].embedded.is_some() {
+            return self.close_embedded(index);
+        }
         if self.docs[index].is_dirty() {
             self.pending_close = Some(PendingClose::Tab(index));
         } else {
@@ -395,6 +407,7 @@ impl OpenDrawApp {
     }
 
     fn request_quit(&mut self, ctx: &egui::Context) {
+        self.close_all_embedded();
         if self.docs.iter().any(Document::is_dirty) {
             self.pending_close = Some(PendingClose::Quit);
         } else {
@@ -1046,6 +1059,11 @@ impl eframe::App for OpenDrawApp {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
+    /// Runs every frame, also while the window is hidden: the OLE server's messages.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_ole(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Cloning a Context is cheap (it is an Arc) and frees up `ui` for the panels below.
         let ctx = ui.ctx().clone();
@@ -1057,6 +1075,10 @@ impl eframe::App for OpenDrawApp {
                 commands.push(Command::OpenPath(file.path().to_owned()));
             }
         });
+        if ctx.input(|i| i.viewport().close_requested()) {
+            // Embedded objects are written back into their documents rather than asked about.
+            self.close_all_embedded();
+        }
         if ctx.input(|i| i.viewport().close_requested())
             && !self.quit_confirmed
             && self.docs.iter().any(Document::is_dirty)

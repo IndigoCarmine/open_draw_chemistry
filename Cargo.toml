@@ -38,19 +38,27 @@ openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
-# Windows: Copy publishes an OLE data object (OleSetClipboard), so Word/PowerPoint paste the
-# structure as an embedded ChemDraw object (see `src/ole/`). `windows-core` is needed by the
-# `#[implement]` macro. Same version as the one already in the lock file (via wgpu/winit).
+# Windows OLE: Copy publishes an OLE data object (OleSetClipboard), so Word/PowerPoint paste
+# the structure as an embedded ChemDraw object (see `src/ole/`), and the OLE server
+# (`src/ole_server/`) edits such objects: COM objects, structured storage, metafiles and the
+# registry. `windows-core` is needed by the `#[implement]` macro. Same version eframe/wgpu
+# already pull in.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Media",
+    "Win32_Media_Audio",
+    "Win32_Security",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
     "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core = "0.62.2"
 

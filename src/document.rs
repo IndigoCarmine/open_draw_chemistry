@@ -36,6 +36,21 @@ pub struct Document {
     /// The molecular assembly built from the document's monomers (the 集合体 view). Saved to
     /// its own `.odasm` file, not with the drawing.
     pub assembly: AssemblyState,
+    /// Set when the document is an OLE object embedded in another application's document
+    /// (Word, PowerPoint, …) and opened for editing here: saving writes back into that
+    /// document rather than to a file (see [`crate::ole_server`]).
+    pub embedded: Option<Embedded>,
+}
+
+/// The OLE object a document edits, and the document it is embedded in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Embedded {
+    /// The object's id in the OLE server.
+    pub id: u64,
+    /// The containing application, shortened for the tab ("Word", "PowerPoint").
+    pub container: String,
+    /// The containing document's name, as the container reports it.
+    pub document: String,
 }
 
 impl Document {
@@ -53,6 +68,7 @@ impl Document {
             three_d: Job::default(),
             imported_3d: None,
             assembly: AssemblyState::default(),
+            embedded: None,
         }
     }
 
@@ -72,6 +88,7 @@ impl Document {
             three_d: Job::default(),
             imported_3d: None,
             assembly: AssemblyState::default(),
+            embedded: None,
         }
     }
 
@@ -101,7 +118,32 @@ impl Document {
             three_d,
             imported_3d: Some(format),
             assembly: AssemblyState::default(),
+            embedded: None,
         }
+    }
+
+    /// A document editing the embedded OLE object `embedded`, holding what was read from the
+    /// object's CDX (`None` for a newly inserted, empty object).
+    pub fn embedded(config: &Config, loaded: Option<Loaded>, embedded: Embedded) -> Self {
+        let mut doc = Self::new(config, 0);
+        if let Some(loaded) = loaded {
+            doc.editor.molecule = loaded.molecule.clone();
+            doc.saved = loaded.molecule;
+            doc.original = Some(loaded.original);
+            doc.other_objects = loaded.other_objects;
+            doc.auto_fit = Some(AutoFit::default());
+        }
+        doc.format = Format::Cdx;
+        doc.embedded = Some(embedded);
+        doc
+    }
+
+    /// The structure as CDX, for writing back into the embedding document: merged into the
+    /// object's original CDX so what the editor cannot show is kept. Marks it saved.
+    pub fn commit_embedded(&mut self) -> Result<Vec<u8>, io::Error> {
+        let cdx = io::encode(Format::Cdx, &self.editor.molecule, self.original.as_deref())?;
+        self.saved = self.editor.molecule.clone();
+        Ok(cdx)
     }
 
     /// Draw the editor into `ui`, keeping a newly opened drawing fitted to the canvas.
@@ -147,6 +189,13 @@ impl Document {
 
     /// The tab's title: the file name, or "Untitled N".
     pub fn title(&self) -> String {
+        if let Some(e) = &self.embedded {
+            return if e.document.is_empty() {
+                format!("{} の埋め込み", e.container)
+            } else {
+                format!("{} の埋め込み — {}", e.container, e.document)
+            };
+        }
         match self.path.as_deref().and_then(Path::file_name) {
             Some(name) => name.to_string_lossy().into_owned(),
             None => format!("無題 {}", self.untitled_number),

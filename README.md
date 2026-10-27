@@ -23,9 +23,33 @@ and [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs) (ChemDraw file c
   the panel shows the model's formula, atom count and energy.
 
 Planned: free-form reaction schemes (arrows, text, brackets, shapes), the 3D viewer,
-ibisOffice embedding, and a COM OLE server for Word/PowerPoint.
+ibisOffice embedding, and in-place (inside the document window) OLE editing.
 
 > **Rust 1.95+** is required (raised by the `egui-winit` fork used for Wayland drag-and-drop).
+
+## Editing ChemDraw objects in Word / PowerPoint (Windows)
+
+On a PC **without ChemDraw**, the ChemDraw structures embedded in Word and PowerPoint documents
+can be edited here: double-click one and it opens in a tab marked 「Word の埋め込み — …」;
+保存 (Ctrl+S) or closing the tab writes the structure (and its picture) back into the document.
+The objects stay ChemDraw objects, so ChemDraw opens them again wherever it is installed.
+
+The installer sets this up for the current user. By hand:
+
+```sh
+open_draw_chemistry.exe --register-ole     # register (per user, no admin rights needed)
+open_draw_chemistry.exe --unregister-ole   # remove exactly what was registered
+```
+
+Registration writes only under `HKCU\Software\Classes`: this app's own OLE class
+(`OpenDrawChemistry.Document.1`, also offered by Insert ▸ Object) and — **only when ChemDraw
+is not installed** — a `TreatAs` that sends ChemDraw's class to this app. Where ChemDraw is
+installed nothing of ChemDraw's is changed. If ChemDraw is installed later, run
+`--register-ole` again (or uninstall) to hand its objects back to it.
+
+Objects are edited in this app's window (in-place editing inside Word is not supported).
+For diagnosis, the server logs what the container asks for when its `LocalServer32` command has
+`--ole-log <file>` added.
 
 ## Getting started
 

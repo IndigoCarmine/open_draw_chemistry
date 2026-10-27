@@ -23,9 +23,33 @@ ChemDraw / ChemSketch / XDrawChem のような、化学構造式と反応式を�
   原子数・エネルギーを表示します。
 
 今後の予定：自由配置の反応式（矢印・テキスト・ブラケット・図形）、3D ビューア、
-ibisOffice への埋め込み、Word / PowerPoint 用の COM OLE サーバー。
+ibisOffice への埋め込み、文書ウィンドウ内での OLE 編集（インプレース編集）。
 
 > **Rust 1.95 以上**が必要です（Wayland のドラッグ＆ドロップ用 `egui-winit` フォークによる）。
+
+## Word / PowerPoint の ChemDraw オブジェクトを編集する（Windows）
+
+**ChemDraw が入っていない PC** では、Word や PowerPoint の文書に埋め込まれた ChemDraw の構造式を
+このアプリで編集できます。ダブルクリックすると「Word の埋め込み — …」と表示されたタブで開き、
+保存（Ctrl+S）するかタブを閉じると、構造式（と表示用の図）が文書に書き戻されます。
+オブジェクトは ChemDraw のオブジェクトのままなので、ChemDraw がある PC ではまた ChemDraw で開けます。
+
+インストーラが現在のユーザーに設定します。手動で行う場合：
+
+```sh
+open_draw_chemistry.exe --register-ole     # 登録（ユーザーごと、管理者権限は不要）
+open_draw_chemistry.exe --unregister-ole   # 登録したものだけを削除
+```
+
+登録は `HKCU\Software\Classes` の下だけに書き込みます。このアプリ自身の OLE クラス
+（`OpenDrawChemistry.Document.1`。「挿入 ▸ オブジェクト」にも出ます）と、**ChemDraw が
+インストールされていない場合に限り**、ChemDraw のクラスをこのアプリで開く `TreatAs` です。
+ChemDraw がある PC では ChemDraw の設定は一切変更しません。後から ChemDraw をインストールした
+場合は、もう一度 `--register-ole` を実行する（またはアンインストールする）と ChemDraw に戻ります。
+
+編集はこのアプリのウィンドウで行います（Word の中でのインプレース編集には対応していません）。
+問題の調査には、`LocalServer32` のコマンドに `--ole-log <ファイル>` を加えると、
+コンテナからの呼び出しがログに記録されます。
 
 ## はじめかた
 
