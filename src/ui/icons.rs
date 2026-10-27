@@ -30,6 +30,10 @@ pub enum Icon {
     Arrow,
     Equilibrium,
     Bracket,
+    /// "»": collapse a panel towards the right edge.
+    ChevronsRight,
+    /// "«": expand a panel collapsed on the right edge.
+    ChevronsLeft,
 }
 
 /// Maps the 20 × 20 design space into `rect`.
@@ -206,7 +210,28 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             c.line(&[(7.0, 3.0), (4.0, 3.0), (4.0, 17.0), (7.0, 17.0)]);
             c.line(&[(13.0, 3.0), (16.0, 3.0), (16.0, 17.0), (13.0, 17.0)]);
         }
+        Icon::ChevronsRight => {
+            for chevron in CHEVRONS_RIGHT {
+                c.line(&chevron);
+            }
+        }
+        Icon::ChevronsLeft => {
+            for chevron in CHEVRONS_RIGHT {
+                c.line(&chevron.map(mirror_x));
+            }
+        }
     }
+}
+
+/// The two strokes of "»"; "«" is the same mirrored by [`mirror_x`].
+const CHEVRONS_RIGHT: [[(f32, f32); 3]; 2] = [
+    [(4.5, 5.0), (9.5, 10.0), (4.5, 15.0)],
+    [(10.5, 5.0), (15.5, 10.0), (10.5, 15.0)],
+];
+
+/// Mirrors a point of the 20 × 20 design space about its vertical centre line.
+fn mirror_x((x, y): (f32, f32)) -> (f32, f32) {
+    (20.0 - x, y)
 }
 
 const HEXAGON: [(f32, f32); 6] = [
@@ -342,4 +367,25 @@ pub fn brand(ui: &mut Ui) {
         },
     );
     ui.label(job);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chevrons_point_away_from_each_other() {
+        for chevron in CHEVRONS_RIGHT {
+            // "»": the tip is the rightmost point of each stroke.
+            assert!(chevron[1].0 > chevron[0].0 && chevron[1].0 > chevron[2].0);
+            // "«": mirrored, the tip is the leftmost, and mirroring twice is the identity.
+            let left = chevron.map(mirror_x);
+            assert!(left[1].0 < left[0].0 && left[1].0 < left[2].0);
+            assert_eq!(left.map(mirror_x), chevron);
+            // Both stay inside the design space.
+            for (x, y) in chevron.into_iter().chain(left) {
+                assert!((0.0..=20.0).contains(&x) && (0.0..=20.0).contains(&y));
+            }
+        }
+    }
 }
