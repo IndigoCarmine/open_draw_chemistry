@@ -2,7 +2,9 @@
 // `println!`/panics stay visible while developing.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use egui_template::{APP_NAME, TemplateApp};
+use std::path::PathBuf;
+
+use open_draw_chemistry::{APP_NAME, OpenDrawApp};
 
 /// The window/taskbar icon, embedded at compile time — the source tree is not
 /// present on an end user's machine, so it cannot be loaded from disk.
@@ -23,8 +25,8 @@ fn load_icon() -> Option<egui::IconData> {
 fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(APP_NAME)
-        .with_inner_size([960.0, 640.0])
-        .with_min_inner_size([480.0, 320.0]);
+        .with_inner_size([1280.0, 820.0])
+        .with_min_inner_size([640.0, 420.0]);
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(icon);
@@ -35,9 +37,12 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
+    // Files to open, as passed by the desktop (`%F`) or a drop onto the executable.
+    let files: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+
     eframe::run_native(
         APP_NAME,
         options,
-        Box::new(|cc| Ok(Box::new(TemplateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(OpenDrawApp::new(cc, files)))),
     )
 }

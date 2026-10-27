@@ -1,19 +1,25 @@
 [package]
-name = "egui_template"
+name = "open_draw_chemistry"
 version = "0.1.0"
 edition = "2024"
 # Raised from edition 2024's 1.85 by the egui-winit fork in [patch.crates-io].
 rust-version = "1.95"
-description = "A cross-platform egui/eframe application template with tag-driven installer releases"
-authors = ["Your Name <you@example.com>"]
-license = "MIT"
-repository = "https://github.com/your-name/egui_template"
+description = "A chemical structure and reaction drawing application (ChemDraw-compatible CDX/CDXML)"
+authors = ["IndigoCarmine"]
+# GPL because the 3D builder links OpenBabel (GPL-2.0).
+license = "GPL-2.0-or-later"
+repository = "https://github.com/IndigoCarmine/open_draw_chemistry"
 readme = "README.md"
 
 [dependencies]
 eframe = { version = "0.37.0", features = ["persistence"] }
 egui = "0.37.0"
 serde = { version = "1.0.229", features = ["derive"] }
+
+# The 2D structure editor widget, reaction schemes and CDX/CDXML codecs. Pinned to a rev
+# because it is not on crates.io; it must share this app's egui version.
+chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs", rev = "65f35859729ae807133c0aa3694c14fd9e2496d0" }
+rfd = "0.17.2"
 
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -34,14 +40,14 @@ winresource = "0.1.34"
 # `cargo bundle` generates Info.plist from these keys, so there is no plist to
 # hand-maintain. Build the bundle locally with `cargo bundle --release`.
 [package.metadata.bundle]
-name = "egui Template"
-identifier = "com.example.egui-template"
+name = "Open DrawChemistry"
+identifier = "io.github.indigocarmine.open-draw-chemistry"
 icon = ["resources/icon.icns"]
-category = "Utility"
-short_description = "A cross-platform egui/eframe application template"
+category = "Education"
+short_description = "Chemical structure and reaction drawing"
 long_description = """
-A starting point for cross-platform desktop applications built with egui and
-eframe, including tag-driven installer releases for Windows, macOS and Linux.
+Draw chemical structures and reaction schemes, and read and write ChemDraw
+CDX/CDXML files.
 """
 
 # Release binaries: smaller and faster, at the cost of longer link times.
@@ -53,18 +59,18 @@ strip = true
 
 # --- cargo-deb: used by .github/workflows/release.yml to build the Linux .deb ---
 [package.metadata.deb]
-maintainer = "Your Name <you@example.com>"
-copyright = "2026, Your Name <you@example.com>"
+maintainer = "IndigoCarmine"
+copyright = "2026, IndigoCarmine"
 license-file = ["LICENSE", "0"]
-extended-description = "A cross-platform GUI application built with egui and eframe."
-section = "utils"
+extended-description = "Draw chemical structures and reaction schemes; read and write ChemDraw CDX/CDXML files."
+section = "science"
 priority = "optional"
 # eframe dlopens its GL/X11/Wayland libraries rather than linking them, so `$auto`
 # only ever detects libc. Without listing them the package installs cleanly and
 # then fails to start on a minimal system.
 depends = "$auto, libxkbcommon0, libwayland-client0, libegl1, libgl1, libx11-6, libxcursor1, libxi6, libxrandr2"
 assets = [
-    ["target/release/egui_template", "usr/bin/", "755"],
-    ["installer/linux/egui-template.desktop", "usr/share/applications/", "644"],
-    ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/egui-template.png", "644"],
+    ["target/release/open_draw_chemistry", "usr/bin/", "755"],
+    ["installer/linux/open-draw-chemistry.desktop", "usr/share/applications/", "644"],
+    ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/open-draw-chemistry.png", "644"],
 ]

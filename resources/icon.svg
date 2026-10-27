@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Open DrawChemistry app icon: the "Hex Nib" mark (brand sheet 5a, concept c6) in white on
+       Brand Orange #E4482A. The glyph is 66% of the tile, as on the sheet's 200/132 px tile. -->
+  <rect width="1024" height="1024" rx="230.4" fill="#E4482A"/>
+  <g transform="translate(174.08 174.08) scale(6.7584)">
+    <path d="M50,16 L79,33 L79,63 L50,86 L21,63 L21,33 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="4" stroke-linejoin="round"/>
+    <line x1="50" y1="56" x2="50" y2="88" stroke="#E4482A" stroke-width="4.5"/>
+    <circle cx="50" cy="52" r="7" fill="#E4482A"/>
+  </g>
+</svg>

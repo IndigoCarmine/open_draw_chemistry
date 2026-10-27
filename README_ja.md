@@ -1,54 +1,33 @@
-# egui Template
+# Open DrawChemistry
 
 [English README](README.md)
 
-[egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) でクロスプラットフォームのデスクトップアプリを作るためのテンプレートです。
+ChemDraw / ChemSketch / XDrawChem のような、化学構造式と反応式を描くデスクトップアプリです。
+[egui](https://github.com/emilk/egui) で作られており、構造式エディタには
+[chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)、ChemDraw ファイルの読み書きには
+[cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs) を使っています。
 
-`v*` タグを push すると、GitHub Actions が **Windows / macOS / Linux 向けインストーラ**をビルドして Release に公開します。
+## 機能（第 1 段階）
 
-| プラットフォーム | 成果物 | 形式 |
-| --- | --- | --- |
-| Windows | `egui-template-<version>-windows-x64-setup.exe` | Inno Setup インストーラ |
-| Windows | `egui-template-<version>-windows-x64.exe` | ポータブル実行ファイル |
-| macOS | `egui-template-<version>-macos-universal.dmg` | Applications へドラッグする形式のディスクイメージ（Intel + Apple Silicon ユニバーサル） |
-| macOS | `egui-template-<version>-macos-universal` | ポータブル実行ファイル |
-| Linux | `egui-template-<version>-linux-x86_64.AppImage` | 単体で動作する AppImage |
-| Linux | `egui-template_<version>_amd64.deb` | Debian / Ubuntu パッケージ |
-| Linux | `egui-template-<version>-linux-x86_64` | ポータブル実行ファイル |
+- 構造式の作図・編集：選択／結合／消しゴム、結合の種類（くさび・破線くさび・太線・波線・配位など）、
+  元素の選択、右クリックの結合メニュー（ChemDraw 風）、元に戻す／やり直し、2D クリーンアップ。
+- **ChemDraw ファイル（`.cdx` / `.cdxml`）の読み込みと保存。** まだ表示できないオブジェクト
+  （矢印・テキスト・図形など）は保存時にそのまま残ります。
+- タブによる複数文書、最近使ったファイル、ドラッグ＆ドロップで開く、未保存の確認。
+- 解析パネル：分子式、精密質量、同位体パターン（m/z）、元素分析。
+- MOL2 / SMILES（Windows では PNG も）へのエクスポート。Windows ではコピーすると
+  ChemDraw 互換の構造と EMF の図がクリップボードに入り、Office に貼り付けられます。
 
-## 含まれているもの
+今後の予定：自由配置の反応式（矢印・テキスト・ブラケット・図形）、3D モデル化（OpenBabel）、
+ibisOffice への埋め込み、Word / PowerPoint 用の COM OLE サーバー。
 
-- **状態の永続化** — eframe の `persistence` 機能により、再起動しても画面の状態が復元されます。
-- **全プラットフォーム分のアイコン** — `resources/` に `icon.png`（ウィンドウ + Linux）・`icon.ico`（Windows の `.exe`）・`icon.icns`（macOS バンドル）を用意しています。
-- **宣言的な macOS バンドル** — `cargo bundle` が `[package.metadata.bundle]` から `Info.plist` を生成するため、plist を手で管理する必要がありません。
-- **Wayland でのドラッグ&ドロップ** — `[patch.crates-io]` で `winit` / `egui-winit` のフォークを指定しています（本家は Wayland のネイティブ DnD に未対応）。
-- **テスト可能なアプリロジック** — アプリ本体を `main.rs` ではなく `src/lib.rs` に置いているため、`cargo test` から参照できます。
-- **CI** — 3 プラットフォームで `cargo fmt` / `cargo clippy -D warnings` / `cargo test` を実行します。
-
-> **Rust 1.95 以上**が必要です。edition 2024 自体は 1.85 で足りますが、Wayland DnD 用の
-> `egui-winit` フォークが要求バージョンを引き上げています。
+> **Rust 1.95 以上**が必要です（Wayland のドラッグ＆ドロップ用 `egui-winit` フォークによる）。
 
 ## はじめかた
 
 ```bash
-cargo run
+cargo run -- path/to/file.cdx   # ファイルの指定は省略可
 ```
-
-あとは [`src/app.rs`](src/app.rs) を編集してください。中のデモ用ウィジェットは削除する前提で置いてあります。
-
-## 自分のアプリにする
-
-名前は複数のファイルから相互に参照しているため、次の順で変更してください。
-
-1. **`Cargo.toml`** — `name` / `version` / `description` / `authors` / `license` / `repository` と `[package.metadata.deb]` セクション。
-2. **`src/lib.rs`** — `APP_NAME`（ウィンドウタイトルと永続化キー）。
-3. **`.github/workflows/release.yml`** — `BIN_NAME`（`Cargo.toml` の `name` と一致させる）と `APP_NAME`（成果物のファイル名に使用）。
-4. **`installer/windows.iss`** — `MyAppName` / `MyAppPublisher` / `MyAppURL` / `MyAppExeName`、そして **`AppId` の GUID を新しく生成**してください。`AppId` は Windows がアップグレードを判別するための識別子です。一度リリースしたあとは絶対に変更しないでください。
-5. **`Cargo.toml` の `[package.metadata.bundle]`** — `name` / `identifier`（自分が管理するドメインを使用）/ `category` / 各種説明文。あわせて `release.yml` の `macos` ジョブ内にハードコードされている `egui Template.app` のパスも、`bundle.name` と一致するように更新してください。
-6. **`installer/linux/egui-template.desktop`** — ファイル名自体もリネームし、`Exec` と `Icon` を更新。
-7. **`installer/linux/AppRun`** — `exec` 行のバイナリ名。
-8. **`resources/icon.png`** / **`resources/icon.ico`** / **`resources/icon.icns`** — 自分のアイコンに差し替え。PNG は 1024×1024、`.ico` はマルチ解像度（16〜256 px）、`.icns` は最低でも 32/128/256/512/1024 px を含む状態を保ってください。
-9. **`LICENSE`** — 著作権者名を記入。
 
 ## リリースする
 
@@ -106,4 +85,4 @@ sudo apt-get install -y \
 
 ## ライセンス
 
-MIT — [LICENSE](LICENSE) を参照してください。
+GPL-2.0-or-later — [LICENSE](LICENSE) を参照してください（予定している 3D 化で OpenBabel をリンクするため）。

@@ -5,17 +5,17 @@
 ; Override the version at build time (this is what CI does):
 ;   iscc /DMyAppVersion=1.2.3 installer\windows.iss
 ;
-; Expects the release binary at target\release\egui_template.exe,
+; Expects the release binary at target\release\open_draw_chemistry.exe,
 ; so run `cargo build --release` first. Output lands in dist\.
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
 #endif
 
-#define MyAppName "egui Template"
-#define MyAppPublisher "Your Name"
-#define MyAppURL "https://github.com/your-name/egui_template"
-#define MyAppExeName "egui_template.exe"
+#define MyAppName "Open DrawChemistry"
+#define MyAppPublisher "IndigoCarmine"
+#define MyAppURL "https://github.com/IndigoCarmine/open_draw_chemistry"
+#define MyAppExeName "open_draw_chemistry.exe"
 
 ; "x64compatible" (native x64 + ARM64 running x64 code) is preferred, but it only
 ; exists on Inno Setup 6.3+; older compilers error on it, so fall back to "x64".
@@ -28,7 +28,7 @@
 [Setup]
 ; A stable AppId is what makes upgrades replace the previous install instead of
 ; stacking up alongside it. Generate your own GUID and then never change it.
-AppId={{4B1D9E77-2C3A-4F86-9A15-6E8D0B27C914}
+AppId={{6F4D1816-8E52-4698-955B-A19E832D150F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
@@ -42,7 +42,7 @@ DisableProgramGroupPage=yes
 ; Lets the user pick a per-user install (no admin rights needed) or machine-wide.
 PrivilegesRequiredOverridesAllowed=dialog commandline
 OutputDir=..\dist
-OutputBaseFilename=egui-template-{#MyAppVersion}-windows-x64-setup
+OutputBaseFilename=open-draw-chemistry-{#MyAppVersion}-windows-x64-setup
 SetupIconFile=..\resources\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
@@ -77,7 +77,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 ; to wire your own extensions up to the app:
 ;
 ; [Registry]
-; Root: HKA; Subkey: "Software\Classes\EguiTemplate.File"; ValueType: string; ValueName: ""; ValueData: "egui Template file"; Flags: uninsdeletekey; Tasks: associate
-; Root: HKA; Subkey: "Software\Classes\EguiTemplate.File\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: associate
-; Root: HKA; Subkey: "Software\Classes\EguiTemplate.File\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associate
-; Root: HKA; Subkey: "Software\Classes\.myext"; ValueType: string; ValueName: ""; ValueData: "EguiTemplate.File"; Flags: uninsdeletevalue; Tasks: associate
+; Root: HKA; Subkey: "Software\Classes\OpenDrawChemistry.File"; ValueType: string; ValueName: ""; ValueData: "ChemDraw document"; Flags: uninsdeletekey; Tasks: associate
+; Root: HKA; Subkey: "Software\Classes\OpenDrawChemistry.File\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"; Tasks: associate
+; Root: HKA; Subkey: "Software\Classes\OpenDrawChemistry.File\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: associate
+; Root: HKA; Subkey: "Software\Classes\.myext"; ValueType: string; ValueName: ""; ValueData: "OpenDrawChemistry.File"; Flags: uninsdeletevalue; Tasks: associate

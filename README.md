@@ -1,54 +1,33 @@
-# egui Template
+# Open DrawChemistry
 
 [日本語版 README](README_ja.md)
 
-A starting point for cross-platform desktop apps built with [egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe).
+A desktop application for drawing chemical structures and reaction schemes, in the spirit of
+ChemDraw, ChemSketch and XDrawChem. Built with [egui](https://github.com/emilk/egui) on top of
+[chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs) (the structure editor widget)
+and [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs) (ChemDraw file codecs).
 
-Push a `v*` tag and GitHub Actions builds and publishes **installers for Windows, macOS and Linux**.
+## Features (phase 1)
 
-| Platform | Artifact | Format |
-| --- | --- | --- |
-| Windows | `egui-template-<version>-windows-x64-setup.exe` | Inno Setup installer |
-| Windows | `egui-template-<version>-windows-x64.exe` | Portable binary |
-| macOS | `egui-template-<version>-macos-universal.dmg` | Drag-to-Applications disk image (universal: Intel + Apple Silicon) |
-| macOS | `egui-template-<version>-macos-universal` | Portable binary |
-| Linux | `egui-template-<version>-linux-x86_64.AppImage` | Self-contained AppImage |
-| Linux | `egui-template_<version>_amd64.deb` | Debian/Ubuntu package |
-| Linux | `egui-template-<version>-linux-x86_64` | Portable binary |
+- Draw and edit structures: select / bond / eraser tools, bond styles (wedge, hash, bold,
+  wavy, dative, …), element picker, ChemDraw-style bond menu on right-click, undo/redo, 2D clean-up.
+- **Open and save ChemDraw files (`.cdx` / `.cdxml`).** Objects the editor cannot show yet
+  (arrows, captions, shapes) are kept when the file is saved.
+- Several documents in tabs, recent files, drag-and-drop to open, unsaved-change prompts.
+- Analysis panel: formula, exact mass, isotope pattern (m/z), elemental analysis.
+- Export MOL2 / SMILES (and PNG on Windows). On Windows, Copy puts a ChemDraw-compatible
+  structure plus an EMF picture on the clipboard for Office.
 
-## What's in the box
+Planned: free-form reaction schemes (arrows, text, brackets, shapes), 3D model building
+(OpenBabel), ibisOffice embedding, and a COM OLE server for Word/PowerPoint.
 
-- **Persistent state** — window contents survive restarts via eframe's `persistence` feature.
-- **Icons for every platform** — `resources/` holds `icon.png` (window + Linux), `icon.ico` (Windows `.exe`) and `icon.icns` (macOS bundle).
-- **Declarative macOS bundling** — `cargo bundle` generates `Info.plist` from `[package.metadata.bundle]`, so there is no plist to hand-maintain.
-- **Wayland drag-and-drop** — `[patch.crates-io]` pins `winit`/`egui-winit` forks that implement native DnD on Wayland (upstream does not).
-- **Unit-testable app logic** — the app lives in `src/lib.rs`, not `main.rs`, so `cargo test` can reach it.
-- **CI** — `cargo fmt`, `cargo clippy -D warnings` and `cargo test` on all three platforms.
-
-> **Rust 1.95+** is required. Edition 2024 alone needs only 1.85, but the `egui-winit`
-> fork used for Wayland DnD raises the floor.
+> **Rust 1.95+** is required (raised by the `egui-winit` fork used for Wayland drag-and-drop).
 
 ## Getting started
 
 ```bash
-cargo run
+cargo run -- path/to/file.cdx   # the file is optional
 ```
-
-Then edit [`src/app.rs`](src/app.rs) — the demo widgets there are meant to be deleted.
-
-## Making it yours
-
-Rename in this order; the names are cross-referenced between files:
-
-1. **`Cargo.toml`** — `name`, `version`, `description`, `authors`, `license`, `repository`, and the `[package.metadata.deb]` block.
-2. **`src/lib.rs`** — `APP_NAME` (window title and persistence key).
-3. **`.github/workflows/release.yml`** — `BIN_NAME` (must match `Cargo.toml`'s `name`) and `APP_NAME` (used in artifact filenames).
-4. **`installer/windows.iss`** — `MyAppName`, `MyAppPublisher`, `MyAppURL`, `MyAppExeName`, and **generate a fresh `AppId` GUID**. The `AppId` is how Windows recognises an upgrade; once you have shipped a release, never change it.
-5. **`Cargo.toml` `[package.metadata.bundle]`** — `name`, `identifier` (use a domain you control), `category`, descriptions. Also update the hard-coded `egui Template.app` paths in the `macos` job of `release.yml`, which must match `bundle.name`.
-6. **`installer/linux/egui-template.desktop`** — rename the file too, and update `Exec`/`Icon`.
-7. **`installer/linux/AppRun`** — the binary name in the `exec` line.
-8. **`resources/icon.png`**, **`resources/icon.ico`** and **`resources/icon.icns`** — replace with your own art. Keep the PNG at 1024×1024, the `.ico` multi-resolution (16–256 px), and the `.icns` containing at least the 32/128/256/512/1024 px variants.
-9. **`LICENSE`** — fill in the copyright holder.
 
 ## Cutting a release
 
@@ -108,4 +87,4 @@ sudo apt-get install -y \
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-2.0-or-later — see [LICENSE](LICENSE). (GPL because the planned 3D builder links OpenBabel.)

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open DrawChemistry
+GenericName=Chemical Structure Editor
+Comment=Draw chemical structures and reactions, read and write ChemDraw files
+Exec=open_draw_chemistry %F
+Icon=open-draw-chemistry
+Terminal=false
+Categories=Education;Science;Chemistry;
+StartupNotify=true

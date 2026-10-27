@@ -10,8 +10,8 @@ on:
   workflow_dispatch:
 
 env:
-  BIN_NAME: egui_template
-  APP_NAME: egui-template
+  BIN_NAME: open_draw_chemistry
+  APP_NAME: open-draw-chemistry
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -101,7 +101,7 @@ jobs:
           # bundles one architecture, so we swap in a universal binary after.
           cargo bundle --release --target aarch64-apple-darwin
 
-          APP="target/aarch64-apple-darwin/release/bundle/osx/egui Template.app"
+          APP="target/aarch64-apple-darwin/release/bundle/osx/Open DrawChemistry.app"
           lipo -create -output "${APP}/Contents/MacOS/${BIN_NAME}" \
             "target/x86_64-apple-darwin/release/${BIN_NAME}" \
             "target/aarch64-apple-darwin/release/${BIN_NAME}"
@@ -122,11 +122,11 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          APP="target/aarch64-apple-darwin/release/bundle/osx/egui Template.app"
+          APP="target/aarch64-apple-darwin/release/bundle/osx/Open DrawChemistry.app"
           create-dmg \
-            --volname "egui Template" \
+            --volname "Open DrawChemistry" \
             --window-size 500 300 \
-            --icon "egui Template.app" 130 130 \
+            --icon "Open DrawChemistry.app" 130 130 \
             --app-drop-link 350 130 \
             "${APP_NAME}-${VERSION}-macos-universal.dmg" \
             "${APP}"
@@ -135,7 +135,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          APP="target/aarch64-apple-darwin/release/bundle/osx/egui Template.app"
+          APP="target/aarch64-apple-darwin/release/bundle/osx/Open DrawChemistry.app"
           mkdir -p out
           mv "${APP_NAME}-${VERSION}-macos-universal.dmg" out/
           cp "${APP}/Contents/MacOS/${BIN_NAME}" "out/${APP_NAME}-${VERSION}-macos-universal"
