@@ -4,8 +4,12 @@
 use std::time::Instant;
 
 use open_draw_chemistry::assembly::export::{self, AssemblyExport};
+use open_draw_chemistry::assembly::math::{self, Rigid};
 use open_draw_chemistry::assembly::model::{Ring, Stack};
-use open_draw_chemistry::assembly::{AssemblyState, Component, Design, Step, build, file};
+use open_draw_chemistry::assembly::{
+    AssemblyState, Component, Design, Instance, Step, build, clash, file,
+};
+use open_draw_chemistry::three_d::geom::Clash;
 use open_draw_chemistry::three_d::{Atom3d, Bond3d};
 
 /// Benzene: from the test file through OpenBabel when it is built in, by hand otherwise.
@@ -76,7 +80,7 @@ fn rosette_stack(rings: u32, layers: u32) -> Design {
                 slip: 0.5,
             }),
         ],
-        manual: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -154,4 +158,146 @@ fn fifty_thousand_atoms_build_fast() {
     let pdb = export::pdb(&built, &design, "big");
     assert!(pdb.lines().filter(|l| l.starts_with("HETATM")).count() == 50_400);
     assert!(start.elapsed().as_secs_f64() < limit * 2.0);
+}
+
+/// A small second monomer (a guest), by hand.
+fn water() -> Component {
+    let atom = |element: &str, pos| Atom3d {
+        element: element.to_owned(),
+        pos,
+    };
+    Component {
+        name: "water".to_owned(),
+        atoms: vec![
+            atom("O", [0.0, 0.0, 0.0]),
+            atom("H", [0.96, 0.0, 0.0]),
+            atom("H", [-0.24, 0.93, 0.0]),
+        ],
+        bonds: vec![
+            Bond3d {
+                begin: 0,
+                end: 1,
+                order: 1,
+            },
+            Bond3d {
+                begin: 0,
+                end: 2,
+                order: 1,
+            },
+        ],
+        orient: None,
+    }
+}
+
+/// Host–guest: hand-placed molecules of two components (one detached from the steps) are
+/// saved and opened as the same assembly.
+#[test]
+fn hand_placed_molecules_of_two_components_survive_an_odasm_round_trip() {
+    let mut design = rosette_stack(6, 2);
+    design.components.push(water());
+    design.manual.push(Instance {
+        component: 1,
+        transform: Rigid {
+            rot: math::euler_xyz([10.0, 20.0, 30.0]),
+            trans: [0.5, -0.25, 1.8],
+        },
+    });
+    let detached = design.detach(3).unwrap();
+    design.manual.push(Instance {
+        component: 1,
+        transform: Rigid::translation([0.0, 0.0, -3.0]),
+    });
+    let built = build::build(&design, 1).unwrap();
+    assert_eq!(built.molecule_count(), 14);
+    assert_eq!(built.component_of_molecule[detached], 0);
+    assert_eq!(built.component_of_molecule[13], 1);
+
+    let text = file::to_string(&design);
+    let back = file::from_str(&text).unwrap();
+    // JSON numbers may come back a last bit off, so coordinates are compared closely (the
+    // components' through the rebuilt atoms below).
+    let names =
+        |d: &Design| -> Vec<String> { d.components.iter().map(|c| c.name.clone()).collect() };
+    assert_eq!(names(&back), names(&design));
+    assert_eq!(back.excluded, design.excluded);
+    assert_eq!(back.manual.len(), design.manual.len());
+    for (b, d) in back.manual.iter().zip(&design.manual) {
+        assert_eq!(b.component, d.component);
+        assert!(b.transform.approx_eq(&d.transform, 1e-12));
+    }
+    let rebuilt = build::build(&back, 2).unwrap();
+    assert_eq!(rebuilt.component_of_molecule, built.component_of_molecule);
+    assert_eq!(rebuilt.atoms.len(), built.atoms.len());
+    for (a, b) in rebuilt.atoms.iter().zip(&built.atoms) {
+        assert_eq!(a.element, b.element);
+        assert!(math::distance(a.pos, b.pos) < 1e-9);
+    }
+
+    // A file from before free placement (no exclusions) still opens.
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(old.as_object_mut().unwrap().remove("excluded").is_some());
+    let old = file::from_str(&old.to_string()).unwrap();
+    assert!(old.excluded.is_empty());
+    assert_eq!(old.manual.len(), design.manual.len());
+}
+
+/// The cell list finds exactly the pairs testing every pair finds, on a built assembly that is
+/// packed too tightly (layers 2 Å apart, a guest inside), open and in a periodic box.
+#[test]
+fn the_clash_grid_agrees_with_every_pair_on_a_built_assembly() {
+    let mut design = rosette_stack(6, 4);
+    if let Step::Stack(s) = &mut design.steps[1] {
+        s.rise = 2.0;
+    }
+    design.components.push(water());
+    design.manual.push(Instance {
+        component: 1,
+        transform: Rigid::translation([6.5, 0.5, 0.2]),
+    });
+    let built = build::build(&design, 1).unwrap();
+    let positions: Vec<[f64; 3]> = built.atoms.iter().map(|a| a.pos).collect();
+    let kinds = clash::kinds(&built);
+    let key = |c: &Clash| (c.a, c.b);
+    let periodic = clash::Periodic::new([[30.0, 0.0, 0.0], [5.0, 28.0, 0.0], [0.0, 0.0, 8.0]]);
+    for periodic in [None, periodic.as_ref()] {
+        let grid = clash::find(&built, periodic);
+        let brute = clash::brute_force(&positions, &kinds, &built.molecule_of_atom, periodic);
+        assert!(!brute.is_empty());
+        let mut a: Vec<_> = grid.pairs.iter().map(key).collect();
+        let mut b: Vec<_> = brute.iter().map(key).collect();
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b, "periodic: {}", periodic.is_some());
+        // Never inside one molecule (outside a box).
+        if periodic.is_none() {
+            assert!(
+                grid.pairs
+                    .iter()
+                    .all(|c| built.molecule_of_atom[c.a] != built.molecule_of_atom[c.b])
+            );
+        }
+    }
+}
+
+/// ~50 000 atoms are checked for clashes quickly: generous in a debug build, under a second in
+/// a release build.
+#[test]
+fn fifty_thousand_atoms_clash_check_fast() {
+    let mut design = rosette_stack(6, 700);
+    // Tight layers, so there are clashes to collect as well.
+    if let Step::Stack(s) = &mut design.steps[1] {
+        s.rise = 2.5;
+    }
+    let built = build::build(&design, 1).unwrap();
+    assert_eq!(built.atoms.len(), 50_400);
+    let start = Instant::now();
+    let found = clash::find(&built, None);
+    let elapsed = start.elapsed();
+    assert!(!found.pairs.is_empty() && !found.truncated);
+    let limit = if cfg!(debug_assertions) { 10.0 } else { 1.0 };
+    assert!(
+        elapsed.as_secs_f64() < limit,
+        "checked {} atoms in {elapsed:?}",
+        built.atoms.len()
+    );
 }

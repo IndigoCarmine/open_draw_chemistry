@@ -7,6 +7,8 @@
 //! - [`symop`]: crystallographic symmetry operations (`-x,y+1/2,-z+1/2`) and space groups;
 //! - [`model`]: the monomers, the steps, the design and its undo history;
 //! - [`build`]: the design turned into atoms and bonds, cached by revision;
+//! - [`place`]: molecules placed by hand — their pose, mouse moves, a free spot for a new one;
+//! - [`clash`]: atoms of different molecules too close, by a cell list (periodic or not);
 //! - [`export`]: PDB, XYZ, MOL2 and CIF writers;
 //! - [`file`]: the `.odasm` file the design is saved in.
 //!
@@ -17,10 +19,12 @@
 //! built before it.
 
 pub mod build;
+pub mod clash;
 pub mod export;
 pub mod file;
 pub mod math;
 pub mod model;
+pub mod place;
 pub mod symop;
 
 pub use build::{BuildError, Built, MAX_ATOMS};

@@ -126,6 +126,7 @@ mod tests {
                 component: 0,
                 transform: Rigid::translation([1.0, 2.0, 3.0]),
             }],
+            excluded: vec![3],
         };
         let text = to_string(&design);
         assert!(text.contains("\"version\": 2"));

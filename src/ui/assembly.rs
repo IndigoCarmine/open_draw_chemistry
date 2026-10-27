@@ -4,15 +4,21 @@
 //! turns clicks into edits.
 //!
 //! In the viewer: drag to orbit, Shift+drag or right/middle drag to pan, wheel to zoom,
-//! double-click empty space to reframe, click an atom to select its molecule. While a monomer
-//! is being oriented the viewer shows that monomer alone, and three clicks pick its atoms.
+//! double-click empty space to reframe, click an atom to select its molecule. A selected
+//! molecule placed by hand turns with Alt+drag and moves with Shift+drag instead ([`place`]).
+//! While a monomer is being oriented the viewer shows that monomer alone, and three clicks
+//! pick its atoms.
+
+mod place;
 
 use eframe::egui_wgpu::RenderState;
 use egui::{Color32, DragValue, Pos2, RichText, Stroke, vec2};
 use serde::{Deserialize, Serialize};
 
 use super::Command;
-use super::viewport3d::{Frame3d, Hit, Scene, Style3d, Viewport3d, element_color};
+use super::viewport3d::{
+    Frame3d, Hit, Scene, Style3d, Viewport3d, element_color, exclusive_groups,
+};
 use crate::assembly::model::{Array, Lattice, Ring, Stack, helix_radius};
 use crate::assembly::symop::{self, SymOp};
 use crate::assembly::{AssemblyExport, AssemblyState, Built, Component, Step};
@@ -101,6 +107,12 @@ pub struct AssemblyView {
     /// The last thing the panel did or could not do, and whether it is a problem.
     #[serde(skip)]
     pub report: Option<(String, bool)>,
+    /// The component 配置 → 追加 places.
+    #[serde(skip)]
+    add_component: usize,
+    /// Clashes between molecules, checked when the build changes.
+    #[serde(skip)]
+    clashes: place::ClashCheck,
 }
 
 impl AssemblyView {
@@ -377,22 +389,35 @@ fn viewer(
         .filter(|&m| m < built.molecule_count())
         .map(|m| built.molecule_atoms(m).collect())
         .unwrap_or_default();
+    let clashes = view.clashes.get(ui.ctx(), state.id(), &built).map(|c| c.0);
+    let clashing = clashes
+        .as_deref()
+        .map(place::clash_atoms)
+        .unwrap_or_default();
     viewport.set_highlights(
-        if selected.is_empty() {
-            Vec::new()
-        } else {
-            vec![moleucle_3dview_rs::AtomGroup {
-                atom_indices: selected,
-                color: SELECTED_COLOR,
-            }]
-        },
+        exclusive_groups(&[
+            (&selected, SELECTED_COLOR),
+            (&clashing, place::CLASH_HIGHLIGHT),
+        ]),
         Vec::new(),
     );
+    // Alt or Shift with a hand-placed molecule selected: the drag moves the molecule, not
+    // the camera.
+    let movable = state
+        .selected
+        .and_then(|m| state.design.manual_index(m))
+        .is_some();
+    let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
+    viewport.claim_drag(movable && (alt || shift));
     let frame = match viewport.show(ui, render_state, false) {
         Ok(frame) => frame,
         Err(e) => return failed(ui, &e),
     };
+    place::overlay(ui, viewport, &frame, state, &built, clashes.as_deref());
     assembly_overlay(ui, &frame, state, &built);
+    if let Some(delta) = frame.drag {
+        place::drag_selected(state, viewport, &frame, delta, alt);
+    }
     let molecule_of = |hit: Hit| match hit {
         Hit::Atom(a) => built.molecule_of_atom.get(a).copied(),
         Hit::Bond(b) => built
@@ -520,11 +545,16 @@ fn assembly_overlay(ui: &egui::Ui, frame: &Frame3d, state: &AssemblyState, built
             .get(built.component_of_molecule[m])
             .map_or("", |c| c.name.as_str());
         let k = a - built.molecule_start[m];
+        let how = if state.design.manual_index(m).is_some() {
+            "手動"
+        } else {
+            "手順"
+        };
         tag(
             &painter,
             pointer + vec2(14.0, 10.0),
             format!(
-                "分子 {}（{name}）· {}{}",
+                "分子 {}（{name}・{how}）· {}{}",
                 m + 1,
                 built.atoms[a].element,
                 k + 1
@@ -642,6 +672,9 @@ pub fn panel(
     section(ui, "手順");
     steps_section(ui, state, &ink, &mut changes);
 
+    section(ui, "配置");
+    place::section(ui, state, view, &ink);
+
     section(ui, "表示");
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt("assembly_style")
@@ -663,6 +696,7 @@ pub fn panel(
 
     section(ui, "情報");
     info_section(ui, state, &ink);
+    place::clash_info(ui, state, view, &ink);
 
     section(ui, "書き出し");
     let can_export = state.built().is_ok_and(|b| !b.is_empty());

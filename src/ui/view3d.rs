@@ -28,15 +28,15 @@ const STEP_COARSE: f64 = 15.0;
 /// Highlight colours in the viewer (linear-ish RGB, drawn translucent).
 const PICK_COLOR: (f32, f32, f32) = (0.98, 0.45, 0.22);
 const ANCHOR_COLOR: (f32, f32, f32) = (0.20, 0.75, 0.98);
-const CLASH_COLOR: (f32, f32, f32) = (1.0, 0.12, 0.12);
+pub(super) const CLASH_COLOR: (f32, f32, f32) = (1.0, 0.12, 0.12);
 const MOVING_COLOR: (f32, f32, f32) = (0.55, 0.62, 0.80);
 
 const PICK_STROKE: Color32 = Color32::from_rgb(0xF5, 0x8A, 0x4F);
 const ANCHOR_STROKE: Color32 = Color32::from_rgb(0x4C, 0xC2, 0xF5);
-const CLASH_STROKE: Color32 = Color32::from_rgb(0xFF, 0x4D, 0x4D);
+pub(super) const CLASH_STROKE: Color32 = Color32::from_rgb(0xFF, 0x4D, 0x4D);
 /// The same roles as text on the light theme's panel (4.5:1 on it).
 const ANCHOR_ON_LIGHT: Color32 = Color32::from_rgb(0x1B, 0x6E, 0x9C);
-const CLASH_ON_LIGHT: Color32 = Color32::from_rgb(0xB4, 0x23, 0x23);
+pub(super) const CLASH_ON_LIGHT: Color32 = Color32::from_rgb(0xB4, 0x23, 0x23);
 /// On-screen labels are drawn on this so they read over any atom colour.
 const LABEL_BACK: Color32 = Color32::from_rgba_premultiplied(0x14, 0x12, 0x10, 0xD8);
 

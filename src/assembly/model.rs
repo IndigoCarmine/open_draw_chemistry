@@ -469,23 +469,47 @@ pub struct Design {
     /// The component the steps copy.
     pub base: usize,
     pub steps: Vec<Step>,
-    /// Molecules placed by hand, after those the steps make (free placement, A3).
+    /// Molecules placed by hand, after those the steps make (free placement).
     pub manual: Vec<Instance>,
+    /// Molecules the steps make that are left out — deleted, or detached into
+    /// [`Design::manual`] to be moved by hand — by their index among all the steps' copies
+    /// (counting the excluded ones), sorted. The index stays when the steps change, so it then
+    /// names whichever copy has that place; indices past the steps' count are ignored.
+    pub excluded: Vec<usize>,
 }
 
 impl Design {
-    /// How many molecules the steps and the hand-placed ones make, without making them.
-    /// Saturates instead of overflowing on absurd step counts.
-    pub fn molecule_count(&self) -> usize {
-        let from_steps = if self.components.get(self.base).is_some() {
+    /// How many copies the steps make, counting the excluded ones. Saturates instead of
+    /// overflowing on absurd step counts.
+    fn all_step_copies(&self) -> usize {
+        // A lattice step drops symmetry copies that coincide (special positions), so its
+        // `copies()` is only an upper bound: count what it really makes.
+        if self
+            .steps
+            .iter()
+            .any(|s| s.enabled() && matches!(s, Step::Lattice(_)))
+        {
+            return self.step_copies().len();
+        }
+        if self.components.get(self.base).is_some() {
             self.steps
                 .iter()
                 .filter(|s| s.enabled())
                 .fold(1usize, |n, s| n.saturating_mul(s.copies()))
         } else {
             0
-        };
-        from_steps.saturating_add(self.manual.len())
+        }
+    }
+
+    /// How many molecules the steps make, the excluded ones left out.
+    pub fn step_molecule_count(&self) -> usize {
+        let all = self.all_step_copies();
+        all - self.excluded.iter().filter(|&&i| i < all).count()
+    }
+
+    /// How many molecules the steps and the hand-placed ones make, without making them.
+    pub fn molecule_count(&self) -> usize {
+        self.step_molecule_count().saturating_add(self.manual.len())
     }
 
     /// How many atoms the assembly has, without building it.
@@ -494,17 +518,11 @@ impl Design {
             .components
             .get(self.base)
             .map_or(0, |c| c.atoms.len())
-            .saturating_mul(self.molecule_count() - self.manual.len());
+            .saturating_mul(self.step_molecule_count());
         self.manual
             .iter()
             .filter_map(|m| self.components.get(m.component))
             .fold(from_steps, |n, c| n.saturating_add(c.atoms.len()))
-    }
-
-    /// Every placed molecule: the steps' copies of the base component in order (the last
-    /// step's copies outermost), then the hand-placed ones.
-    pub fn instances(&self) -> Vec<Instance> {
-        self.placements().0
     }
 
     /// The first enabled lattice step that cannot be built, and why (in Japanese).
@@ -532,9 +550,10 @@ impl Design {
             .collect()
     }
 
-    /// [`Design::instances`], with the crystal the last enabled lattice step made. Lattice
-    /// steps that cannot be built ([`Design::lattice_error`]) are skipped.
-    pub fn placements(&self) -> (Vec<Instance>, Option<Crystal>) {
+    /// Every copy the steps make, the excluded ones included (the base component in order, the
+    /// last step's copies outermost), with the crystal the last enabled lattice step made.
+    /// Lattice steps that cannot be built ([`Design::lattice_error`]) are skipped.
+    fn step_copies_with_crystal(&self) -> (Vec<Instance>, Option<Crystal>) {
         let mut set = Vec::new();
         let mut crystal = None;
         if self.components.get(self.base).is_some() {
@@ -579,8 +598,90 @@ impl Design {
                 set = next;
             }
         }
+        (set, crystal)
+    }
+
+    /// Every copy the steps make, the excluded ones included.
+    fn step_copies(&self) -> Vec<Instance> {
+        self.step_copies_with_crystal().0
+    }
+
+    /// Every placed molecule: the steps' copies (less the excluded ones), then the hand-placed
+    /// ones. A built molecule's index is its place in this list.
+    pub fn instances(&self) -> Vec<Instance> {
+        self.placements().0
+    }
+
+    /// [`Design::instances`], with the crystal the last enabled lattice step made.
+    pub fn placements(&self) -> (Vec<Instance>, Option<Crystal>) {
+        let (copies, crystal) = self.step_copies_with_crystal();
+        let mut set: Vec<Instance> = copies
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| self.excluded.binary_search(i).is_err())
+            .map(|(_, inst)| inst)
+            .collect();
         set.extend(self.manual.iter().cloned());
         (set, crystal)
+    }
+
+    /// The hand-placed molecule that molecule `m` of the build is, if it is one.
+    pub fn manual_index(&self, m: usize) -> Option<usize> {
+        m.checked_sub(self.step_molecule_count())
+            .filter(|&k| k < self.manual.len())
+    }
+
+    /// The molecule of the build that hand-placed molecule `k` is.
+    pub fn manual_molecule(&self, k: usize) -> usize {
+        self.step_molecule_count() + k
+    }
+
+    /// The index among all the steps' copies of molecule `m`, if the steps made it.
+    fn step_copy_index(&self, m: usize) -> Option<usize> {
+        if m >= self.step_molecule_count() {
+            return None;
+        }
+        // Walk past the excluded copies (sorted) that come before it.
+        let mut copy = m;
+        for &e in &self.excluded {
+            if e <= copy {
+                copy += 1;
+            } else {
+                break;
+            }
+        }
+        Some(copy)
+    }
+
+    /// Turn molecule `m`, made by the steps, into a hand-placed one where it is, so it can be
+    /// moved on its own: the steps leave it out and [`Design::manual`] gains it. Returns its
+    /// new molecule index, or `None` when `m` is not a step's molecule.
+    pub fn detach(&mut self, m: usize) -> Option<usize> {
+        let copy = self.step_copy_index(m)?;
+        let instance = self.step_copies().swap_remove(copy);
+        self.exclude(copy);
+        self.manual.push(instance);
+        Some(self.manual_molecule(self.manual.len() - 1))
+    }
+
+    /// Remove molecule `m`: a hand-placed one is deleted, a step's is left out of the steps.
+    /// Returns whether there was such a molecule.
+    pub fn remove_molecule(&mut self, m: usize) -> bool {
+        if let Some(k) = self.manual_index(m) {
+            self.manual.remove(k);
+            true
+        } else if let Some(copy) = self.step_copy_index(m) {
+            self.exclude(copy);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn exclude(&mut self, copy: usize) {
+        if let Err(at) = self.excluded.binary_search(&copy) {
+            self.excluded.insert(at, copy);
+        }
     }
 }
 
@@ -870,6 +971,7 @@ mod tests {
             base: 0,
             steps: vec![Step::new_ring(), Step::new_stack()],
             manual: Vec::new(),
+            excluded: Vec::new(),
         }
     }
 
@@ -892,6 +994,59 @@ mod tests {
         let o = inst[6].transform.apply([0.0; 3]);
         assert!(math::distance(o, [5.0, 0.0, 3.5]) < 1e-9, "{o:?}");
         assert_eq!(Design::default().molecule_count(), 0);
+    }
+
+    #[test]
+    fn a_step_molecule_is_detached_in_place_and_can_be_put_back() {
+        let mut d = design_with_two_steps();
+        d.steps.truncate(1); // six in a ring
+        d.manual.push(Instance {
+            component: 0,
+            transform: Rigid::translation([0.0, 0.0, 9.0]),
+        });
+        let before = d.instances();
+        assert_eq!(d.manual_index(6), Some(0));
+        assert_eq!(d.manual_index(5), None);
+
+        // Molecule 2 leaves the ring and becomes the second hand-placed one, where it was.
+        let moved = d.detach(2).unwrap();
+        assert_eq!(d.excluded, vec![2]);
+        assert_eq!(
+            moved, 6,
+            "five ring molecules, then the two hand-placed ones"
+        );
+        assert_eq!(d.molecule_count(), 7);
+        let after = d.instances();
+        assert_eq!(after[moved], before[2]);
+        assert_eq!(after[2], before[3], "the ring closes up behind it");
+        assert_eq!(d.manual_molecule(0), 5);
+        assert_eq!(d.atom_count(), 14);
+
+        // Detaching another counts past the excluded one: ring molecule 2 now is copy 3.
+        let again = d.detach(2).unwrap();
+        assert_eq!(d.excluded, vec![2, 3]);
+        assert_eq!(d.instances()[again], before[3]);
+        assert_eq!(
+            d.detach(again),
+            None,
+            "a hand-placed molecule is not detached"
+        );
+
+        // Removing: a step molecule is left out, a hand-placed one deleted.
+        assert!(d.remove_molecule(0));
+        assert_eq!(d.excluded, vec![0, 2, 3]);
+        assert_eq!(d.step_molecule_count(), 3);
+        let manual = d.manual.len();
+        assert!(d.remove_molecule(d.manual_molecule(0)));
+        assert_eq!(d.manual.len(), manual - 1);
+        assert!(!d.remove_molecule(99));
+
+        // Fewer copies: exclusions past the count are ignored.
+        if let Step::Ring(r) = &mut d.steps[0] {
+            r.n = 2;
+        }
+        assert_eq!(d.step_molecule_count(), 1);
+        assert_eq!(d.instances().len(), 1 + d.manual.len());
     }
 
     #[test]

@@ -165,7 +165,9 @@ fn molecules_on_special_positions_are_kept_once() {
         gamma: 102.0,
     };
     let design = crystal(benzene(), cell, "P-1", [1, 1, 1]);
-    assert_eq!(design.molecule_count(), 2, "an upper bound before building");
+    // Counted exactly, as the build makes it: hand-placed molecules' indices follow the
+    // steps' molecules, so an upper bound would misplace them.
+    assert_eq!(design.molecule_count(), 1);
     let built = build(&design, 1).unwrap();
     assert_eq!(built.crystal.as_ref().unwrap().z, 1);
     // In P2₁/c the inversion centre halves the four copies.
