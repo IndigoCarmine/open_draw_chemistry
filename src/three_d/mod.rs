@@ -79,10 +79,17 @@ pub enum Export3d {
     Sdf,
     Xyz,
     Pdb,
+    Mol2,
 }
 
 impl Export3d {
-    pub const ALL: [Export3d; 4] = [Export3d::Mol, Export3d::Sdf, Export3d::Xyz, Export3d::Pdb];
+    pub const ALL: [Export3d; 5] = [
+        Export3d::Mol,
+        Export3d::Sdf,
+        Export3d::Xyz,
+        Export3d::Pdb,
+        Export3d::Mol2,
+    ];
 
     /// OpenBabel's format id, which is also the file extension.
     pub fn extension(self) -> &'static str {
@@ -91,6 +98,7 @@ impl Export3d {
             Export3d::Sdf => "sdf",
             Export3d::Xyz => "xyz",
             Export3d::Pdb => "pdb",
+            Export3d::Mol2 => "mol2",
         }
     }
 
@@ -100,6 +108,7 @@ impl Export3d {
             Export3d::Sdf => "SD File",
             Export3d::Xyz => "XYZ",
             Export3d::Pdb => "Protein Data Bank",
+            Export3d::Mol2 => "Tripos MOL2",
         }
     }
 }

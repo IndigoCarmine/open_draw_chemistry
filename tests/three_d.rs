@@ -6,6 +6,7 @@ use std::path::Path;
 
 use chembuider_rs::{BondOrder, BondStereo, Config, Molecule};
 use open_draw_chemistry::io;
+use open_draw_chemistry::three_d::read::Format3d;
 use open_draw_chemistry::three_d::{self, Export3d, ForceField, Model3d};
 
 /// Bonded pairs of carbons in `model`, with their lengths.
@@ -140,5 +141,27 @@ fn exports_read_back_with_every_atom() {
             "{format:?} atoms"
         );
         assert!(back.has_3d(), "{format:?} keeps the 3D coordinates");
+    }
+}
+
+#[test]
+fn mol2_export_reads_back_with_the_same_coordinates() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/chemdraw26_benzene.cdx");
+    let benzene = io::load(&path).unwrap().molecule;
+    for drawing in [ethanol(), benzene] {
+        let model = three_d::generate(&drawing, &Config::default(), ForceField::Mmff94).unwrap();
+        let text = three_d::export(&model, Export3d::Mol2).unwrap();
+        assert!(text.contains("@<TRIPOS>BOND"), "{text}");
+        let back = three_d::read::read(Format3d::Mol2, &text)
+            .unwrap()
+            .model
+            .unwrap();
+        assert_eq!(back.atoms.len(), model.atoms.len());
+        for (a, b) in model.atoms.iter().zip(&back.atoms) {
+            assert_eq!(a.element, b.element);
+            for k in 0..3 {
+                assert!((a.pos[k] - b.pos[k]).abs() < 1e-3, "{a:?} vs {b:?}");
+            }
+        }
     }
 }
