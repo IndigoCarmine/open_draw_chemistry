@@ -12,6 +12,7 @@ use crate::three_d::{Export3d, ForceField};
 pub mod icons;
 pub mod menu;
 pub mod palette;
+pub mod periodic_table;
 pub mod properties;
 pub mod status;
 pub mod tabs;

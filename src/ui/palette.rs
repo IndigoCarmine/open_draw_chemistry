@@ -4,8 +4,9 @@ use chembuider_rs::{BondOrder, BondStereo, ChemStructEditor, Tool};
 use egui::vec2;
 
 use super::icons::{self, Frame, Icon};
+use super::periodic_table;
 
-/// Elements offered as buttons; anything else is typed into the 周期表… field.
+/// Elements offered as buttons; anything else is picked from the 周期表… popup.
 pub const ELEMENTS: [&str; 10] = ["C", "H", "N", "O", "S", "P", "F", "Cl", "Br", "I"];
 
 /// What a palette button does to the editor.
@@ -161,23 +162,32 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custom_element:
     });
 }
 
-/// 周期表…: for now a field to type any element symbol into.
+/// 周期表…: a periodic table to pick any element from, opening to the right over the canvas,
+/// with a field below it for typing a symbol. Escape or a click outside closes it.
 fn periodic_table_button(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custom: &mut String) {
     let button = egui::Button::new("周期表…").min_size(vec2(ui.available_width(), 34.0));
     let response = ui.add(button);
     egui::Popup::menu(&response)
+        .align(egui::RectAlign::RIGHT_START)
+        .gap(6.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.label("元素記号");
-            let field = ui.add(egui::TextEdit::singleline(custom).desired_width(80.0));
-            let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let valid = is_element_symbol(custom);
-            if (ui.add_enabled(valid, egui::Button::new("設定")).clicked() || (entered && valid))
-                && valid
-            {
-                set_element(editor, custom.trim());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            if let Some(symbol) = periodic_table::table(ui, &editor.current_element) {
+                set_element(editor, symbol);
                 ui.close();
             }
+            ui.horizontal(|ui| {
+                ui.label("元素記号を入力");
+                let field = ui.add(egui::TextEdit::singleline(custom).desired_width(60.0));
+                let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let valid = is_element_symbol(custom);
+                if ui.add_enabled(valid, egui::Button::new("設定")).clicked() || (entered && valid)
+                {
+                    set_element(editor, custom.trim());
+                    ui.close();
+                }
+            });
         });
 }
 
@@ -226,6 +236,19 @@ mod tests {
         set_element(&mut editor, "N");
         assert_eq!(editor.current_element, "N");
         assert_eq!(editor.tool, Tool::Bond);
+    }
+
+    #[test]
+    fn picking_from_the_periodic_table_sets_every_element() {
+        for z in 1..=periodic_table::LAST_Z {
+            let symbol = periodic_table::element(z).unwrap().symbol;
+            let mut editor = ChemStructEditor::default();
+            editor.tool = Tool::Eraser;
+            set_element(&mut editor, symbol);
+            assert_eq!(editor.current_element, symbol);
+            assert_eq!(editor.tool, Tool::Bond);
+            assert!(is_element_symbol(symbol), "{symbol}");
+        }
     }
 
     #[test]
