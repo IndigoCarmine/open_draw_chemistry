@@ -8,6 +8,7 @@ use super::icons::{self, Frame, Icon};
 use super::{Command, ViewMode};
 use crate::io::Export;
 use crate::theme;
+use crate::three_d::Export3d;
 
 /// What the menus need to know about the app to grey out or tick their items.
 pub struct MenuState<'a> {
@@ -18,6 +19,12 @@ pub struct MenuState<'a> {
     pub show_properties: bool,
     pub view: ViewMode,
     pub recent: &'a [PathBuf],
+    /// A 3D model can be generated now: there is a document, OpenBabel is built in and no 3D
+    /// work is running.
+    pub can_generate_3d: bool,
+    /// There is a 3D model to optimise or export (optimising also needs no work running).
+    pub can_optimize_3d: bool,
+    pub can_export_3d: bool,
 }
 
 pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>) {
@@ -146,10 +153,33 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             );
         });
         ui.menu_button("3D", |ui| {
-            planned(
+            item(
                 ui,
-                &["2D から 3D を生成", "構造最適化", "3D をエクスポート"],
+                "2D から 3D を生成",
+                "",
+                state.can_generate_3d,
+                Command::Generate3d,
+                out,
             );
+            item(
+                ui,
+                "構造最適化",
+                "",
+                state.can_optimize_3d,
+                Command::Optimize3d,
+                out,
+            );
+            ui.add_enabled_ui(state.can_export_3d, |ui| {
+                ui.menu_button("3D をエクスポート", |ui| {
+                    for export in Export3d::ALL {
+                        let label = format!("{} (.{})…", export.description(), export.extension());
+                        if ui.button(label).clicked() {
+                            out.push(Command::Export3d(export));
+                            ui.close();
+                        }
+                    }
+                });
+            });
         });
         ui.menu_button("ツール", |ui| {
             planned(ui, &["周期表", "断片の管理"]);

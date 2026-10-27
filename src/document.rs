@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use chembuider_rs::{ChemStructEditor, Config, Molecule};
 
 use crate::io::{self, Format, Loaded};
+use crate::three_d::Job;
 
 pub struct Document {
     pub editor: ChemStructEditor,
@@ -25,6 +26,8 @@ pub struct Document {
     auto_fit: Option<AutoFit>,
     /// Shown as "Untitled N" until the document has a path.
     untitled_number: usize,
+    /// The structure's 3D model, generated on demand.
+    pub three_d: Job,
 }
 
 impl Document {
@@ -39,6 +42,7 @@ impl Document {
             saved: Molecule::default(),
             auto_fit: None,
             untitled_number,
+            three_d: Job::default(),
         }
     }
 
@@ -55,6 +59,7 @@ impl Document {
             saved: loaded.molecule,
             auto_fit: Some(AutoFit::default()),
             untitled_number: 0,
+            three_d: Job::default(),
         }
     }
 

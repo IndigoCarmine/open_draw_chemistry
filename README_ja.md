@@ -17,17 +17,44 @@ ChemDraw / ChemSketch / XDrawChem のような、化学構造式と反応式を�
 - 解析パネル：分子式、精密質量、同位体パターン（m/z）、元素分析。
 - MOL2 / SMILES（Windows では PNG も）へのエクスポート。Windows ではコピーすると
   ChemDraw 互換の構造と EMF の図がクリップボードに入り、Office に貼り付けられます。
+- **2D → 3D**（OpenBabel）：描いた構造から 3D モデルを生成（水素の付加、くさび結合の立体の反映、
+  Ph / OMe などの略号の展開）、MMFF94 / MMFF94s / UFF / GAFF による構造最適化、
+  MOL / SDF / XYZ / PDB へのエクスポート。3D ビューアはまだ準備中で、今はパネルに分子式・
+  原子数・エネルギーを表示します。
 
-今後の予定：自由配置の反応式（矢印・テキスト・ブラケット・図形）、3D モデル化（OpenBabel）、
+今後の予定：自由配置の反応式（矢印・テキスト・ブラケット・図形）、3D ビューア、
 ibisOffice への埋め込み、Word / PowerPoint 用の COM OLE サーバー。
 
 > **Rust 1.95 以上**が必要です（Wayland のドラッグ＆ドロップ用 `egui-winit` フォークによる）。
 
 ## はじめかた
 
+3D 生成では [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs) を通して
+[OpenBabel](https://openbabel.org) をリンクします。最初に一度（openbabel_rs を更新したときも）
+ビルド済みの OpenBabel を取得してください（`bash` と、`gh` または `curl` が必要です）。
+
 ```bash
-cargo run -- path/to/file.cdx   # ファイルの指定は省略可
+bash scripts/fetch-openbabel.sh   # third_party/openbabel-prebuilt/ に展開（コミットしない）
+cargo run -- path/to/file.cdx     # ファイルの指定は省略可
 ```
+
+`.cargo/config.toml` が `OPENBABEL_SYS_PREBUILT_DIR` をこのディレクトリに向けます。
+Windows では openbabel-sys のビルドスクリプトが OpenBabel の DLL とプラグインを実行ファイルの
+隣にコピーし（Linux / macOS は rpath）、`cargo run` も `cargo test` もそのまま動きます。
+バインディングの小さな C++ シムのために C++ コンパイラ（Windows では MSVC Build Tools）は必要です。
+
+ビルド済みの OpenBabel があるのは `x86_64-pc-windows-msvc`、`x86_64-unknown-linux-gnu`、
+`aarch64-apple-darwin` です。それ以外では、3D 生成なしでビルドする（3D パネルには利用できない旨を
+表示します）か、
+
+```bash
+cargo build --no-default-features   # 既定の `openbabel` フィーチャーを外す
+```
+
+CMake を入れて `OPENBABEL_SYS_PREBUILT_DIR` を空にし、OpenBabel をソースからビルドしてください
+（初回は 10〜20 分かかります）。リリース版で OpenBabel を同梱しているのは今のところ Windows だけで
+（DLL・プラグイン・`data` ディレクトリを実行ファイルの隣に配置）、macOS と Linux のパッケージは
+`--no-default-features` でビルドしています。
 
 ## リリースする
 
@@ -85,4 +112,4 @@ sudo apt-get install -y \
 
 ## ライセンス
 
-GPL-2.0-or-later — [LICENSE](LICENSE) を参照してください（予定している 3D 化で OpenBabel をリンクするため）。
+GPL-2.0-or-later — [LICENSE](LICENSE) を参照してください（3D 生成で OpenBabel をリンクするため）。

@@ -35,6 +35,13 @@ jobs:
             echo "value=0.0.0-dev" >> "$GITHUB_OUTPUT"
           fi
 
+      # 3D generation links OpenBabel from the prebuilt attached to the openbabel_rs release.
+      - name: Fetch prebuilt OpenBabel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/fetch-openbabel.sh
+
       - name: Build
         run: cargo build --release
 
@@ -45,11 +52,19 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc "/DMyAppVersion=${{ steps.version.outputs.value }}" installer\windows.iss
 
+      # The executable needs OpenBabel beside it (its DLLs, its .obf plugins and its data
+      # directory), so the portable build is a zip rather than a lone .exe.
       - name: Stage artifacts
         shell: bash
         run: |
           mkdir -p out
-          cp "target/release/${BIN_NAME}.exe" "out/${APP_NAME}-${{ steps.version.outputs.value }}-windows-x64.exe"
+          portable="${APP_NAME}-${{ steps.version.outputs.value }}-windows-x64"
+          ob=third_party/openbabel-prebuilt/bin
+          mkdir -p "$portable"
+          cp "target/release/${BIN_NAME}.exe" "$portable/"
+          cp "$ob"/*.dll "$ob"/*.obf "$portable/"
+          cp -r "$ob/data" "$portable/data"
+          7z a "out/$portable.zip" "$portable"
           cp dist/*.exe out/
 
       - uses: actions/upload-artifact@v4
@@ -87,10 +102,13 @@ jobs:
           cargo install cargo-bundle --locked
           brew install create-dmg
 
+      # Without OpenBabel (no 3D generation): openbabel_rs has no x86_64-apple-darwin prebuilt
+      # for the universal binary's Intel slice, and the .app does not yet bundle the OpenBabel
+      # dylib, plugins and data the aarch64 slice would load.
       - name: Build (both architectures)
         run: |
-          cargo build --release --target x86_64-apple-darwin
-          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --no-default-features --target x86_64-apple-darwin
+          cargo build --release --no-default-features --target aarch64-apple-darwin
 
       - name: Bundle .app
         env:
@@ -99,7 +117,7 @@ jobs:
           # cargo-bundle reads [package.metadata.bundle] from Cargo.toml and
           # generates Info.plist and the Resources/ layout for us. It only ever
           # bundles one architecture, so we swap in a universal binary after.
-          cargo bundle --release --target aarch64-apple-darwin
+          cargo bundle --release --no-default-features --target aarch64-apple-darwin
 
           APP="target/aarch64-apple-darwin/release/bundle/osx/Open DrawChemistry.app"
           lipo -create -output "${APP}/Contents/MacOS/${BIN_NAME}" \
@@ -184,8 +202,11 @@ jobs:
         with:
           tool: cargo-deb
 
+      # Without OpenBabel (no 3D generation) until the .deb and AppImage bundle libopenbabel,
+      # its plugins and its data: the linked library is found through an rpath into the build
+      # tree, which an installed package does not have.
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --no-default-features
 
       - name: Build .deb
         env:

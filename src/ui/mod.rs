@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::io::Export;
+use crate::three_d::{Export3d, ForceField};
 
 pub mod icons;
 pub mod menu;
@@ -66,5 +67,12 @@ pub enum Command {
     ToggleCleanup,
     ToggleProperties,
     SetView(ViewMode),
+    /// Generate the active document's 3D model from its drawing.
+    Generate3d,
+    /// Minimise the active document's 3D model further.
+    Optimize3d,
+    Export3d(Export3d),
+    /// The force field the active document's next generation or optimisation uses.
+    SetForceField(ForceField),
     About,
 }

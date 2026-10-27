@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::document::Document;
 use crate::io::{self, Export, Format};
 use crate::theme;
+use crate::three_d::{self, Export3d};
 use crate::ui::{self, Command, ViewMode, menu::MenuState};
 
 /// How many files "Open Recent" remembers.
@@ -266,6 +267,38 @@ impl OpenDrawApp {
         };
     }
 
+    /// Write the active document's 3D model to a file the user picks.
+    fn export_3d(&mut self, export: Export3d) {
+        let Some(doc) = self.active_doc() else { return };
+        let Some(model) = doc.three_d.model() else {
+            self.status = "エクスポートする 3D モデルがありません".to_owned();
+            return;
+        };
+        let text = match three_d::export(model, export) {
+            Ok(text) => text,
+            Err(e) => {
+                self.status = format!("エクスポートできませんでした: {e}");
+                return;
+            }
+        };
+        let stem = doc
+            .path
+            .as_deref()
+            .and_then(Path::file_stem)
+            .map_or_else(|| doc.title(), |s| s.to_string_lossy().into_owned());
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(export.description(), &[export.extension()])
+            .set_file_name(format!("{stem}.{}", export.extension()))
+            .save_file()
+        else {
+            return;
+        };
+        self.status = match std::fs::write(&path, text) {
+            Ok(()) => format!("{} に書き出しました", path.display()),
+            Err(e) => format!("エクスポートできませんでした: {e}"),
+        };
+    }
+
     /// Close the tab at `index`, first asking about unsaved changes.
     fn close_tab(&mut self, index: usize) {
         if index >= self.docs.len() {
@@ -321,6 +354,22 @@ impl OpenDrawApp {
             Command::ToggleProperties => self.show_properties = !self.show_properties,
             Command::SetView(view) => self.view = view,
             Command::About => self.show_about = true,
+            Command::Generate3d => {
+                if let Some(doc) = self.docs.get_mut(self.active) {
+                    doc.three_d.generate(&doc.editor.molecule, &self.config);
+                }
+            }
+            Command::Optimize3d => {
+                if let Some(doc) = self.active_doc_mut() {
+                    doc.three_d.optimize();
+                }
+            }
+            Command::Export3d(export) => self.export_3d(export),
+            Command::SetForceField(ff) => {
+                if let Some(doc) = self.active_doc_mut() {
+                    doc.three_d.force_field = ff;
+                }
+            }
             Command::Undo
             | Command::Redo
             | Command::Copy
@@ -387,6 +436,9 @@ impl OpenDrawApp {
 
     fn menu_state(&self) -> MenuState<'_> {
         let editor = self.active_doc().map(|d| &d.editor);
+        let job = self.active_doc().map(|d| &d.three_d);
+        let running = job.is_some_and(|j| j.is_running());
+        let has_model = job.is_some_and(|j| j.model().is_some());
         MenuState {
             has_document: editor.is_some(),
             can_undo: editor.is_some_and(|e| !e.undo_stack.is_empty()),
@@ -395,6 +447,26 @@ impl OpenDrawApp {
             show_properties: self.show_properties,
             view: self.view,
             recent: &self.recent,
+            can_generate_3d: three_d::AVAILABLE && job.is_some() && !running,
+            can_optimize_3d: has_model && !running,
+            can_export_3d: has_model,
+        }
+    }
+
+    /// Collect finished 3D work, and keep frames coming while any is still running (the
+    /// background thread cannot wake the UI itself).
+    fn poll_3d(&mut self, ctx: &egui::Context) {
+        let mut running = false;
+        for (i, doc) in self.docs.iter_mut().enumerate() {
+            if let Some(message) = doc.three_d.poll()
+                && i == self.active
+            {
+                self.status = message;
+            }
+            running |= doc.three_d.is_running();
+        }
+        if running {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
 
@@ -575,6 +647,7 @@ impl eframe::App for OpenDrawApp {
             self.pending_close = Some(PendingClose::Quit);
         }
 
+        self.poll_3d(&ctx);
         let state = self.menu_state();
         let visuals = ui.visuals().clone();
         let dark = visuals.dark_mode;
@@ -638,6 +711,7 @@ impl eframe::App for OpenDrawApp {
         }
         let view = self.view;
         let title = self.active_doc().map(Document::title).unwrap_or_default();
+        let active = self.docs.get(self.active);
         if !self.docs.is_empty() && view.shows_3d() {
             let panel = if view.shows_2d() {
                 egui::Panel::right("view3d")
@@ -651,7 +725,9 @@ impl eframe::App for OpenDrawApp {
             };
             panel
                 .frame(egui::Frame::new().fill(theme::DARK_SURFACE))
-                .show(ui, |ui| ui::view3d::view3d(ui, &title));
+                .show(ui, |ui| {
+                    ui::view3d::view3d(ui, &title, active, &mut commands)
+                });
         }
         egui::CentralPanel::default()
             .frame(
@@ -797,5 +873,46 @@ mod tests {
         assert_eq!(restored.recent, vec![PathBuf::from("x.cdxml")]);
         assert!(!restored.show_properties);
         assert!(restored.docs.is_empty(), "documents are not persisted");
+    }
+
+    /// The 3D menu's generate → (poll) → optimise path, and the panel drawing the result.
+    #[cfg(feature = "openbabel")]
+    #[test]
+    fn the_3d_menu_generates_and_optimises_in_the_background() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_one_untitled();
+        let mol = &mut app.docs[0].editor.molecule;
+        let c = mol.add_atom("C".to_owned(), [0.0, 0.0], 0);
+        let o = mol.add_atom("O".to_owned(), [1.5, 0.0], 0);
+        mol.add_bond(c, o, chembuider_rs::BondOrder::Single);
+        assert!(app.menu_state().can_generate_3d);
+        assert!(!app.menu_state().can_export_3d);
+
+        let finish = |app: &mut OpenDrawApp| {
+            while app.docs[0].three_d.is_running() {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                app.poll_3d(&ctx);
+            }
+        };
+        app.run(&ctx, Command::SetForceField(three_d::ForceField::Uff));
+        app.run(&ctx, Command::Generate3d);
+        finish(&mut app);
+        let model = app.docs[0].three_d.model().expect(&app.status);
+        assert_eq!(model.force_field, three_d::ForceField::Uff);
+        assert!(app.status.contains("生成しました"), "{}", app.status);
+        assert!(app.menu_state().can_optimize_3d && app.menu_state().can_export_3d);
+
+        app.run(&ctx, Command::Optimize3d);
+        finish(&mut app);
+        assert!(app.docs[0].three_d.model().is_some(), "{}", app.status);
+        assert!(app.status.contains("最適化しました"), "{}", app.status);
+
+        // One headless frame of the panel with the model in it.
+        let mut commands = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui::view3d::view3d(ui, "test", app.docs.first(), &mut commands);
+        });
+        output.textures_delta.clear();
+        assert!(commands.is_empty());
     }
 }

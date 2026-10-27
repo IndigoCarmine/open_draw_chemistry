@@ -17,17 +17,44 @@ and [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs) (ChemDraw file c
 - Analysis panel: formula, exact mass, isotope pattern (m/z), elemental analysis.
 - Export MOL2 / SMILES (and PNG on Windows). On Windows, Copy puts a ChemDraw-compatible
   structure plus an EMF picture on the clipboard for Office.
+- **2D → 3D** (OpenBabel): generate a 3D model of the drawing (hydrogens added, wedges
+  respected, abbreviations such as Ph / OMe expanded), relax it with MMFF94 / MMFF94s / UFF /
+  GAFF, and export it as MOL / SDF / XYZ / PDB. The 3D viewer itself is still to come; for now
+  the panel shows the model's formula, atom count and energy.
 
-Planned: free-form reaction schemes (arrows, text, brackets, shapes), 3D model building
-(OpenBabel), ibisOffice embedding, and a COM OLE server for Word/PowerPoint.
+Planned: free-form reaction schemes (arrows, text, brackets, shapes), the 3D viewer,
+ibisOffice embedding, and a COM OLE server for Word/PowerPoint.
 
 > **Rust 1.95+** is required (raised by the `egui-winit` fork used for Wayland drag-and-drop).
 
 ## Getting started
 
+3D generation links [OpenBabel](https://openbabel.org) through
+[openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs). Fetch its prebuilt OpenBabel once
+(and again after bumping openbabel_rs); the script needs `bash` and `gh` or `curl`:
+
 ```bash
-cargo run -- path/to/file.cdx   # the file is optional
+bash scripts/fetch-openbabel.sh   # unpacks into third_party/openbabel-prebuilt/ (not committed)
+cargo run -- path/to/file.cdx     # the file is optional
 ```
+
+`.cargo/config.toml` points `OPENBABEL_SYS_PREBUILT_DIR` at that directory, and the
+openbabel-sys build script copies OpenBabel's DLLs and plugins next to the binaries on Windows
+(Linux and macOS use an rpath), so `cargo run` and `cargo test` need nothing else. A C++
+compiler is still required for the small binding shim (MSVC Build Tools on Windows).
+
+Prebuilts exist for `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu` and
+`aarch64-apple-darwin`. Anywhere else, either build without 3D generation — the 3D panel then
+says it is unavailable:
+
+```bash
+cargo build --no-default-features   # leaves out the default `openbabel` feature
+```
+
+or install CMake and set `OPENBABEL_SYS_PREBUILT_DIR` to an empty value to build OpenBabel
+from source (10–20 minutes the first time). Release builds include OpenBabel on Windows only
+(its DLLs, plugins and `data` directory are installed beside the executable); the macOS and
+Linux packages are built with `--no-default-features` for now.
 
 ## Cutting a release
 
@@ -87,4 +114,4 @@ sudo apt-get install -y \
 
 ## License
 
-GPL-2.0-or-later — see [LICENSE](LICENSE). (GPL because the planned 3D builder links OpenBabel.)
+GPL-2.0-or-later — see [LICENSE](LICENSE). (GPL because 3D generation links OpenBabel.)

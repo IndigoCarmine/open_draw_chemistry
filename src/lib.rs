@@ -8,6 +8,7 @@ pub mod app;
 pub mod document;
 pub mod io;
 pub mod theme;
+pub mod three_d;
 pub mod ui;
 
 pub use app::OpenDrawApp;
