@@ -145,12 +145,15 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             );
         });
 
-        // Menus for what later phases bring, so the shape of the app is visible now.
         ui.menu_button("反応", |ui| {
-            planned(
-                ui,
-                &["反応矢印を追加", "平衡矢印を追加", "反応条件のテキスト"],
-            );
+            use chembuider_rs::molecule::ArrowKind;
+            for (label, command) in [
+                ("反応矢印を追加", Command::ArrowTool(ArrowKind::Reaction)),
+                ("平衡矢印を追加", Command::ArrowTool(ArrowKind::Equilibrium)),
+                ("反応条件のテキスト", Command::TextTool),
+            ] {
+                item(ui, label, "", state.has_document, command, out);
+            }
         });
         ui.menu_button("3D", |ui| {
             item(
