@@ -315,7 +315,12 @@ impl Viewport3d {
             return;
         }
         let new_source = self.scene.is_none_or(|(source, _)| source != scene.source);
-        let was_empty = self.viewer.molecule().is_none_or(|m| m.atoms.is_empty());
+        // A different number of atoms (a step added, a count changed) is framed anew, so the
+        // whole assembly stays in view; moved atoms (a radius changed) keep the camera.
+        let resized = self
+            .viewer
+            .molecule()
+            .is_none_or(|m| m.atoms.len() != scene.atoms.len());
         let atoms = scene
             .atoms
             .iter()
@@ -350,7 +355,7 @@ impl Viewport3d {
         self.scene = Some(key);
         self.scene_colors = Some(colors_key);
         self.last_hover = None;
-        if new_source || was_empty {
+        if new_source || resized {
             self.reframe = true;
         }
     }
@@ -696,7 +701,7 @@ mod tests {
     }
 
     /// A scene reloads only when its revision changes, recolours on a new colour key, and is
-    /// reframed only when another source is shown.
+    /// reframed only when another source is shown or the atom count changes.
     #[test]
     fn a_scene_reloads_on_a_new_revision_and_reframes_on_a_new_source() {
         let mut atoms = vec![
@@ -745,8 +750,10 @@ mod tests {
         assert!((x - 2.0).abs() < 1e-6);
         assert!(!view.reframe && view.camera.radius == 42.0);
         assert_eq!(calls, 3);
-        // Another source is framed.
+        // Another source is framed, and so is another atom count.
         view.sync_scene(Some(scene(2, 2, &atoms)), 5, || vec![[0.5; 4]; 2]);
+        assert!(std::mem::take(&mut view.reframe));
+        view.sync_scene(Some(scene(2, 3, &atoms[..1])), 5, || vec![[0.5; 4]; 1]);
         assert!(view.reframe);
         // Large scenes get level of detail.
         let many: Vec<Atom3d> = (0..LOD_FROM_ATOMS)
@@ -755,7 +762,7 @@ mod tests {
                 pos: [i as f64, 0.0, 0.0],
             })
             .collect();
-        view.sync_scene(Some(scene(2, 3, &many)), 5, || {
+        view.sync_scene(Some(scene(2, 4, &many)), 5, || {
             vec![[0.5; 4]; LOD_FROM_ATOMS]
         });
         assert!(view.offscreen.lod_settings().enabled);

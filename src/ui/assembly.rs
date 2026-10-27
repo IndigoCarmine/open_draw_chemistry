@@ -616,13 +616,12 @@ pub fn panel(
                     ui.selectable_value(&mut view.style, style, style.label());
                 }
             });
-        egui::ComboBox::from_id_salt("assembly_color")
-            .selected_text(format!("色：{}", view.color.label()))
-            .show_ui(ui, |ui| {
-                for mode in ColorMode::ALL {
-                    ui.selectable_value(&mut view.color, mode, mode.label());
-                }
-            });
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.label(ink.muted("色"));
+        for mode in ColorMode::ALL {
+            ui.selectable_value(&mut view.color, mode, mode.label());
+        }
     });
 
     section(ui, "情報");
