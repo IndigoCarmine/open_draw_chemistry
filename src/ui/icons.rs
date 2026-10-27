@@ -311,10 +311,15 @@ pub fn paint_logo(painter: &egui::Painter, rect: Rect) {
 
 /// The logo and the "Open DrawChemistry" wordmark, for the menu bar. egui's default font has
 /// no bold face, so "Open" is set apart by full ink and "DrawChemistry" is a shade lighter.
+///
+/// On Windows the logo mark is omitted: the native title bar already shows the app icon
+/// directly above the menu bar, so only the wordmark is drawn there.
 pub fn brand(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
-    paint_logo(ui.painter(), rect);
-    ui.add_space(2.0);
+    if !cfg!(windows) {
+        let (rect, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+        paint_logo(ui.painter(), rect);
+        ui.add_space(2.0);
+    }
     let ink = ui.visuals().widgets.noninteractive.fg_stroke.color;
     let mut job = egui::text::LayoutJob::default();
     let font = egui::FontId::proportional(14.5);
