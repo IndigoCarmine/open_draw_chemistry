@@ -114,7 +114,7 @@ impl Export3d {
 }
 
 /// One atom of a [`Model3d`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Atom3d {
     /// Element symbol ("C", "H", …).
     pub element: String,
@@ -123,7 +123,7 @@ pub struct Atom3d {
 }
 
 /// One bond of a [`Model3d`], between indices into [`Model3d::atoms`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Bond3d {
     pub begin: usize,
     pub end: usize,

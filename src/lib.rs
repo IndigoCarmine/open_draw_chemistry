@@ -5,6 +5,7 @@
 //! it into a window and handles documents and files.
 
 pub mod app;
+pub mod assembly;
 pub mod document;
 pub mod fragments;
 pub mod io;

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use chembuider_rs::{ChemStructEditor, Config, Molecule};
 
+use crate::assembly::AssemblyState;
 use crate::io::{self, Format, Loaded};
 use crate::three_d::Job;
 use crate::three_d::read::{Format3d, Opened3d};
@@ -32,6 +33,9 @@ pub struct Document {
     /// Set when [`Document::path`] is a 3D structure file the document was read from. That
     /// file is never written: saving asks for a CDX/CDXML file instead.
     pub imported_3d: Option<Format3d>,
+    /// The molecular assembly built from the document's monomers (the 集合体 view). Saved to
+    /// its own `.odasm` file, not with the drawing.
+    pub assembly: AssemblyState,
 }
 
 impl Document {
@@ -48,6 +52,7 @@ impl Document {
             untitled_number,
             three_d: Job::default(),
             imported_3d: None,
+            assembly: AssemblyState::default(),
         }
     }
 
@@ -66,6 +71,7 @@ impl Document {
             untitled_number: 0,
             three_d: Job::default(),
             imported_3d: None,
+            assembly: AssemblyState::default(),
         }
     }
 
@@ -94,6 +100,7 @@ impl Document {
             untitled_number: 0,
             three_d,
             imported_3d: Some(format),
+            assembly: AssemblyState::default(),
         }
     }
 
