@@ -1,0 +1,10 @@
+COMPND    ACETIC ACID
+HETATM    1 C1   ACY A   1       0.000   0.000   0.000  1.00  0.00           C
+HETATM    2 C2   ACY A   1       1.510   0.000   0.000  1.00  0.00           C
+HETATM    3 O1   ACY A   1       2.130   1.050   0.000  1.00  0.00           O
+HETATM    4 O2   ACY A   1       2.140  -1.170   0.000  1.00  0.00           O
+HETATM    5 H1   ACY A   1      -0.370   1.030   0.000  1.00  0.00           H
+HETATM    6 H2   ACY A   1      -0.370  -0.515   0.890  1.00  0.00           H
+HETATM    7 H3   ACY A   1      -0.370  -0.515  -0.890  1.00  0.00           H
+HETATM    8 HO   ACY A   1       3.100  -1.050   0.000  1.00  0.00           H
+END

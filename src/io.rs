@@ -5,6 +5,10 @@
 //! ([`merge_into_cdx`]), so arrows, captions and other objects the editor cannot show yet
 //! survive an open → edit → save round trip. CDXML is the same object tree written as XML, so
 //! both formats share one path.
+//!
+//! 3D structure files (MOL2, PDB, XYZ, MOL, SDF) open too ([`Kind::Structure3d`], read by
+//! [`load_3d`]), but only as a starting point: they are not saved back to (see
+//! [`crate::three_d::read`]).
 
 use std::fmt;
 use std::path::Path;
@@ -17,6 +21,8 @@ use chembuider_rs::molecule::cdx::{
 use chembuider_rs::molecule::cdx_codec;
 use chembuider_rs::molecule::mol2::to_mol2_string;
 use chembuider_rs::molecule::smiles::to_smiles;
+
+use crate::three_d::read::{self as read_3d, Format3d, Opened3d};
 
 /// A format a document can be opened from and saved to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -52,6 +58,22 @@ impl Format {
             Format::Cdx => "ChemDraw (CDX)",
             Format::Cdxml => "ChemDraw XML (CDXML)",
         }
+    }
+}
+
+/// What kind of file a path is, by its extension: a document to open and save, or a 3D
+/// structure that is only read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Document(Format),
+    Structure3d(Format3d),
+}
+
+impl Kind {
+    pub fn from_path(path: &Path) -> Option<Self> {
+        Format::from_path(path)
+            .map(Kind::Document)
+            .or_else(|| Format3d::from_path(path).map(Kind::Structure3d))
     }
 }
 
@@ -105,6 +127,8 @@ pub enum Error {
     Empty,
     /// The exporter could not produce the file.
     ExportFailed(Export),
+    /// A 3D structure file could not be read.
+    Structure3d(read_3d::Error),
 }
 
 impl fmt::Display for Error {
@@ -119,6 +143,7 @@ impl fmt::Display for Error {
             Error::ExportFailed(export) => {
                 write!(f, "{} を書き出せませんでした", export.description())
             }
+            Error::Structure3d(e) => write!(f, "{e}"),
         }
     }
 }
@@ -169,6 +194,16 @@ pub fn decode(format: Format, bytes: &[u8]) -> Result<Loaded, Error> {
         original,
         other_objects: import.other_objects,
     })
+}
+
+/// Read the first structure of the 3D file at `path` (see [`crate::three_d::read`]).
+pub fn load_3d(path: &Path) -> Result<Opened3d, Error> {
+    let format = Format3d::from_path(path).ok_or(Error::UnknownFormat)?;
+    if std::fs::metadata(path)?.len() > read_3d::MAX_FILE_BYTES {
+        return Err(Error::Structure3d(read_3d::Error::FileTooLarge));
+    }
+    let bytes = std::fs::read(path)?;
+    read_3d::read(format, &String::from_utf8_lossy(&bytes)).map_err(Error::Structure3d)
 }
 
 /// The file bytes of `mol` in `format`, merged into `original` (see [`Loaded::original`]) when
@@ -232,6 +267,23 @@ mod tests {
         assert_eq!(Format::from_path(Path::new("b.cdxml")), Some(Format::Cdxml));
         assert_eq!(Format::from_path(Path::new("b.mol")), None);
         assert_eq!(Format::from_path(Path::new("cdx")), None);
+    }
+
+    #[test]
+    fn kind_routes_documents_and_3d_structures() {
+        assert_eq!(
+            Kind::from_path(Path::new("a.CDXML")),
+            Some(Kind::Document(Format::Cdxml))
+        );
+        assert_eq!(
+            Kind::from_path(Path::new("a.pdb")),
+            Some(Kind::Structure3d(Format3d::Pdb))
+        );
+        assert_eq!(
+            Kind::from_path(Path::new("a.sdf")),
+            Some(Kind::Structure3d(Format3d::Sdf))
+        );
+        assert_eq!(Kind::from_path(Path::new("a.png")), None);
     }
 
     #[test]

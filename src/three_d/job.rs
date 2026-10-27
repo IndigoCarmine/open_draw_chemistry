@@ -55,6 +55,17 @@ pub struct Job {
 }
 
 impl Job {
+    /// A job already holding `model` (read from a file rather than generated) as the model of
+    /// `drawing`, so it is not stale until the drawing is edited.
+    pub fn with_model(model: Model3d, drawing: &Molecule) -> Self {
+        Self {
+            force_field: model.force_field,
+            state: JobState::Done(model),
+            source: Some(drawing.clone()),
+            result: None,
+        }
+    }
+
     pub fn is_running(&self) -> bool {
         matches!(self.state, JobState::Running(_))
     }
