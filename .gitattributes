@@ -1,0 +1,6 @@
+# Normalise to LF in the repo. This matters for installer/linux/AppRun: a CRLF
+# shebang makes the AppImage fail to start on Linux with a confusing error.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary

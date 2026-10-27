@@ -1,0 +1,70 @@
+[package]
+name = "egui_template"
+version = "0.1.0"
+edition = "2024"
+# Raised from edition 2024's 1.85 by the egui-winit fork in [patch.crates-io].
+rust-version = "1.95"
+description = "A cross-platform egui/eframe application template with tag-driven installer releases"
+authors = ["Your Name <you@example.com>"]
+license = "MIT"
+repository = "https://github.com/your-name/egui_template"
+readme = "README.md"
+
+[dependencies]
+eframe = { version = "0.37.0", features = ["persistence"] }
+egui = "0.37.0"
+serde = { version = "1.0.229", features = ["derive"] }
+
+# Only used to decode the embedded window icon, so the heavy default codecs are off.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+# Upstream winit/egui-winit do not implement native drag-and-drop on Wayland.
+# These forks do; without them DnD silently does nothing under a Wayland session.
+[patch.crates-io]
+winit = { git = "https://github.com/IndigoCarmine/winit", branch = "wayland-native-dnd" }
+egui-winit = { git = "https://github.com/IndigoCarmine/egui-winit", branch = "main" }
+
+[dev-dependencies]
+serde_json = "1.0.154"
+
+[build-dependencies]
+winresource = "0.1.34"
+
+# --- cargo-bundle: drives the macOS .app built by .github/workflows/release.yml ---
+# `cargo bundle` generates Info.plist from these keys, so there is no plist to
+# hand-maintain. Build the bundle locally with `cargo bundle --release`.
+[package.metadata.bundle]
+name = "egui Template"
+identifier = "com.example.egui-template"
+icon = ["resources/icon.icns"]
+category = "Utility"
+short_description = "A cross-platform egui/eframe application template"
+long_description = """
+A starting point for cross-platform desktop applications built with egui and
+eframe, including tag-driven installer releases for Windows, macOS and Linux.
+"""
+
+# Release binaries: smaller and faster, at the cost of longer link times.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# --- cargo-deb: used by .github/workflows/release.yml to build the Linux .deb ---
+[package.metadata.deb]
+maintainer = "Your Name <you@example.com>"
+copyright = "2026, Your Name <you@example.com>"
+license-file = ["LICENSE", "0"]
+extended-description = "A cross-platform GUI application built with egui and eframe."
+section = "utils"
+priority = "optional"
+# eframe dlopens its GL/X11/Wayland libraries rather than linking them, so `$auto`
+# only ever detects libc. Without listing them the package installs cleanly and
+# then fails to start on a minimal system.
+depends = "$auto, libxkbcommon0, libwayland-client0, libegl1, libgl1, libx11-6, libxcursor1, libxi6, libxrandr2"
+assets = [
+    ["target/release/egui_template", "usr/bin/", "755"],
+    ["installer/linux/egui-template.desktop", "usr/share/applications/", "644"],
+    ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/egui-template.png", "644"],
+]

@@ -1,0 +1,16 @@
+/target
+/dist
+
+# Release-workflow scratch output (also produced when building installers locally)
+/out
+/AppDir
+*.AppImage
+*.dmg
+*.deb
+appimagetool
+
+# act (the local GitHub Actions runner) -- a downloaded tool, not part of the project
+act.exe
+act
+.secrets
+.actrc.local
