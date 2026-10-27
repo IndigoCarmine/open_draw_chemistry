@@ -322,3 +322,32 @@ fn a_saved_crystal_reopens_to_the_same_build() {
     );
     assert_eq!(built.molecule_count(), 16);
 }
+
+#[test]
+fn a_cell_smaller_than_its_molecule_clashes_with_its_own_image() {
+    use open_draw_chemistry::assembly::clash;
+    let cell = |a: f64| Cell {
+        a,
+        b: 12.0,
+        c: 12.0,
+        alpha: 90.0,
+        beta: 90.0,
+        gamma: 90.0,
+    };
+    // The molecule spans about 1.9 Å along a: a 1.6 Å cell puts its image on top of it.
+    let tight = cell(1.6);
+    let built = build(&crystal(bent(&tight, [0.5; 3]), tight, "P1", [1, 1, 1]), 1).unwrap();
+    let periodic = clash::periodic_of(&built).expect("a crystal has a box");
+    let found = clash::find(&built, Some(&periodic));
+    assert!(!found.pairs.is_empty(), "clashes with its image");
+    assert!(found.pairs.iter().all(|c| clash::through_image(&built, c)));
+    assert!(
+        clash::find(&built, None).pairs.is_empty(),
+        "alone it is clear"
+    );
+
+    let roomy = cell(12.0);
+    let built = build(&crystal(bent(&roomy, [0.5; 3]), roomy, "P1", [2, 2, 2]), 1).unwrap();
+    let periodic = clash::periodic_of(&built).unwrap();
+    assert!(clash::find(&built, Some(&periodic)).pairs.is_empty());
+}

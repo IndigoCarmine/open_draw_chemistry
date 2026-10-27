@@ -66,14 +66,17 @@ impl ClashCheck {
         let current = self.done.as_ref().is_some_and(|(k, _)| *k == key);
         if !current && self.running.is_none() {
             if built.atoms.len() <= INLINE_ATOMS {
-                self.done = Some((key, Arc::new(clash::find(built, None))));
+                self.done = Some((
+                    key,
+                    Arc::new(clash::find(built, clash::periodic_of(built).as_ref())),
+                ));
             } else {
                 let (tx, rx) = channel();
                 let job = Arc::clone(built);
                 let ctx = ctx.clone();
                 std::thread::spawn(move || {
                     // The receiver may be gone by now: nothing to tell then.
-                    let _ = tx.send(clash::find(&job, None));
+                    let _ = tx.send(clash::find(&job, clash::periodic_of(&job).as_ref()));
                     ctx.request_repaint();
                 });
                 self.running = Some((key, rx));
@@ -547,7 +550,17 @@ pub(super) fn clash_info(
         )
     };
     for c in clashes.pairs.iter().take(LISTED_CLASHES) {
-        let text = format!("{} – {}：{:.2} Å", label(c.a), label(c.b), c.distance);
+        let image = if clash::through_image(&built, c) {
+            "（周期像）"
+        } else {
+            ""
+        };
+        let text = format!(
+            "{} – {}{image}：{:.2} Å",
+            label(c.a),
+            label(c.b),
+            c.distance
+        );
         if ui
             .add(egui::Button::new(RichText::new(text).size(11.0).color(warn)).frame(false))
             .on_hover_text("クリックで前の分子を選択")

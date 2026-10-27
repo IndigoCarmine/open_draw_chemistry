@@ -106,6 +106,23 @@ pub fn find(built: &Built, periodic: Option<&Periodic>) -> Clashes {
     find_in(&positions, &kinds(built), &built.molecule_of_atom, periodic)
 }
 
+/// The periodic box of `built`: its supercell (the box of what was built), if it has one.
+pub fn periodic_of(built: &Built) -> Option<Periodic> {
+    built
+        .cell
+        .as_ref()
+        .and_then(|cell| Periodic::new(cell.vectors()))
+}
+
+/// Whether `clash` was found through a periodic image: its distance is not the direct one.
+pub fn through_image(built: &Built, clash: &Clash) -> bool {
+    let d = math::norm(math::sub(
+        built.atoms[clash.a].pos,
+        built.atoms[clash.b].pos,
+    ));
+    (d - clash.distance).abs() > 1e-6
+}
+
 /// The largest distance at which any two of these atoms can clash.
 fn cutoff(kinds: &[ClashKind]) -> f64 {
     let r = kinds.iter().map(|k| k.radius).fold(0.0, f64::max);
@@ -129,12 +146,14 @@ pub fn find_in(
     'atoms: for i in 0..n {
         let p = grid.wrapped[i];
         let mut stop = false;
-        grid.visit(grid.bin_of[i], |j, shift| {
+        grid.visit(grid.bin_of[i], |j, shift, cells| {
             if j <= i || stop {
                 return;
             }
-            let zero_shift = shift == [0.0; 3];
-            if zero_shift && molecules[i] == molecules[j] {
+            // Wrapping moved each atom by its own lattice translation: the pair is the
+            // molecule with itself only when the translations cancel.
+            let own = (0..3).all(|k| cells[k] + grid.moved_by[i][k] == grid.moved_by[j][k]);
+            if own && molecules[i] == molecules[j] {
                 return;
             }
             let q = math::add(grid.wrapped[j], shift);
@@ -187,19 +206,22 @@ pub fn brute_force(
     periodic: Option<&Periodic>,
 ) -> Vec<Clash> {
     let n = positions.len().min(kinds.len()).min(molecules.len());
-    let mut shifts = vec![[0.0; 3]];
+    let mut shifts = vec![([0.0; 3], [0i64; 3])];
     let mut positions = positions[..n].to_vec();
+    let mut moved_by = vec![[0i64; 3]; n];
     if let Some(box_) = periodic {
         // Into the box first, so two cells either way reach every close image.
-        for p in &mut positions {
+        for (p, by) in positions.iter_mut().zip(&mut moved_by) {
             let cell = box_.fractional(*p).map(f64::floor);
+            *by = cell.map(|x| x as i64);
             *p = math::sub(*p, box_.cartesian(cell));
         }
         shifts.clear();
         for x in -2..=2 {
             for y in -2..=2 {
                 for z in -2..=2 {
-                    shifts.push(box_.cartesian([f64::from(x), f64::from(y), f64::from(z)]));
+                    let cells = [x, y, z];
+                    shifts.push((box_.cartesian(cells.map(|x| x as f64)), cells));
                 }
             }
         }
@@ -210,8 +232,11 @@ pub fn brute_force(
             let limit = geom::clash_limit(kinds[i], kinds[j]);
             let closest = shifts
                 .iter()
-                .filter(|s| **s != [0.0; 3] || molecules[i] != molecules[j])
-                .map(|s| math::distance(positions[i], math::add(positions[j], *s)))
+                .filter(|(_, cells)| {
+                    molecules[i] != molecules[j]
+                        || (0..3).any(|k| cells[k] + moved_by[i][k] != moved_by[j][k])
+                })
+                .map(|(s, _)| math::distance(positions[i], math::add(positions[j], *s)))
                 .fold(f64::INFINITY, f64::min);
             if closest < limit {
                 out.push((
@@ -255,6 +280,8 @@ pub struct Grid {
     order: Vec<usize>,
     /// Each atom's position, moved into the box in a periodic frame.
     wrapped: Vec<Vec3>,
+    /// The lattice translation (in cells) each atom was moved back by when wrapped.
+    moved_by: Vec<[i64; 3]>,
     bin_of: Vec<[i64; 3]>,
 }
 
@@ -300,6 +327,7 @@ impl Grid {
 
         let mut wrapped = Vec::with_capacity(positions.len());
         let mut bin_of = Vec::with_capacity(positions.len());
+        let mut moved_by = Vec::with_capacity(positions.len());
         for &p in positions {
             let (fraction, moved) = match &frame {
                 Frame::Open { min, size } => {
@@ -308,10 +336,12 @@ impl Grid {
                 Frame::Periodic(box_) => {
                     let f = box_.fractional(p);
                     let cell = f.map(f64::floor);
+                    moved_by.push(cell.map(|x| x as i64));
                     let f = math::sub(f, cell);
                     (f, math::sub(p, box_.cartesian(cell)))
                 }
             };
+            moved_by.resize(wrapped.len() + 1, [0; 3]);
             let fraction: Vec3 = fraction;
             wrapped.push(moved);
             bin_of.push(std::array::from_fn(|k| {
@@ -342,19 +372,21 @@ impl Grid {
             start,
             order,
             wrapped,
+            moved_by,
             bin_of,
         }
     }
 
     /// Every atom in the bins around `bin`, with the lattice translation to add to its
-    /// (wrapped) position — zero outside a periodic box.
-    fn visit(&self, bin: [i64; 3], mut f: impl FnMut(usize, Vec3)) {
+    /// (wrapped) position — zero outside a periodic box — and that translation in cells.
+    fn visit(&self, bin: [i64; 3], mut f: impl FnMut(usize, Vec3, [i64; 3])) {
         let bins = self.bins.map(|b| b as i64);
         let [rx, ry, rz] = self.reach;
         for dx in -rx..=rx {
             for dy in -ry..=ry {
                 for dz in -rz..=rz {
                     let at = [bin[0] + dx, bin[1] + dy, bin[2] + dz];
+                    let mut cells = [0i64; 3];
                     let shift = match &self.frame {
                         Frame::Open { .. } => {
                             if (0..3).any(|k| at[k] < 0 || at[k] >= bins[k]) {
@@ -363,12 +395,11 @@ impl Grid {
                             [0.0; 3]
                         }
                         Frame::Periodic(box_) => {
-                            let cells: Vec3 =
-                                std::array::from_fn(|k| at[k].div_euclid(bins[k]) as f64);
-                            if cells == [0.0; 3] {
+                            cells = std::array::from_fn(|k| at[k].div_euclid(bins[k]));
+                            if cells == [0; 3] {
                                 [0.0; 3]
                             } else {
-                                box_.cartesian(cells)
+                                box_.cartesian(cells.map(|x| x as f64))
                             }
                         }
                     };
@@ -376,7 +407,7 @@ impl Grid {
                     let k = (b[0] as usize * self.bins[1] + b[1] as usize) * self.bins[2]
                         + b[2] as usize;
                     for &j in &self.order[self.start[k]..self.start[k + 1]] {
-                        f(j, shift);
+                        f(j, shift, cells);
                     }
                 }
             }
@@ -388,7 +419,7 @@ impl Grid {
     pub fn any_near(&self, p: Vec3, mut within: impl FnMut(usize) -> f64) -> bool {
         let (p, bin) = self.locate(p);
         let mut found = false;
-        self.visit(bin, |j, shift| {
+        self.visit(bin, |j, shift, _| {
             if !found {
                 let r = within(j);
                 found = squared(math::sub(math::add(self.wrapped[j], shift), p)) < r * r;
@@ -527,6 +558,26 @@ mod tests {
         let found = find_in(&pos, &kinds, &[0, 0], periodic.as_ref());
         assert_eq!(found.pairs.len(), 1);
         assert!((found.pairs[0].distance - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_molecule_across_the_box_face_does_not_clash_with_itself() {
+        let kinds = vec![ClashKind::of("C", std::iter::empty()); 2];
+        // Straddling x = 0 of a 10 Å box: wrapping puts the two atoms 9.5 Å apart.
+        let pos = vec![[-0.25, 5.0, 5.0], [0.25, 5.0, 5.0]];
+        let periodic = Periodic::new([[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]);
+        assert!(
+            find_in(&pos, &kinds, &[0, 0], periodic.as_ref())
+                .pairs
+                .is_empty()
+        );
+        assert!(brute_force(&pos, &kinds, &[0, 0], periodic.as_ref()).is_empty());
+        assert_eq!(
+            find_in(&pos, &kinds, &[0, 1], periodic.as_ref())
+                .pairs
+                .len(),
+            1
+        );
     }
 
     #[test]
