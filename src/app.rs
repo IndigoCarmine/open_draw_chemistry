@@ -499,8 +499,8 @@ impl OpenDrawApp {
                 let message = match command {
                     Command::Undo => (!editor.undo()).then_some("元に戻す操作はありません"),
                     Command::Redo => (!editor.redo()).then_some("やり直す操作はありません"),
-                    Command::Copy => Some(if editor.copy(ctx) {
-                        "コピーしました（Office には図として、ChemDraw には構造として貼り付けられます）"
+                    Command::Copy => Some(if crate::ole::copy(editor, ctx) {
+                        crate::ole::COPIED_MESSAGE
                     } else {
                         "コピーするものがありません"
                     }),

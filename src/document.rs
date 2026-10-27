@@ -124,6 +124,10 @@ impl Document {
                 self.editor.request_fit();
             }
         }
+        // Ctrl+C goes through the app's copy (an OLE object Office embeds), not the widget's.
+        if crate::ole::take_copy_shortcut(ui.ctx()) {
+            crate::ole::copy(&self.editor, ui.ctx());
+        }
         let response = self.editor.show(ui);
         if let Some(fit) = self.auto_fit.as_mut().filter(|_| fitting) {
             fit.view = Some((self.editor.zoom, self.editor.pan));
