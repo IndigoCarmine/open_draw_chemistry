@@ -286,4 +286,18 @@ M  END
             Some("9")
         );
     }
+
+    /// The fixture for the 3D view's contact display: OpenBabel's perceived (Kekulé) bonds are
+    /// enough to find the formic acid dimer's two hydrogen bonds and both benzene stacks.
+    #[test]
+    fn an_opened_dimer_file_shows_hydrogen_bonds_and_pi_stacks() {
+        use open_draw_chemistry::three_d::interactions::{self, StackKind};
+        let opened = open("hbond_pistack.xyz");
+        let found = interactions::of_model(model(&opened));
+        assert_eq!(found.hbonds.len(), 2, "{:?}", found.hbonds);
+        assert_eq!(found.rings.len(), 4, "{:?}", found.rings);
+        let mut kinds: Vec<StackKind> = found.stacks.iter().map(|s| s.kind).collect();
+        kinds.sort_by_key(|k| *k == StackKind::TShaped);
+        assert_eq!(kinds, [StackKind::Parallel, StackKind::TShaped]);
+    }
 }

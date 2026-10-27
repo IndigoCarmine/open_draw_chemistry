@@ -12,11 +12,13 @@ use egui::{Color32, Pos2, RichText, Stroke, vec2};
 use serde::{Deserialize, Serialize};
 
 use super::Command;
+use super::interactions::{self as contacts, ShowInteractions};
 use super::viewport3d::{Frame3d, Hit, Style3d, Viewport3d, exclusive_groups};
 use crate::document::Document;
 use crate::theme::{self, dark};
 use crate::three_d::edit::{self, Measure, Target};
 use crate::three_d::geom::{self, Clash, Goal};
+use crate::three_d::interactions::{self, Interactions};
 use crate::three_d::{self, Constraint, Export3d, ForceField, JobState, Model3d};
 use eframe::egui_wgpu::RenderState;
 
@@ -48,11 +50,16 @@ pub struct View3d {
     pub style: Style3d,
     /// Show atom numbers on every atom, not only the picked ones.
     pub numbers: bool,
+    /// Which hydrogen bonds and π-stacks are drawn.
+    pub interactions: ShowInteractions,
     #[serde(skip)]
     viewport: Option<Viewport3d>,
     /// Clashes of the geometry last shown, recomputed when the atoms move.
     #[serde(skip)]
     clashes: (Vec<[f64; 3]>, Vec<Clash>),
+    /// Hydrogen bonds and π-stacks of the geometry (and bond count) last shown, the same way.
+    #[serde(skip)]
+    contacts: ((Vec<[f64; 3]>, usize), Interactions),
     /// The value box: the atoms it was filled for, and its text.
     #[serde(skip)]
     value: (Vec<usize>, String),
@@ -74,6 +81,17 @@ impl View3d {
             self.clashes.0 = coords;
         }
         &self.clashes.1
+    }
+
+    /// The model's hydrogen bonds and π-stacks (those inside it included), recomputed when its
+    /// atoms move or its bonds change. A single model is small: this runs on the UI thread.
+    fn contacts_for(&mut self, model: &Model3d) -> &Interactions {
+        let key = (edit::coords(model), model.bonds.len());
+        if self.contacts.0 != key {
+            self.contacts.1 = interactions::of_model(model);
+            self.contacts.0 = key;
+        }
+        &self.contacts.1
     }
 }
 
@@ -172,6 +190,7 @@ pub fn edit_panel(
         ui.toggle_value(&mut view.numbers, "原子番号")
             .on_hover_text("すべての原子に番号を表示");
     });
+    contacts::toggles(ui, &mut view.interactions);
     if ui
         .add_enabled(view.viewport.is_some(), egui::Button::new("視点をリセット"))
         .on_hover_text("何もない所をダブルクリックでも")
@@ -298,6 +317,20 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
             return;
         }
     };
+    let show = view.interactions;
+    if show.any() {
+        view.contacts_for(&model);
+        if let Some(viewport) = &view.viewport {
+            contacts::draw(
+                &ui.painter_at(frame.rect),
+                |p| viewport.project(frame.rect, p),
+                |a| model.atoms.get(a).map(|a| a.pos),
+                &view.contacts.1,
+                show,
+            );
+        }
+    }
+    let viewport = view.viewport.get_or_insert_with(Viewport3d::new);
     overlay(
         ui,
         viewport,
@@ -508,6 +541,36 @@ fn tools(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, ink: &Ink) {
     }
     constraints_section(ui, model, edit3d, ink);
     clash_row(ui, model, view, ink);
+    contacts_rows(ui, model, edit3d, view);
+}
+
+/// The hydrogen bonds and π-stacks shown, counted and the nearest listed; clicking a hydrogen
+/// bond picks D, H and A (so its angle is measured).
+fn contacts_rows(
+    ui: &mut egui::Ui,
+    model: &Model3d,
+    edit3d: &mut three_d::Edit3d,
+    view: &mut View3d,
+) {
+    let show = view.interactions;
+    if !show.any() {
+        return;
+    }
+    let found = view.contacts_for(model);
+    let clicked = contacts::list(
+        ui,
+        found,
+        show,
+        "",
+        "水素結合はクリックで D・H・A を選択（角度を表示）",
+        |a| edit::atom_label(model, a),
+    );
+    if let Some(contacts::Clicked::HBond(k)) = clicked
+        && let Some(hb) = found.hbonds.get(k)
+    {
+        edit3d.picked = vec![hb.donor, hb.hydrogen, hb.acceptor];
+        edit3d.report = None;
+    }
 }
 
 fn history_row(ui: &mut egui::Ui, model: &mut Model3d, edit3d: &mut three_d::Edit3d) {

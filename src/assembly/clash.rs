@@ -428,6 +428,19 @@ impl Grid {
         found
     }
 
+    /// Every atom of the grid within `r` (which must not exceed the grid's cutoff) of any point
+    /// `p`: its index and the vector from `p` to it. In a periodic box an atom comes once for
+    /// each of its images within reach, the vector pointing at that image.
+    pub fn for_each_within(&self, p: Vec3, r: f64, mut f: impl FnMut(usize, Vec3)) {
+        let (moved, bin) = self.locate(p);
+        self.visit(bin, |j, shift, _| {
+            let d = math::sub(math::add(self.wrapped[j], shift), moved);
+            if squared(d) <= r * r {
+                f(j, d);
+            }
+        });
+    }
+
     /// The bin of any point (clamped to the grid outside an open frame), and the point moved
     /// into the box in a periodic one.
     fn locate(&self, p: Vec3) -> (Vec3, [i64; 3]) {

@@ -9,6 +9,7 @@
 //! While a monomer is being oriented the viewer shows that monomer alone, and three clicks
 //! pick its atoms.
 
+mod contacts;
 mod place;
 
 use eframe::egui_wgpu::RenderState;
@@ -100,6 +101,8 @@ pub struct AssemblyView {
     pub style: Style3d,
     pub color: ColorMode,
     pub crystal: CrystalDisplay,
+    /// Which hydrogen bonds and π-stacks are drawn.
+    pub interactions: super::interactions::ShowInteractions,
     #[serde(skip)]
     viewport: Option<Viewport3d>,
     #[serde(skip)]
@@ -113,6 +116,9 @@ pub struct AssemblyView {
     /// Clashes between molecules, checked when the build changes.
     #[serde(skip)]
     clashes: place::ClashCheck,
+    /// Hydrogen bonds and π-stacks, found when the build changes.
+    #[serde(skip)]
+    contacts: contacts::ContactCheck,
 }
 
 impl AssemblyView {
@@ -388,6 +394,10 @@ fn viewer(
         Ok(frame) => frame,
         Err(e) => return failed(ui, &e),
     };
+    let show = view.interactions;
+    if let Some((found, _)) = view.contacts.get(ui.ctx(), state.id(), &built, show) {
+        contacts::overlay(ui, viewport, &frame, &built, &found, show);
+    }
     place::overlay(ui, viewport, &frame, state, &built, clashes.as_deref());
     assembly_overlay(ui, &frame, state, &built);
     if let Some(delta) = frame.drag {
@@ -668,6 +678,7 @@ pub fn panel(
     });
     let has_crystal = state.built().is_ok_and(|b| b.crystal.is_some());
     crystal_display(ui, &mut view.crystal, has_crystal, &ink);
+    contacts::toggles(ui, &mut view.interactions);
     if ui
         .add_enabled(view.viewport.is_some(), egui::Button::new("視点をリセット"))
         .on_hover_text("何もない所をダブルクリックでも")
@@ -680,6 +691,7 @@ pub fn panel(
     section(ui, "情報");
     info_section(ui, state, &ink);
     place::clash_info(ui, state, view, &ink);
+    contacts::info(ui, state, view, &ink);
 
     section(ui, "書き出し");
     let can_export = state.built().is_ok_and(|b| !b.is_empty());
