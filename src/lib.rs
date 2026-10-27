@@ -9,6 +9,7 @@ pub mod assembly;
 pub mod document;
 pub mod fragments;
 pub mod io;
+pub mod iupac;
 pub mod theme;
 pub mod three_d;
 pub mod ui;
