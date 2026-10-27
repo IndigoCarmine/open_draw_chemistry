@@ -12,7 +12,8 @@ repository = "https://github.com/IndigoCarmine/open_draw_chemistry"
 readme = "README.md"
 
 [dependencies]
-eframe = { version = "0.37.0", features = ["persistence"] }
+# `wgpu` because the 3D viewer (moleucle_3dview_rs) renders through it; main.rs selects it.
+eframe = { version = "0.37.0", features = ["persistence", "wgpu"] }
 egui = "0.37.0"
 serde = { version = "1.0.229", features = ["derive"] }
 
@@ -24,6 +25,11 @@ rfd = "0.17.2"
 dirs = "6.0.0"
 # Reads and writes fragment files in chembuider-rs's JSON format.
 serde_json = "1.0.154"
+
+# The 3D viewer (wgpu; the egui 0.37 port). MIT. Pinned to a rev for the same reason as above.
+moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs", rev = "0a110d4b7ea0ce57db8688957feff67aa89171d7" }
+# The viewer's vector types, needed to drive its camera and renderer directly.
+lin_alg = { version = "1.4.3", features = ["computer_graphics"] }
 
 # 2D → 3D generation and force-field optimisation (see `src/three_d/`). Behind the `openbabel`
 # feature because it needs a prebuilt OpenBabel (`scripts/fetch-openbabel.sh`) or CMake.

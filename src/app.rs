@@ -38,6 +38,8 @@ pub struct OpenDrawApp {
     recent: Vec<PathBuf>,
     show_properties: bool,
     view: ViewMode,
+    /// The 3D panel's viewer and display options (the options are remembered).
+    view3d: ui::view3d::View3d,
 
     #[serde(skip)]
     docs: Vec<Document>,
@@ -82,6 +84,7 @@ impl Default for OpenDrawApp {
             recent: Vec::new(),
             show_properties: true,
             view: ViewMode::default(),
+            view3d: Default::default(),
             docs: Vec::new(),
             active: 0,
             config: Config::default(),
@@ -769,7 +772,7 @@ impl eframe::App for OpenDrawApp {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Cloning a Context is cheap (it is an Arc) and frees up `ui` for the panels below.
         let ctx = ui.ctx().clone();
         let mut commands = Vec::new();
@@ -865,22 +868,31 @@ impl eframe::App for OpenDrawApp {
         }
         let view = self.view;
         let title = self.active_doc().map(Document::title).unwrap_or_default();
-        let active = self.docs.get(self.active);
+        let render_state = frame.wgpu_render_state();
         if !self.docs.is_empty() && view.shows_3d() {
+            let active = self.docs.get_mut(self.active);
             let panel = if view.shows_2d() {
                 egui::Panel::right("view3d")
                     .resizable(true)
                     .default_size(380.0)
             } else {
-                // 3D only: the panel takes the whole area the canvas would have.
-                egui::Panel::right("view3d")
+                // 3D only: the panel takes the whole area the canvas would have. Its own id, or
+                // the split view's panel would come back remembering the full width.
+                egui::Panel::right("view3d_full")
                     .resizable(false)
                     .exact_size(ui.available_width())
             };
             panel
                 .frame(egui::Frame::new().fill(theme::DARK_SURFACE))
                 .show(ui, |ui| {
-                    ui::view3d::view3d(ui, &title, active, &mut commands)
+                    ui::view3d::view3d(
+                        ui,
+                        &title,
+                        active,
+                        &mut self.view3d,
+                        render_state,
+                        &mut commands,
+                    )
                 });
         }
         egui::CentralPanel::default()
@@ -1121,8 +1133,16 @@ mod tests {
 
         // One headless frame of the panel with the model in it.
         let mut commands = Vec::new();
+        let mut view = ui::view3d::View3d::default();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            ui::view3d::view3d(ui, "test", app.docs.first(), &mut commands);
+            ui::view3d::view3d(
+                ui,
+                "test",
+                app.docs.first_mut(),
+                &mut view,
+                None,
+                &mut commands,
+            );
         });
         output.textures_delta.clear();
         assert!(commands.is_empty());
