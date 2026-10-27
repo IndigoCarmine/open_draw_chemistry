@@ -9,7 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::math::{self, Rigid, Vec3};
+use super::math::{self, Cell, Rigid, Vec3};
+use super::symop::{self, SymOp};
 use crate::three_d::{Atom3d, Bond3d, Model3d};
 
 /// How many undo steps are kept.
@@ -169,12 +170,158 @@ pub struct Array {
     pub euler_deg: Vec3,
 }
 
-/// One step of building the assembly. The crystal lattice (A2) is a further variant.
+/// A crystal: everything built so far is the asymmetric unit, copied by the space group's
+/// symmetry operations into a unit cell and the cell repeated `reps` times along its edges.
+///
+/// The set built so far is taken as Cartesian Å in the cell's frame (**a** along x, **b** in
+/// the xy plane). Each operation is applied to each molecule as a whole, and the copy is moved
+/// by whole cell vectors so that its centroid lies in `[0, 1)` — molecules are never cut at
+/// the cell faces. Copies that coincide with one kept before (a molecule on an inversion
+/// centre or a twofold axis maps onto itself or onto another copy) are dropped, so the unit
+/// cell holds Z distinct molecules. The cell is then repeated, `a` fastest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Lattice {
+    pub enabled: bool,
+    pub cell: Cell,
+    pub reps: [u32; 3],
+    pub symops: Vec<SymOp>,
+}
+
+/// Two copies are the same molecule when every atom of one lies within this distance (Å) of
+/// an atom of the same element of the other (after a whole-cell shift). Generous enough for
+/// coordinates rounded to four decimals, far below any distance between distinct atoms.
+pub const DUPLICATE_TOLERANCE: f64 = 0.1;
+
+/// Centroids this close below a cell face (in fractional units) count as on it, so rounding
+/// does not send a molecule on the face to the far side of the cell.
+const WRAP_EPS: f64 = 1e-6;
+
+/// A component's atoms as the steps place them: positions (after orientation) and elements.
+pub type Shape = (Vec<Vec3>, Vec<String>);
+
+impl Lattice {
+    /// Whether the step can be built: a possible cell, operations including the identity, and
+    /// every operation keeping distances in this cell. The message is Japanese.
+    pub fn check(&self) -> Result<(), String> {
+        self.cell.check()?;
+        if !self.symops.iter().any(SymOp::is_identity) {
+            return Err("恒等操作 x,y,z を含めてください".to_owned());
+        }
+        if let Some(op) = self.symops.iter().find(|op| !op.fits(&self.cell)) {
+            return Err(format!(
+                "対称操作「{op}」がこの格子定数と合いません（分子が歪みます）。空間群の晶系に合った長さと角度にしてください"
+            ));
+        }
+        Ok(())
+    }
+
+    /// How many unit cells: `reps` multiplied out, each at least one.
+    pub fn cell_count(&self) -> usize {
+        self.reps
+            .iter()
+            .fold(1usize, |n, &r| n.saturating_mul(r.max(1) as usize))
+    }
+
+    /// The whole-cell translations of the repeats, `a` fastest.
+    pub fn translations(&self) -> Vec<Rigid> {
+        let [na, nb, nc] = self.reps.map(|r| r.max(1));
+        let mut out = Vec::with_capacity(self.cell_count());
+        for k in 0..nc {
+            for j in 0..nb {
+                for i in 0..na {
+                    let f = [f64::from(i), f64::from(j), f64::from(k)];
+                    out.push(Rigid::translation(self.cell.to_cart(f)));
+                }
+            }
+        }
+        out
+    }
+
+    /// The unit cell's molecules made from `set` (the asymmetric unit): every operation on
+    /// every molecule, moved into the cell by its centroid, duplicates dropped. `shapes[c]` is
+    /// component `c`'s atoms (`None` skips its molecules).
+    pub fn unit_cell(&self, set: &[Instance], shapes: &[Option<Shape>]) -> Vec<Instance> {
+        struct Kept {
+            component: usize,
+            centroid: Vec3,
+            atoms: Vec<Vec3>,
+        }
+        let mut kept: Vec<Kept> = Vec::new();
+        let mut out = Vec::new();
+        for op in &self.symops {
+            let op = op.cartesian(&self.cell);
+            for inst in set {
+                let Some(Some((positions, elements))) = shapes.get(inst.component) else {
+                    continue;
+                };
+                let moved = inst.transform.then(&op);
+                let atoms: Vec<Vec3> = positions.iter().map(|&p| moved.apply(p)).collect();
+                let frac = self.cell.to_frac(centroid(&atoms));
+                let shift = frac.map(|f| -(f + WRAP_EPS).floor());
+                let shift_cart = self.cell.to_cart(shift);
+                let atoms: Vec<Vec3> = atoms.iter().map(|&p| math::add(p, shift_cart)).collect();
+                let frac = math::add(frac, shift);
+                let duplicate = kept.iter().any(|k| {
+                    k.component == inst.component
+                        && self.same_molecule(&k.atoms, k.centroid, &atoms, frac, elements)
+                });
+                if duplicate {
+                    continue;
+                }
+                kept.push(Kept {
+                    component: inst.component,
+                    centroid: frac,
+                    atoms,
+                });
+                out.push(Instance {
+                    component: inst.component,
+                    transform: moved.then(&Rigid::translation(shift_cart)),
+                });
+            }
+        }
+        out
+    }
+
+    /// Whether two copies of one component (`a` and `b`, with fractional centroids) are the
+    /// same molecule up to a whole-cell shift.
+    fn same_molecule(
+        &self,
+        a: &[Vec3],
+        ca: Vec3,
+        b: &[Vec3],
+        cb: Vec3,
+        elements: &[String],
+    ) -> bool {
+        let d = math::sub(ca, cb);
+        let n = d.map(f64::round);
+        if math::norm(self.cell.to_cart(math::sub(d, n))) > DUPLICATE_TOLERANCE {
+            return false;
+        }
+        let shift = self.cell.to_cart(n);
+        a.iter().zip(elements).all(|(&p, element)| {
+            b.iter().zip(elements).any(|(&q, e)| {
+                e == element && math::distance(p, math::add(q, shift)) < DUPLICATE_TOLERANCE
+            })
+        })
+    }
+}
+
+/// The mean of `points` (the origin for none).
+pub fn centroid(points: &[Vec3]) -> Vec3 {
+    if points.is_empty() {
+        return [0.0; 3];
+    }
+    let sum = points.iter().fold([0.0; 3], |s, &p| math::add(s, p));
+    math::scale(sum, 1.0 / points.len() as f64)
+}
+
+/// One step of building the assembly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Step {
     Ring(Ring),
     Stack(Stack),
     Array(Array),
+    Lattice(Lattice),
 }
 
 impl Step {
@@ -207,12 +354,23 @@ impl Step {
         })
     }
 
+    /// One 10 Å cubic P1 cell: the user then picks the space group and the constants.
+    pub fn new_lattice() -> Self {
+        Step::Lattice(Lattice {
+            enabled: true,
+            cell: Cell::default(),
+            reps: [1, 1, 1],
+            symops: symop::PRESETS[0].symops(),
+        })
+    }
+
     /// The step's name in the panel.
     pub fn label(&self) -> &'static str {
         match self {
             Step::Ring(_) => "環状",
             Step::Stack(_) => "積層・らせん",
             Step::Array(_) => "配列",
+            Step::Lattice(_) => "結晶",
         }
     }
 
@@ -221,6 +379,7 @@ impl Step {
             Step::Ring(s) => s.enabled,
             Step::Stack(s) => s.enabled,
             Step::Array(s) => s.enabled,
+            Step::Lattice(s) => s.enabled,
         }
     }
 
@@ -229,21 +388,31 @@ impl Step {
             Step::Ring(s) => &mut s.enabled,
             Step::Stack(s) => &mut s.enabled,
             Step::Array(s) => &mut s.enabled,
+            Step::Lattice(s) => &mut s.enabled,
         }
     }
 
-    /// How many copies the step makes (at least one).
+    /// How many copies the step makes (at least one). For a lattice, the most it can make:
+    /// copies on special positions are dropped when it is built.
     pub fn copies(&self) -> usize {
         let n = match self {
             Step::Ring(s) => s.n,
             Step::Stack(s) => s.n,
             Step::Array(s) => s.n,
+            Step::Lattice(l) => {
+                return l.symops.len().max(1).saturating_mul(l.cell_count());
+            }
         };
         n.max(1) as usize
     }
 
-    /// The transform of each copy, in order.
+    /// The transform of each copy, in order. A lattice's symmetry copies depend on where each
+    /// molecule is, so they are made in [`Design::placements`]; here it gives only the
+    /// whole-cell repeats.
     pub fn transforms(&self) -> Vec<Rigid> {
+        if let Step::Lattice(l) = self {
+            return l.translations();
+        }
         let n = self.copies();
         (0..n)
             .map(|i| {
@@ -257,6 +426,7 @@ impl Step {
                         .then(&Rigid::translation(slip_offset(s, i))),
                     Step::Array(s) => Rigid::rotation(math::euler_xyz(math::scale(s.euler_deg, i)))
                         .then(&Rigid::translation(math::scale(s.offset, i))),
+                    Step::Lattice(_) => unreachable!("handled above"),
                 }
             })
             .collect()
@@ -334,13 +504,68 @@ impl Design {
     /// Every placed molecule: the steps' copies of the base component in order (the last
     /// step's copies outermost), then the hand-placed ones.
     pub fn instances(&self) -> Vec<Instance> {
+        self.placements().0
+    }
+
+    /// The first enabled lattice step that cannot be built, and why (in Japanese).
+    pub fn lattice_error(&self) -> Option<String> {
+        self.steps.iter().find_map(|s| match s {
+            Step::Lattice(l) if l.enabled => l.check().err(),
+            _ => None,
+        })
+    }
+
+    /// Each component's atoms as the steps place them (oriented; as read when the
+    /// orientation is unusable, which the build reports separately).
+    pub fn shapes(&self) -> Vec<Option<Shape>> {
+        self.components
+            .iter()
+            .map(|c| {
+                let positions = c
+                    .oriented_positions()
+                    .unwrap_or_else(|_| c.atoms.iter().map(|a| a.pos).collect());
+                Some((
+                    positions,
+                    c.atoms.iter().map(|a| a.element.clone()).collect(),
+                ))
+            })
+            .collect()
+    }
+
+    /// [`Design::instances`], with the crystal the last enabled lattice step made. Lattice
+    /// steps that cannot be built ([`Design::lattice_error`]) are skipped.
+    pub fn placements(&self) -> (Vec<Instance>, Option<Crystal>) {
         let mut set = Vec::new();
+        let mut crystal = None;
         if self.components.get(self.base).is_some() {
             set.push(Instance {
                 component: self.base,
                 transform: Rigid::IDENTITY,
             });
+            let mut shapes = None;
             for step in self.steps.iter().filter(|s| s.enabled()) {
+                if let Step::Lattice(lattice) = step {
+                    if lattice.check().is_err() {
+                        continue;
+                    }
+                    let shapes = shapes.get_or_insert_with(|| self.shapes());
+                    let unit = lattice.unit_cell(&set, shapes);
+                    let mut next = Vec::with_capacity(unit.len() * lattice.cell_count());
+                    for t in lattice.translations() {
+                        next.extend(unit.iter().map(|inst| Instance {
+                            component: inst.component,
+                            transform: inst.transform.then(&t),
+                        }));
+                    }
+                    crystal = Some(Crystal {
+                        cell: lattice.cell,
+                        reps: lattice.reps.map(|r| r.max(1)),
+                        symops: lattice.symops.clone(),
+                        z: unit.len(),
+                        asymmetric: std::mem::replace(&mut set, next),
+                    });
+                    continue;
+                }
                 let transforms = step.transforms();
                 let mut next = Vec::with_capacity(set.len() * transforms.len());
                 for t in &transforms {
@@ -355,8 +580,22 @@ impl Design {
             }
         }
         set.extend(self.manual.iter().cloned());
-        set
+        (set, crystal)
     }
+}
+
+/// What a lattice step made: the unit cell, its repeats, the operations, the asymmetric unit
+/// they were applied to, and how many molecules one unit cell holds. The steps' molecules
+/// start with the unit cell at the origin (`z` molecules), then its repeats.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Crystal {
+    pub cell: Cell,
+    pub reps: [u32; 3],
+    pub symops: Vec<SymOp>,
+    /// The molecules the operations were applied to, as placed before the lattice step.
+    pub asymmetric: Vec<Instance>,
+    /// Molecules per unit cell (Z for a one-molecule asymmetric unit).
+    pub z: usize,
 }
 
 /// A document's assembly: the design being edited, the molecule selected in the viewer, the

@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use super::Command;
 use super::viewport3d::{Frame3d, Hit, Scene, Style3d, Viewport3d, element_color};
-use crate::assembly::model::{Array, Ring, Stack, helix_radius};
+use crate::assembly::model::{Array, Lattice, Ring, Stack, helix_radius};
+use crate::assembly::symop::{self, SymOp};
 use crate::assembly::{AssemblyExport, AssemblyState, Built, Component, Step};
 use crate::document::Document;
 use crate::theme::{self, dark};
@@ -53,6 +54,28 @@ impl ColorMode {
     }
 }
 
+/// How a crystal is shown: its unit cell's outline, and periodic images of the whole built
+/// crystal (its supercell) around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CrystalDisplay {
+    pub show_cell: bool,
+    /// Copies drawn along a, b, c, the crystal itself included (1 = none).
+    pub images: [u32; 3],
+}
+
+impl Default for CrystalDisplay {
+    fn default() -> Self {
+        Self {
+            show_cell: true,
+            images: [1, 1, 1],
+        }
+    }
+}
+
+/// The most periodic images along one axis (the renderer draws at most 729 in all).
+const MAX_IMAGES: u32 = 9;
+
 /// Three atoms being picked to orient a monomer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OrientPick {
@@ -70,6 +93,7 @@ const ORIENT_ROLES: [&str; 3] = ["原点", "+x 軸", "xy 平面"];
 pub struct AssemblyView {
     pub style: Style3d,
     pub color: ColorMode,
+    pub crystal: CrystalDisplay,
     #[serde(skip)]
     viewport: Option<Viewport3d>,
     #[serde(skip)]
@@ -290,6 +314,7 @@ fn viewer(
         let Some(component) = state.design.components.get(pick.component) else {
             return;
         };
+        viewport.set_cell(None, None);
         viewport.sync_scene(
             Some(Scene {
                 // One source per monomer of each document, apart from the assembly's.
@@ -336,6 +361,16 @@ fn viewer(
         }),
         color as u64,
         || atom_colors(&built, color),
+    );
+    // A crystal: the unit cell's outline and periodic images of the whole build (clicking an
+    // image selects the molecule it is a copy of: the renderer reports primary indices).
+    viewport.set_cell(
+        built
+            .crystal
+            .as_ref()
+            .filter(|_| view.crystal.show_cell)
+            .map(|c| c.cell.vectors()),
+        built.cell.map(|c| (c.vectors(), view.crystal.images)),
     );
     let selected: Vec<usize> = state
         .selected
@@ -623,6 +658,8 @@ pub fn panel(
             ui.selectable_value(&mut view.color, mode, mode.label());
         }
     });
+    let has_crystal = state.built().is_ok_and(|b| b.crystal.is_some());
+    crystal_display(ui, &mut view.crystal, has_crystal, &ink);
 
     section(ui, "情報");
     info_section(ui, state, &ink);
@@ -630,14 +667,29 @@ pub fn panel(
     section(ui, "書き出し");
     let can_export = state.built().is_ok_and(|b| !b.is_empty());
     ui.horizontal_wrapped(|ui| {
-        for export in AssemblyExport::ALL {
+        for export in AssemblyExport::ALL
+            .into_iter()
+            .chain(AssemblyExport::CRYSTAL)
+        {
+            let enabled = can_export && (!export.needs_crystal() || has_crystal);
             if ui
                 .add_enabled(
-                    can_export,
+                    enabled,
                     egui::Button::new(format!(".{}", export.extension())),
                 )
-                .on_hover_text(format!("{} に書き出す", export.description()))
-                .on_disabled_hover_text("書き出す集合体がありません")
+                .on_hover_text(if export.needs_crystal() {
+                    format!(
+                        "{} に書き出す（格子定数・対称操作・非対称単位の分率座標）",
+                        export.description()
+                    )
+                } else {
+                    format!("{} に書き出す", export.description())
+                })
+                .on_disabled_hover_text(if !can_export {
+                    "書き出す集合体がありません"
+                } else {
+                    "CIF には結晶の手順が必要です（手順の「結晶」を追加してください）"
+                })
                 .clicked()
             {
                 out.push(Command::AssemblyExport(export));
@@ -840,6 +892,21 @@ fn steps_section(
         {
             changes.push(Change::AddStep(Step::new_array()));
         }
+        let has_lattice = state
+            .design
+            .steps
+            .iter()
+            .any(|s| matches!(s, Step::Lattice(_)));
+        if ui
+            .add_enabled(!has_lattice, egui::Button::new("結晶"))
+            .on_hover_text(
+                "それまでの全体を非対称単位として、格子定数と空間群の対称操作で単位胞を作り、繰り返します",
+            )
+            .on_disabled_hover_text("結晶の手順はすでにあります")
+            .clicked()
+        {
+            changes.push(Change::AddStep(Step::new_lattice()));
+        }
     });
     if state.design.steps.is_empty() {
         ui.label(ink.muted(
@@ -960,6 +1027,9 @@ fn vector(
 
 /// The step's parameters. Returns whether any changed.
 fn step_params(ui: &mut egui::Ui, step: &mut Step, ink: &Ink) -> bool {
+    if let Step::Lattice(lattice) = step {
+        return lattice_params(ui, lattice, ink);
+    }
     let mut changed = false;
     egui::Grid::new("params")
         .num_columns(2)
@@ -1064,8 +1134,160 @@ fn step_params(ui: &mut egui::Ui, step: &mut Step, ink: &Ink) -> bool {
                     "i 番目を原点まわりに i × 角度 回してから動かします（x → y → z 軸の順）",
                 );
             }
+            Step::Lattice(_) => unreachable!("edited by lattice_params"),
         });
     changed
+}
+
+/// The operations text being edited, and the operations it was last made from or turned
+/// into: when the step's operations differ from those (undo, a preset, an opened file) the
+/// text is made anew; otherwise it is kept, even while it does not parse.
+#[derive(Debug, Clone)]
+struct OpsText {
+    text: String,
+    synced: Vec<SymOp>,
+}
+
+/// The text to edit for the step's operations `ops`: the `previous` text while the step still
+/// has the operations it was synced with, otherwise `ops` written out afresh.
+fn ops_buffer(previous: Option<OpsText>, ops: &[SymOp]) -> OpsText {
+    previous
+        .filter(|b| b.synced == ops)
+        .unwrap_or_else(|| OpsText {
+            text: symop::format_list(ops),
+            synced: ops.to_vec(),
+        })
+}
+
+/// The crystal step's editor: space group, cell constants, repeats and the operations as
+/// text. Returns whether the step changed.
+fn lattice_params(ui: &mut egui::Ui, l: &mut Lattice, ink: &Ink) -> bool {
+    let mut changed = false;
+    let preset = symop::matching_preset(&l.symops);
+    ui.horizontal_wrapped(|ui| {
+        ui.label("空間群")
+            .on_hover_text("選ぶと下の対称操作がその空間群の一般位置で置き換わります");
+        egui::ComboBox::from_id_salt("space_group")
+            .selected_text(preset.map_or("（任意の操作）", |p| p.name))
+            .show_ui(ui, |ui| {
+                for p in symop::PRESETS {
+                    if ui
+                        .selectable_label(preset == Some(p), format!("{}  {}", p.name, p.hm))
+                        .on_hover_text(p.system)
+                        .clicked()
+                    {
+                        l.symops = p.symops();
+                        changed = true;
+                    }
+                }
+            });
+        if let Some(p) = preset {
+            ui.label(ink.muted(p.system));
+        }
+    });
+    egui::Grid::new("cell")
+        .num_columns(2)
+        .spacing(vec2(8.0, 4.0))
+        .show(ui, |ui| {
+            let c = &mut l.cell;
+            for (name, value) in [("a", &mut c.a), ("b", &mut c.b), ("c", &mut c.c)] {
+                changed |= number(
+                    ui,
+                    name,
+                    value,
+                    0.02,
+                    0.1..=1000.0,
+                    " Å",
+                    "単位胞の稜の長さ。a は x 軸に沿い、b は xy 平面にあります",
+                );
+            }
+            for (name, value, tip) in [
+                ("α", &mut c.alpha, "b と c のなす角"),
+                ("β", &mut c.beta, "a と c のなす角"),
+                ("γ", &mut c.gamma, "a と b のなす角"),
+            ] {
+                changed |= number(ui, name, value, 0.1, 1.0..=179.0, "°", tip);
+            }
+            let tip = "単位胞を a・b・c 方向にいくつ並べるか";
+            ui.label("繰り返し").on_hover_text(tip);
+            ui.horizontal(|ui| {
+                for (axis, n) in ["a", "b", "c"].iter().zip(l.reps.iter_mut()) {
+                    changed |= ui
+                        .add(
+                            DragValue::new(n)
+                                .speed(0.05)
+                                .range(1..=100)
+                                .prefix(format!("{axis} ")),
+                        )
+                        .on_hover_text(tip)
+                        .changed();
+                }
+            });
+            ui.end_row();
+        });
+
+    ui.label("対称操作").on_hover_text(
+        "1 行に 1 つ、x,y,z 形式で（例: -x,y+1/2,-z+1/2）。CIF の _space_group_symop の行をそのまま貼り付けても読めます。x,y,z を必ず含めてください",
+    );
+    let id = ui.make_persistent_id("symops");
+    let mut buffer = ops_buffer(ui.data_mut(|d| d.get_temp::<OpsText>(id)), &l.symops);
+    let edited = ui
+        .add(
+            egui::TextEdit::multiline(&mut buffer.text)
+                .font(egui::TextStyle::Monospace)
+                .desired_rows(4)
+                .desired_width(f32::INFINITY),
+        )
+        .changed();
+    let parsed = symop::parse_list(&buffer.text);
+    if edited
+        && let Ok(ops) = &parsed
+        && *ops != l.symops
+    {
+        l.symops = ops.clone();
+        buffer.synced = ops.clone();
+        changed = true;
+    }
+    let problem = match &parsed {
+        Err(e) => Some(e.clone()),
+        Ok(_) => l.check().err(),
+    };
+    ui.data_mut(|d| d.insert_temp(id, buffer));
+    if let Some(problem) = problem {
+        ui.label(RichText::new(problem).size(11.0).color(ink.warn));
+    } else {
+        ui.label(ink.muted(format!(
+            "{} 操作 × {} 胞（特殊位置で重なる分子は 1 つにまとめます）",
+            l.symops.len(),
+            l.cell_count()
+        )));
+    }
+    changed
+}
+
+/// The crystal's display options in the 表示 section.
+fn crystal_display(ui: &mut egui::Ui, display: &mut CrystalDisplay, has_crystal: bool, ink: &Ink) {
+    ui.add_enabled_ui(has_crystal, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut display.show_cell, "単位胞を表示")
+                .on_hover_text("原点の単位胞を枠で示します")
+                .on_disabled_hover_text("結晶の手順があるときに使えます");
+        });
+        ui.horizontal_wrapped(|ui| {
+            let tip = "組み上げた結晶全体（繰り返し後の箱）を a・b・c 方向にいくつ並べて見せるか。\n1 なら並べません。表示だけで、書き出しには含まれません。周期像をクリックすると元の分子を選択します";
+            ui.label(ink.muted("周期像")).on_hover_text(tip);
+            for (axis, n) in ["a", "b", "c"].iter().zip(display.images.iter_mut()) {
+                ui.add(
+                    DragValue::new(n)
+                        .speed(0.05)
+                        .range(1..=MAX_IMAGES)
+                        .prefix(format!("{axis} ")),
+                )
+                .on_hover_text(tip)
+                .on_disabled_hover_text("結晶の手順があるときに使えます");
+            }
+        });
+    });
 }
 
 fn info_section(ui: &mut egui::Ui, state: &mut AssemblyState, ink: &Ink) {
@@ -1084,6 +1306,32 @@ fn info_section(ui: &mut egui::Ui, state: &mut AssemblyState, ink: &Ink) {
                     ui.label(ink.muted("結合数"));
                     ui.label(built.bonds.len().to_string());
                     ui.end_row();
+                    if let Some(crystal) = &built.crystal {
+                        ui.label(ink.muted("単位胞"))
+                            .on_hover_text("単位胞の体積");
+                        ui.label(format!("{:.1} Å³", crystal.cell.volume()));
+                        ui.end_row();
+                        ui.label(ink.muted("Z")).on_hover_text(
+                            "単位胞 1 つに入る分子の数（非対称単位 × 対称操作から、特殊位置で重なるものを除いた数）",
+                        );
+                        ui.label(if crystal.asymmetric.len() == 1 {
+                            crystal.z.to_string()
+                        } else {
+                            format!(
+                                "{}（非対称単位 {} 分子）",
+                                crystal.z,
+                                crystal.asymmetric.len()
+                            )
+                        });
+                        ui.end_row();
+                        ui.label(ink.muted("密度"))
+                            .on_hover_text("単位胞の中身の質量 ÷ 単位胞の体積");
+                        ui.label(match built.density() {
+                            Some(d) => format!("{d:.3} g/cm³"),
+                            None => "—（原子量のない元素があります）".to_owned(),
+                        });
+                        ui.end_row();
+                    }
                 });
             match state.selected {
                 Some(m) if m < built.molecule_count() => {
@@ -1211,5 +1459,55 @@ mod tests {
             }
         }
         assert!(commands.is_empty());
+    }
+
+    /// The crystal editor and the crystal's display options draw, a bad cell included, and
+    /// the operations text follows the step when it changes from outside (undo).
+    #[test]
+    fn the_crystal_editor_draws_headless_and_follows_undo() {
+        let ctx = egui::Context::default();
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        doc.assembly.edit(|d| {
+            d.components.push(water());
+            d.steps.push(Step::new_lattice());
+        });
+        let mut view = AssemblyView::default();
+        let mut commands = Vec::new();
+        let mut frame = |doc: &mut Document, view: &mut AssemblyView| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                panel(ui, Some(doc), view, &mut commands);
+                viewer_area(ui, "test", Some(doc), view, None);
+            });
+            output.textures_delta.clear();
+        };
+        frame(&mut doc, &mut view);
+        let p21c = symop::PRESETS.iter().find(|p| p.name == "P2₁/c").unwrap();
+        doc.assembly.edit(|d| {
+            if let Step::Lattice(l) = &mut d.steps[0] {
+                l.symops = p21c.symops();
+                // Each angle in its field's range, but α ≥ β + γ: no such cell.
+                l.cell.alpha = 150.0;
+                l.cell.beta = 40.0;
+                l.cell.gamma = 100.0;
+            }
+        });
+        frame(&mut doc, &mut view);
+        assert!(doc.assembly.built().is_err(), "an impossible cell");
+        doc.assembly.undo();
+        frame(&mut doc, &mut view);
+        assert!(doc.assembly.built().unwrap().crystal.is_some());
+        assert!(commands.is_empty());
+
+        // Text that does not parse is kept while the step is unchanged; a step changed from
+        // outside replaces it.
+        let p1 = symop::PRESETS[0].symops();
+        let typing = OpsText {
+            text: "x,y,z\n-x,".to_owned(),
+            synced: p1.clone(),
+        };
+        assert_eq!(ops_buffer(Some(typing.clone()), &p1).text, typing.text);
+        let undone = ops_buffer(Some(typing), &p21c.symops());
+        assert_eq!(undone.text, symop::format_list(&p21c.symops()));
+        assert_eq!(ops_buffer(None, &p1).text, "x,y,z");
     }
 }
