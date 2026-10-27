@@ -6,9 +6,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::assembly::AssemblyExport;
 use crate::io::Export;
 use crate::three_d::{Export3d, ForceField};
 
+pub mod assembly;
 pub mod fragments;
 pub mod icons;
 pub mod menu;
@@ -20,14 +22,16 @@ pub mod tabs;
 pub mod view3d;
 pub mod viewport3d;
 
-/// What the window's central area shows: the 2D drawing or the 3D model, one at a time. The
-/// right panel follows it (解析 for the drawing, 3D 編集 for the model).
+/// What the window's central area shows: the 2D drawing, the 3D model or the molecular
+/// assembly, one at a time. The right panel follows it (解析 for the drawing, 3D 編集 for the
+/// model, 集合体 for the assembly).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(from = "SavedViewMode")]
 pub enum ViewMode {
     #[default]
     TwoD,
     ThreeD,
+    Assembly,
 }
 
 /// A view mode as saved by any version: the 2D＋3D split view that once existed (`Split`), and
@@ -35,6 +39,7 @@ pub enum ViewMode {
 #[derive(Deserialize)]
 enum SavedViewMode {
     ThreeD,
+    Assembly,
     #[serde(other)]
     Other,
 }
@@ -43,23 +48,34 @@ impl From<SavedViewMode> for ViewMode {
     fn from(saved: SavedViewMode) -> Self {
         match saved {
             SavedViewMode::ThreeD => ViewMode::ThreeD,
+            SavedViewMode::Assembly => ViewMode::Assembly,
             SavedViewMode::Other => ViewMode::TwoD,
         }
     }
 }
 
 impl ViewMode {
-    pub const ALL: [ViewMode; 2] = [ViewMode::TwoD, ViewMode::ThreeD];
+    pub const ALL: [ViewMode; 3] = [ViewMode::TwoD, ViewMode::ThreeD, ViewMode::Assembly];
 
     pub fn label(self) -> &'static str {
         match self {
             ViewMode::TwoD => "2D",
             ViewMode::ThreeD => "3D",
+            ViewMode::Assembly => "集合体",
         }
     }
 
     pub fn is_3d(self) -> bool {
         self == ViewMode::ThreeD
+    }
+
+    pub fn is_assembly(self) -> bool {
+        self == ViewMode::Assembly
+    }
+
+    /// Whether the drawing (and its tool palette) is shown.
+    pub fn is_drawing(self) -> bool {
+        self == ViewMode::TwoD
     }
 }
 
@@ -102,6 +118,16 @@ pub enum Command {
     ArrowTool(chembuider_rs::molecule::ArrowKind),
     /// Switch the active document's editor to the text tool (reaction conditions).
     TextTool,
+    /// 分子集合体を作成: start the active document's assembly from its 3D model (when it has
+    /// no monomer yet) and show the assembly view.
+    CreateAssembly,
+    /// Add a monomer to the active assembly from a 3D file the user picks.
+    AssemblyAddFile,
+    /// Write the active assembly to a file the user picks.
+    AssemblyExport(AssemblyExport),
+    /// Save the active assembly as `.odasm`, or open one into it.
+    AssemblySave,
+    AssemblyOpen,
 }
 
 #[cfg(test)]
@@ -117,6 +143,7 @@ mod tests {
             ("SomethingNewer", ViewMode::TwoD),
             ("TwoD", ViewMode::TwoD),
             ("ThreeD", ViewMode::ThreeD),
+            ("Assembly", ViewMode::Assembly),
         ] {
             let mode: ViewMode = serde_json::from_str(&format!("\"{saved}\""))
                 .unwrap_or_else(|e| panic!("{saved} did not load: {e}"));

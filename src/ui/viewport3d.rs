@@ -13,14 +13,15 @@ use egui::{PointerButton, Pos2, Rect, Sense};
 use lin_alg::f32::{Vec2, Vec3};
 use moleucle_3dview_rs::{
     Atom, AtomGroup, AtomGroupRender, AtomGroupState, AtomPairRender, AtomPairState, Bond, Element,
-    Molecule, MoleculeViewer, OffscreenRenderer, RenderFrameState, RenderStyle, SharedRenderStates,
+    LodSettings, Molecule, MoleculeViewer, OffscreenRenderer, RenderFrameState, RenderStyle,
+    SharedRenderStates,
     camera::{Camera, OrbitalCamera},
     new_shared_states, set_state_by_type, vdw_radius,
     viewer::ViewerEvent,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::three_d::Model3d;
+use crate::three_d::{Atom3d, Bond3d, Model3d};
 
 /// Å → nm, the viewer's unit.
 const NM_PER_ANGSTROM: f32 = 0.1;
@@ -72,6 +73,34 @@ const LIGHT_ATOM_SCALE: f32 = 0.25;
 /// sphere), and the library halves it on its own when a large model would overflow.
 const SPHERE_RESOLUTION: usize = 6;
 
+/// From this many atoms the sphere mesh follows the camera distance (level of detail), so a
+/// large assembly stays smooth to turn.
+const LOD_FROM_ATOMS: usize = 5_000;
+
+/// The sphere meshes used with level of detail: near, middle and far.
+const LOD_SETTINGS: LodSettings = LodSettings {
+    enabled: true,
+    distance_check_fps: 12.0,
+    high_detail_max_distance: 4.0,
+    medium_detail_max_distance: 12.0,
+    high_detail_mesh_resolution: SPHERE_RESOLUTION,
+    medium_detail_mesh_resolution: 4,
+    low_detail_mesh_resolution: 3,
+};
+
+/// Generic display data, for anything other than the 3D model: atoms and bonds with a
+/// source and revision that say when they changed. The assembly viewer shows its build
+/// through this (molecule membership and colouring are the caller's).
+#[derive(Debug, Clone, Copy)]
+pub struct Scene<'a> {
+    /// What is shown, as the caller tells its contents apart. Another source is framed anew.
+    pub source: u64,
+    /// Changes whenever the atoms or bonds do; the viewer reloads only then.
+    pub revision: u64,
+    pub atoms: &'a [Atom3d],
+    pub bonds: &'a [Bond3d],
+}
+
 /// What a ray through the pointer hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
@@ -122,6 +151,9 @@ pub struct Viewport3d {
     reframe: bool,
     style: Style3d,
     clear_color: [f32; 4],
+    /// The [`Scene`] shown (source, revision) and the key of its colours.
+    scene: Option<(u64, u64)>,
+    scene_colors: Option<u64>,
 }
 
 impl Default for Viewport3d {
@@ -155,6 +187,8 @@ impl Viewport3d {
             reframe: false,
             style: Style3d::default(),
             clear_color: [0.08, 0.10, 0.14, 1.0],
+            scene: None,
+            scene_colors: None,
         }
     }
 
@@ -180,6 +214,7 @@ impl Viewport3d {
     /// Show `model`: a new structure is loaded and framed; the same structure with atoms moved
     /// (an edit, an optimisation) keeps the camera where the user put it.
     pub fn sync(&mut self, model: Option<&Model3d>) {
+        self.scene = None;
         let Some(model) = model else {
             if self.shown.take().is_some() {
                 self.viewer.take_molecule();
@@ -252,6 +287,72 @@ impl Viewport3d {
         });
         self.last_hover = None;
         self.reframe = true;
+    }
+
+    /// Show `scene`, reloading only when its source or revision changed: comparing every atom
+    /// each frame would cost more than drawing a large assembly. `colors` is called for new
+    /// atoms or a new `colors_key` (the colouring changed).
+    pub fn sync_scene(
+        &mut self,
+        scene: Option<Scene<'_>>,
+        colors_key: u64,
+        colors: impl FnOnce() -> Vec<[f32; 4]>,
+    ) {
+        self.shown = None;
+        let Some(scene) = scene else {
+            if self.scene.take().is_some() {
+                self.viewer.take_molecule();
+                self.last_hover = None;
+            }
+            return;
+        };
+        let key = (scene.source, scene.revision);
+        if self.scene == Some(key) {
+            if self.scene_colors != Some(colors_key) {
+                self.viewer.set_atom_colors(Some(colors()));
+                self.scene_colors = Some(colors_key);
+            }
+            return;
+        }
+        let new_source = self.scene.is_none_or(|(source, _)| source != scene.source);
+        let was_empty = self.viewer.molecule().is_none_or(|m| m.atoms.is_empty());
+        let atoms = scene
+            .atoms
+            .iter()
+            .map(|a| Atom::new(to_nm(a.pos), Element::new(&a.element)))
+            .collect();
+        let bonds = scene
+            .bonds
+            .iter()
+            .map(|b| Bond::new(b.begin, b.end, b.order.min(3)))
+            .collect();
+        self.viewer
+            .set_molecule(Molecule::from_atoms_bonds(atoms, bonds));
+        self.viewer.set_atom_colors(Some(colors()));
+        self.viewer.set_atom_radii(Some(
+            scene
+                .atoms
+                .iter()
+                .map(|a| vdw_radius(&a.element) * LIGHT_ATOM_SCALE)
+                .collect(),
+        ));
+        let lod = if scene.atoms.len() >= LOD_FROM_ATOMS {
+            LOD_SETTINGS
+        } else {
+            LodSettings::default()
+        };
+        if self.offscreen.lod_settings() != lod {
+            self.offscreen.set_lod_settings(lod);
+            if !lod.enabled {
+                self.offscreen.set_mesh_resolution(SPHERE_RESOLUTION);
+            }
+        }
+        self.scene = Some(key);
+        self.scene_colors = Some(colors_key);
+        self.last_hover = None;
+        if new_source || was_empty {
+            self.reframe = true;
+        }
     }
 
     /// Frame the whole model.
@@ -592,6 +693,74 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].atom_indices, vec![1, 2]);
         assert_eq!(groups[1].atom_indices, vec![3]);
+    }
+
+    /// A scene reloads only when its revision changes, recolours on a new colour key, and is
+    /// reframed only when another source is shown.
+    #[test]
+    fn a_scene_reloads_on_a_new_revision_and_reframes_on_a_new_source() {
+        let mut atoms = vec![
+            Atom3d {
+                element: "C".into(),
+                pos: [0.0, 0.0, 0.0],
+            },
+            Atom3d {
+                element: "N".into(),
+                pos: [10.0, 0.0, 0.0],
+            },
+        ];
+        fn scene(source: u64, revision: u64, atoms: &[Atom3d]) -> Scene<'_> {
+            Scene {
+                source,
+                revision,
+                atoms,
+                bonds: &[],
+            }
+        }
+        let mut view = Viewport3d::new();
+        let mut calls = 0;
+        view.sync_scene(Some(scene(1, 1, &atoms)), 0, || {
+            calls += 1;
+            vec![[1.0; 4]; 2]
+        });
+        assert!(std::mem::take(&mut view.reframe));
+        view.camera.radius = 42.0;
+        // Same revision: nothing is reloaded, even though the atoms moved.
+        atoms[1].pos = [20.0, 0.0, 0.0];
+        view.sync_scene(Some(scene(1, 1, &atoms)), 0, || unreachable!());
+        let x = view.viewer.molecule().unwrap().atoms[1].position.x;
+        assert!((x - 1.0).abs() < 1e-6);
+        // A new colour key recolours only.
+        view.sync_scene(Some(scene(1, 1, &atoms)), 5, || {
+            calls += 1;
+            vec![[0.5; 4]; 2]
+        });
+        assert_eq!(view.viewer.atom_colors.as_deref().unwrap()[0], [0.5; 4]);
+        // A new revision reloads, keeping the camera.
+        view.sync_scene(Some(scene(1, 2, &atoms)), 5, || {
+            calls += 1;
+            vec![[0.5; 4]; 2]
+        });
+        let x = view.viewer.molecule().unwrap().atoms[1].position.x;
+        assert!((x - 2.0).abs() < 1e-6);
+        assert!(!view.reframe && view.camera.radius == 42.0);
+        assert_eq!(calls, 3);
+        // Another source is framed.
+        view.sync_scene(Some(scene(2, 2, &atoms)), 5, || vec![[0.5; 4]; 2]);
+        assert!(view.reframe);
+        // Large scenes get level of detail.
+        let many: Vec<Atom3d> = (0..LOD_FROM_ATOMS)
+            .map(|i| Atom3d {
+                element: "C".into(),
+                pos: [i as f64, 0.0, 0.0],
+            })
+            .collect();
+        view.sync_scene(Some(scene(2, 3, &many)), 5, || {
+            vec![[0.5; 4]; LOD_FROM_ATOMS]
+        });
+        assert!(view.offscreen.lod_settings().enabled);
+        view.sync_scene(None, 0, Vec::new);
+        assert!(view.viewer.molecule().is_none());
     }
 
     #[test]

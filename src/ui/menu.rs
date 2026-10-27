@@ -25,6 +25,8 @@ pub struct MenuState<'a> {
     /// There is a 3D model to optimise or export (optimising also needs no work running).
     pub can_optimize_3d: bool,
     pub can_export_3d: bool,
+    /// There is a document whose assembly can be started or shown.
+    pub can_create_assembly: bool,
 }
 
 pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>) {
@@ -183,6 +185,18 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
                     }
                 });
             });
+            ui.separator();
+            let button = egui::Button::new("分子集合体を作成");
+            if ui
+                .add_enabled(state.can_create_assembly, button)
+                .on_hover_text(
+                    "今の 3D モデルを単量体にして、環状・積層・らせんなどの集合体を組み立てます（集合体画面に切り替わります）",
+                )
+                .clicked()
+            {
+                out.push(Command::CreateAssembly);
+                ui.close();
+            }
         });
         ui.menu_button("ツール", |ui| {
             planned(ui, &["周期表"]);
@@ -251,7 +265,7 @@ pub fn toolbar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>)
     });
 }
 
-/// The 2D / 3D segmented control.
+/// The 2D / 3D / 集合体 segmented control.
 fn view_switch(ui: &mut egui::Ui, current: ViewMode, out: &mut Vec<Command>) {
     let border = ui.visuals().widgets.inactive.bg_stroke;
     egui::Frame::new()

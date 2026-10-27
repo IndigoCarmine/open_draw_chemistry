@@ -9,6 +9,7 @@ use chembuider_rs::widget::analysis::AnalysisPanel;
 use chembuider_rs::{Config, bond_menu};
 use serde::{Deserialize, Serialize};
 
+use crate::assembly::{self, AssemblyExport, Component};
 use crate::document::Document;
 use crate::fragments::{self, FragmentStore};
 use crate::io::{self, Export, Format, Kind};
@@ -40,6 +41,8 @@ pub struct OpenDrawApp {
     view: ViewMode,
     /// The 3D panel's viewer and display options (the options are remembered).
     view3d: ui::view3d::View3d,
+    /// The assembly view's viewer and display options (the options are remembered).
+    assembly_view: ui::assembly::AssemblyView,
 
     #[serde(skip)]
     docs: Vec<Document>,
@@ -88,6 +91,7 @@ impl Default for OpenDrawApp {
             show_properties: true,
             view: ViewMode::default(),
             view3d: Default::default(),
+            assembly_view: Default::default(),
             docs: Vec::new(),
             active: 0,
             config: Config::default(),
@@ -459,6 +463,29 @@ impl OpenDrawApp {
                     crate::ui::palette::select_text_tool(&mut doc.editor);
                 }
             }
+            Command::CreateAssembly => self.create_assembly(),
+            Command::AssemblyAddFile => self.assembly_add_file(),
+            Command::AssemblyExport(export) => self.export_assembly(export),
+            Command::AssemblySave => self.save_assembly(),
+            Command::AssemblyOpen => self.open_assembly(),
+            Command::Undo | Command::Redo if self.view.is_assembly() => {
+                let Some(doc) = self.active_doc_mut() else {
+                    return;
+                };
+                let redo = command == Command::Redo;
+                let done = if redo {
+                    doc.assembly.redo()
+                } else {
+                    doc.assembly.undo()
+                };
+                self.status = match (done, redo) {
+                    (true, false) => "集合体の編集を元に戻しました",
+                    (true, true) => "集合体の編集をやり直しました",
+                    (false, false) => "元に戻す操作はありません",
+                    (false, true) => "やり直す操作はありません",
+                }
+                .to_owned();
+            }
             Command::Undo
             | Command::Redo
             | Command::Copy
@@ -515,6 +542,145 @@ impl OpenDrawApp {
         self.view = ViewMode::ThreeD;
     }
 
+    /// 分子集合体を作成: give the active document's assembly its first monomer, the document's
+    /// 3D model, and show the assembly view.
+    fn create_assembly(&mut self) {
+        let Some(doc) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        self.view = ViewMode::Assembly;
+        if !doc.assembly.is_empty() {
+            self.status = "集合体画面に切り替えました".to_owned();
+            return;
+        }
+        let Some(model) = doc.three_d.model() else {
+            self.status = "単量体にする 3D モデルがありません。先に「3D」メニューの「2D から 3D を生成」で 3D モデルを作成してください".to_owned();
+            return;
+        };
+        let component = Component::from_model(ui::assembly::model_name(doc), model);
+        self.status = format!(
+            "「{}」（{} 原子）を単量体にして集合体を作成しました。右パネルで手順（環状・積層・配列）を追加してください",
+            component.name,
+            component.atoms.len()
+        );
+        doc.assembly.edit(|d| d.components.push(component));
+    }
+
+    /// The file name (without extension) suggested when saving the active document's
+    /// assembly or its exports.
+    fn assembly_stem(doc: &Document) -> String {
+        let stem = doc
+            .path
+            .as_deref()
+            .and_then(Path::file_stem)
+            .map_or_else(|| doc.title(), |s| s.to_string_lossy().into_owned());
+        format!("{stem}_assembly")
+    }
+
+    fn assembly_add_file(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("3D 構造 (MOL2, PDB, XYZ, MOL, SDF)", &Format3d::EXTENSIONS)
+            .pick_file()
+        else {
+            return;
+        };
+        match read_component(&path) {
+            Ok(component) => {
+                let Some(doc) = self.active_doc_mut() else {
+                    return;
+                };
+                let message = format!(
+                    "単量体「{}」（{} 原子）を追加しました",
+                    component.name,
+                    component.atoms.len()
+                );
+                doc.assembly.edit(|d| d.components.push(component));
+                self.status = message;
+            }
+            Err(e) => self.status = format!("{} を読み込めませんでした: {e}", path.display()),
+        }
+    }
+
+    fn export_assembly(&mut self, export: AssemblyExport) {
+        let Some(doc) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        let stem = Self::assembly_stem(doc);
+        let built = match doc.assembly.built() {
+            Ok(built) if !built.is_empty() => built,
+            Ok(_) => {
+                self.status = "書き出す集合体がありません".to_owned();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("書き出せませんでした: {e}");
+                return;
+            }
+        };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(export.description(), &[export.extension()])
+            .set_file_name(format!("{stem}.{}", export.extension()))
+            .save_file()
+        else {
+            return;
+        };
+        let text = assembly::export::export(export, &built, &doc.assembly.design, &stem);
+        self.status = match std::fs::write(&path, text) {
+            Ok(()) => format!(
+                "{} に書き出しました（{} 分子、{} 原子）",
+                path.display(),
+                built.molecule_count(),
+                built.atoms.len()
+            ),
+            Err(e) => format!("書き出せませんでした: {e}"),
+        };
+    }
+
+    fn save_assembly(&mut self) {
+        let Some(doc) = self.active_doc() else { return };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("集合体 (Open DrawChemistry)", &[assembly::file::EXTENSION])
+            .set_file_name(format!(
+                "{}.{}",
+                Self::assembly_stem(doc),
+                assembly::file::EXTENSION
+            ))
+            .save_file()
+        else {
+            return;
+        };
+        self.status = match assembly::file::save(&path, &doc.assembly.design) {
+            Ok(()) => format!("集合体を {} に保存しました", path.display()),
+            Err(e) => format!("集合体を保存できませんでした: {e}"),
+        };
+    }
+
+    fn open_assembly(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("集合体 (Open DrawChemistry)", &[assembly::file::EXTENSION])
+            .pick_file()
+        else {
+            return;
+        };
+        self.open_assembly_path(&path);
+    }
+
+    /// Open the `.odasm` file at `path` into the active document's assembly (as one undo step)
+    /// and show it.
+    fn open_assembly_path(&mut self, path: &Path) {
+        let Some(doc) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        match assembly::file::open(path) {
+            Ok(design) => {
+                doc.assembly.replace(design);
+                self.view = ViewMode::Assembly;
+                self.status = format!("集合体 {} を開きました", path.display());
+            }
+            Err(e) => self.status = format!("{} を開けませんでした: {e}", path.display()),
+        }
+    }
+
     /// The app's own shortcuts. The editor handles the rest (undo, copy, paste, drawing keys).
     fn shortcuts(ctx: &egui::Context, out: &mut Vec<Command>) {
         use egui::{Key, KeyboardShortcut, Modifiers};
@@ -544,10 +710,20 @@ impl OpenDrawApp {
         let job = self.active_doc().map(|d| &d.three_d);
         let running = job.is_some_and(|j| j.is_running());
         let has_model = job.is_some_and(|j| j.model().is_some());
+        // In the assembly view, undo and redo act on the assembly.
+        let (can_undo, can_redo) = match self.active_doc() {
+            Some(doc) if self.view.is_assembly() => {
+                (doc.assembly.can_undo(), doc.assembly.can_redo())
+            }
+            _ => (
+                editor.is_some_and(|e| !e.undo_stack.is_empty()),
+                editor.is_some_and(|e| !e.redo_stack.is_empty()),
+            ),
+        };
         MenuState {
             has_document: editor.is_some(),
-            can_undo: editor.is_some_and(|e| !e.undo_stack.is_empty()),
-            can_redo: editor.is_some_and(|e| !e.redo_stack.is_empty()),
+            can_undo,
+            can_redo,
             cleaning: editor.is_some_and(|e| e.is_cleaning()),
             show_properties: self.show_properties,
             view: self.view,
@@ -555,6 +731,7 @@ impl OpenDrawApp {
             can_generate_3d: three_d::AVAILABLE && job.is_some() && !running,
             can_optimize_3d: has_model && !running,
             can_export_3d: has_model,
+            can_create_assembly: editor.is_some(),
         }
     }
 
@@ -743,6 +920,21 @@ impl OpenDrawApp {
     }
 }
 
+/// A monomer read from the 3D structure file at `path`, named after the file.
+fn read_component(path: &Path) -> Result<Component, String> {
+    let format = Format3d::from_path(path).ok_or_else(|| io::Error::UnknownFormat.to_string())?;
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let opened = three_d::read::read(format, &text).map_err(|e| e.to_string())?;
+    let model = opened
+        .model
+        .ok_or_else(|| "座標が平面のため 3D 構造として使えません".to_owned())?;
+    let name = path.file_stem().map_or_else(
+        || "monomer".to_owned(),
+        |s| s.to_string_lossy().into_owned(),
+    );
+    Ok(Component::from_model(name, &model))
+}
+
 /// The analysis panel, labelled in Japanese like the rest of the window.
 fn japanese_analysis() -> AnalysisPanel {
     let mut panel = AnalysisPanel::default();
@@ -868,6 +1060,12 @@ impl eframe::App for OpenDrawApp {
         }
 
         self.poll_3d(&ctx);
+        // A gesture on the assembly (dragging a value) is one undo step, closed on release.
+        if !ctx.input(|i| i.pointer.any_down())
+            && let Some(doc) = self.docs.get_mut(self.active)
+        {
+            doc.assembly.settle();
+        }
         let state = self.menu_state();
         let visuals = ui.visuals().clone();
         let dark = visuals.dark_mode;
@@ -898,8 +1096,8 @@ impl eframe::App for OpenDrawApp {
 
         let view = self.view;
         if let Some(doc) = self.docs.get_mut(self.active) {
-            // The drawing tools only act on the canvas, which the 3D view replaces.
-            if !view.is_3d() {
+            // The drawing tools only act on the canvas, which the other views replace.
+            if view.is_drawing() {
                 egui::Panel::left("palette")
                     .frame(bar(visuals.panel_fill, 8, 10))
                     .resizable(false)
@@ -908,7 +1106,8 @@ impl eframe::App for OpenDrawApp {
                         ui::palette::palette(ui, &mut doc.editor, &mut self.custom_element)
                     });
             }
-            // The right panel follows the view: 解析 of the drawing, or 3D 編集 of the model.
+            // The right panel follows the view: 解析 of the drawing, 3D 編集 of the model, or
+            // the 集合体 panel.
             let title = ui::properties::title(view);
             if self.show_properties {
                 egui::Panel::right("properties")
@@ -918,7 +1117,14 @@ impl eframe::App for OpenDrawApp {
                     .size_range(220.0..=420.0)
                     .show(ui, |ui| {
                         let collapse = ui::properties::properties(ui, |ui| {
-                            if view.is_3d() {
+                            if view.is_assembly() {
+                                ui::assembly::panel(
+                                    ui,
+                                    Some(doc),
+                                    &mut self.assembly_view,
+                                    &mut commands,
+                                );
+                            } else if view.is_3d() {
                                 ui::view3d::edit_panel(
                                     ui,
                                     Some(doc),
@@ -968,8 +1174,9 @@ impl eframe::App for OpenDrawApp {
         }
         let title = self.active_doc().map(Document::title).unwrap_or_default();
         let render_state = frame.wgpu_render_state();
-        // The central area shows one view: the drawing, or the 3D model (dark in both themes).
-        let central = if view.is_3d() && !self.docs.is_empty() {
+        // The central area shows one view: the drawing, or the 3D model or the assembly (dark
+        // in both themes).
+        let central = if !view.is_drawing() && !self.docs.is_empty() {
             egui::Frame::new().fill(theme::DARK_SURFACE)
         } else {
             egui::Frame::new()
@@ -981,6 +1188,13 @@ impl eframe::App for OpenDrawApp {
                 Some(doc) if view.is_3d() => {
                     ui::view3d::viewer_area(ui, &title, Some(doc), &mut self.view3d, render_state)
                 }
+                Some(doc) if view.is_assembly() => ui::assembly::viewer_area(
+                    ui,
+                    &title,
+                    Some(doc),
+                    &mut self.assembly_view,
+                    render_state,
+                ),
                 Some(doc) => editor_canvas(ui, doc, &mut self.context_atom, &mut commands),
                 None => welcome(ui, &mut commands),
             }
@@ -1353,6 +1567,145 @@ mod tests {
         });
         output.textures_delta.clear();
         assert!(commands.is_empty());
+    }
+
+    /// A hand-built water model, so the assembly tests run without OpenBabel.
+    fn water_model() -> three_d::Model3d {
+        use three_d::{Atom3d, Bond3d};
+        let atom = |element: &str, pos| Atom3d {
+            element: element.to_owned(),
+            pos,
+        };
+        three_d::Model3d {
+            atoms: vec![
+                atom("O", [0.0, 0.0, 0.0]),
+                atom("H", [0.96, 0.0, 0.0]),
+                atom("H", [-0.24, 0.93, 0.0]),
+            ],
+            bonds: vec![
+                Bond3d {
+                    begin: 0,
+                    end: 1,
+                    order: 1,
+                },
+                Bond3d {
+                    begin: 0,
+                    end: 2,
+                    order: 1,
+                },
+            ],
+            force_field: three_d::ForceField::Uff,
+            energy: 0.0,
+            energy_unit: String::new(),
+            formula: "H2O".to_owned(),
+            molfile: String::new(),
+        }
+    }
+
+    /// 分子集合体を作成: without a 3D model it says how to make one; with one it becomes the
+    /// first monomer (once), the assembly view is shown, and the edit menu's undo acts on the
+    /// assembly there. The panel and viewer draw headless.
+    #[test]
+    fn create_assembly_starts_from_the_3d_model_in_the_assembly_view() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_one_untitled();
+        app.run(&ctx, Command::SetView(ViewMode::Assembly));
+        assert_eq!(app.view, ViewMode::Assembly);
+        app.run(&ctx, Command::SetView(ViewMode::TwoD));
+
+        app.run(&ctx, Command::CreateAssembly);
+        assert_eq!(app.view, ViewMode::Assembly);
+        assert!(app.status.contains("2D から 3D を生成"), "{}", app.status);
+        assert!(app.docs[0].assembly.is_empty());
+
+        let drawing = app.docs[0].editor.molecule.clone();
+        app.docs[0].three_d = three_d::Job::with_model(water_model(), &drawing);
+        app.view = ViewMode::ThreeD;
+        assert!(app.menu_state().can_create_assembly);
+        app.run(&ctx, Command::CreateAssembly);
+        assert_eq!(app.view, ViewMode::Assembly);
+        let design = &app.docs[0].assembly.design;
+        assert_eq!(design.components.len(), 1);
+        assert_eq!(design.components[0].name, "H2O");
+        assert_eq!(design.components[0].atoms.len(), 3);
+        app.run(&ctx, Command::CreateAssembly);
+        assert_eq!(
+            app.docs[0].assembly.design.components.len(),
+            1,
+            "added once"
+        );
+
+        // Undo from the menu undoes the assembly, not the drawing.
+        assert!(app.menu_state().can_undo);
+        app.run(&ctx, Command::Undo);
+        assert!(app.docs[0].assembly.is_empty());
+        app.run(&ctx, Command::Redo);
+        assert_eq!(app.docs[0].assembly.design.components.len(), 1);
+
+        app.docs[0]
+            .assembly
+            .edit(|d| d.steps.push(assembly::Step::new_ring()));
+        let mut commands = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui::assembly::panel(
+                ui,
+                app.docs.first_mut(),
+                &mut app.assembly_view,
+                &mut commands,
+            );
+            ui::assembly::viewer_area(
+                ui,
+                "test",
+                app.docs.first_mut(),
+                &mut app.assembly_view,
+                None,
+            );
+        });
+        output.textures_delta.clear();
+        assert!(commands.is_empty());
+        assert_eq!(app.docs[0].assembly.built().unwrap().atoms.len(), 18);
+    }
+
+    /// A saved `.odasm` opens into the active document's assembly, as one undo step.
+    #[test]
+    fn an_assembly_file_opens_into_the_active_document() {
+        let ctx = egui::Context::default();
+        let dir = std::env::temp_dir().join(format!("odc-app-asm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rosette.odasm");
+        let design = assembly::Design {
+            components: vec![assembly::Component::from_model("water", &water_model())],
+            steps: vec![assembly::Step::new_ring(), assembly::Step::new_stack()],
+            ..Default::default()
+        };
+        assembly::file::save(&path, &design).unwrap();
+
+        let mut app = app_with_one_untitled();
+        app.open_assembly_path(&path);
+        assert_eq!(app.view, ViewMode::Assembly);
+        assert_eq!(app.docs[0].assembly.design, design);
+        assert_eq!(app.docs[0].assembly.built().unwrap().molecule_count(), 60);
+        app.run(&ctx, Command::Undo);
+        assert!(app.docs[0].assembly.is_empty());
+
+        app.open_assembly_path(&dir.join("missing.odasm"));
+        assert!(app.status.contains("開けませんでした"), "{}", app.status);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A saved assembly view (and its display options) loads as saved.
+    #[test]
+    fn the_assembly_view_and_its_options_are_remembered() {
+        let storage = SavedState(
+            "(view: Assembly, assembly_view: (style: Wireframe, color: Molecule))".to_owned(),
+        );
+        let app: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert_eq!(app.view, ViewMode::Assembly);
+        assert_eq!(app.assembly_view.color, ui::assembly::ColorMode::Molecule);
+        assert_eq!(
+            app.assembly_view.style,
+            crate::ui::viewport3d::Style3d::Wireframe
+        );
     }
 
     /// The canvas's 3D化 is disabled with nothing drawn.

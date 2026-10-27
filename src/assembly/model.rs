@@ -366,8 +366,11 @@ impl Design {
 /// Edits made in a single gesture (dragging a value) are gathered into one undo step: the UI
 /// calls [`AssemblyState::touch`] on every change and [`AssemblyState::settle`] once the
 /// pointer is released; [`AssemblyState::edit`] does both for a one-off change.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AssemblyState {
+    /// Tells this state apart from every other in the process (a viewer showing several
+    /// documents' assemblies in turn keys on it).
+    id: u64,
     pub design: Design,
     /// The molecule selected in the viewer, as an index into the build's molecules.
     pub selected: Option<usize>,
@@ -382,15 +385,32 @@ pub struct AssemblyState {
     pub(super) cache: Option<super::build::Cached>,
 }
 
+impl Default for AssemblyState {
+    fn default() -> Self {
+        Self::with_design(Design::default())
+    }
+}
+
 impl AssemblyState {
     /// A state opening `design`, with no history.
     pub fn with_design(design: Design) -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
+            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             committed: design.clone(),
             design,
+            selected: None,
+            pending: false,
+            undo: Vec::new(),
+            redo: Vec::new(),
             revision: 1,
-            ..Default::default()
+            cache: None,
         }
+    }
+
+    /// Unique to this state.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// Changes with every change to the design.

@@ -21,6 +21,7 @@ pub fn title(view: ViewMode) -> &'static str {
     match view {
         ViewMode::TwoD => "解析",
         ViewMode::ThreeD => "3D 編集",
+        ViewMode::Assembly => "集合体",
     }
 }
 
@@ -98,5 +99,6 @@ mod tests {
     fn the_panel_is_named_after_what_it_holds() {
         assert_eq!(title(ViewMode::TwoD), "解析");
         assert_eq!(title(ViewMode::ThreeD), "3D 編集");
+        assert_eq!(title(ViewMode::Assembly), "集合体");
     }
 }

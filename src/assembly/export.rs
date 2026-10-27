@@ -113,12 +113,12 @@ pub fn pdb(built: &Built, design: &Design, title: &str) -> String {
             // Serials wrap after 99999 (CONECT is then left out).
             let serial = a % MAX_PDB_SERIAL + 1;
             let [x, y, z] = atom.pos;
+            // Columns: serial 7–11, name 13–16, altLoc 17 (blank), residue 18–20, chain 22,
+            // residue number 23–26, iCode 27 (blank), x y z 31–54, occupancy, B, element 77–78.
             let _ = writeln!(
                 out,
-                "HETATM{serial:>5} {name}{alt}{resname:>3} {chain}{resseq:>4}{icode}   {x:>8.3}{y:>8.3}{z:>8.3}{occ:>6.2}{temp:>6.2}          {element:>2}",
+                "HETATM{serial:>5} {name} {resname:>3} {chain}{resseq:>4}    {x:>8.3}{y:>8.3}{z:>8.3}{occ:>6.2}{temp:>6.2}          {element:>2}",
                 name = pdb_atom_name(&atom.element, k + 1),
-                alt = ' ',
-                icode = ' ',
                 occ = 1.0,
                 temp = 0.0,
                 element = atom.element.to_ascii_uppercase(),
@@ -215,7 +215,7 @@ pub fn mol2(built: &Built, design: &Design, title: &str) -> String {
     let subst_names: Vec<String> = (0..molecules)
         .map(|m| format!("{}{}", residue_name(built, design, m), m + 1))
         .collect();
-    for m in 0..molecules {
+    for (m, subst_name) in subst_names.iter().enumerate() {
         for (k, a) in built.molecule_atoms(m).enumerate() {
             let atom = &built.atoms[a];
             let [x, y, z] = atom.pos;
@@ -226,7 +226,7 @@ pub fn mol2(built: &Built, design: &Design, title: &str) -> String {
                 format!("{}{}", atom.element, k + 1),
                 sybyl_type(&atom.element, &orders[a]),
                 m + 1,
-                subst_names[m],
+                subst_name,
                 0.0,
             );
         }
