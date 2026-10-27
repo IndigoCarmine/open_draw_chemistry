@@ -13,8 +13,8 @@ use egui::{PointerButton, Pos2, Rect, Sense};
 use lin_alg::f32::{Vec2, Vec3};
 use moleucle_3dview_rs::{
     Atom, AtomGroup, AtomGroupRender, AtomGroupState, AtomPairRender, AtomPairState, Bond, Element,
-    LodSettings, Molecule, MoleculeViewer, OffscreenRenderer, RenderFrameState, RenderStyle,
-    SharedRenderStates,
+    LodSettings, Molecule, MoleculeViewer, OffscreenRenderer, PeriodicImages, RenderFrameState,
+    RenderStyle, SharedRenderStates, SimulationCellRender, SimulationCellState,
     camera::{Camera, OrbitalCamera},
     new_shared_states, set_state_by_type, vdw_radius,
     viewer::ViewerEvent,
@@ -154,7 +154,16 @@ pub struct Viewport3d {
     /// The [`Scene`] shown (source, revision) and the key of its colours.
     scene: Option<(u64, u64)>,
     scene_colors: Option<u64>,
+    /// The unit cell last handed to the renderer (see [`Viewport3d::set_cell`]).
+    cell: Option<SimulationCellState>,
 }
+
+/// Periodic images: the repeated cell's vectors in Å and the copies per axis.
+pub type CellImages = ([[f64; 3]; 3], [u32; 3]);
+
+/// The unit cell's outline: a warm grey that reads on the dark background without competing
+/// with the atoms.
+const CELL_COLOR: (f32, f32, f32) = (0.86, 0.78, 0.52);
 
 impl Default for Viewport3d {
     fn default() -> Self {
@@ -173,6 +182,11 @@ impl Viewport3d {
         pairs.set_color((0.95, 0.55, 0.20));
         pairs.set_radius(0.028);
         offscreen.add_additional_render(Box::new(pairs));
+        // A crystal's unit cell (draws nothing until `set_cell` gives it one).
+        let mut cell = SimulationCellRender::new();
+        cell.set_color(CELL_COLOR);
+        cell.set_edge_radius(0.006);
+        offscreen.add_additional_render(Box::new(cell));
         offscreen.set_render_style(Style3d::default().render_style());
         offscreen.set_mesh_resolution(SPHERE_RESOLUTION);
         let mut camera = OrbitalCamera::default();
@@ -189,6 +203,7 @@ impl Viewport3d {
             clear_color: [0.08, 0.10, 0.14, 1.0],
             scene: None,
             scene_colors: None,
+            cell: None,
         }
     }
 
@@ -375,6 +390,30 @@ impl Viewport3d {
         self.camera.radius = molecule.radius().max(0.2) / tan_half.max(0.05) * 1.1;
     }
 
+    /// A crystal's display, given as cell vectors in Å (rows **a**, **b**, **c**): `outline`
+    /// draws that cell's edges from the origin, and `images` repeats the whole scene along
+    /// its cell's vectors, the given number of times per axis, the scene itself included (the
+    /// copies sit on both sides, as moleucle_3dview_rs's `PeriodicImages` centres them).
+    /// Clicking a copy reports the atom it copies. Kept apart from [`Scene`] because these
+    /// are display options that change without the atoms changing.
+    pub fn set_cell(&mut self, outline: Option<[[f64; 3]; 3]>, images: Option<CellImages>) {
+        let state = outline.map_or_else(SimulationCellState::default, |v| {
+            SimulationCellState::triclinic(v.map(to_nm))
+        });
+        // Stored only on a change: storing bumps the overlay's revision, which rebuilds it.
+        if self.cell != Some(state) {
+            set_state_by_type(&self.shared, state);
+            self.cell = Some(state);
+        }
+        let images = images
+            .map(|(v, n)| PeriodicImages::new(SimulationCellState::triclinic(v.map(to_nm)), n))
+            .filter(|i| !i.is_trivial());
+        if self.viewer.periodic_images() != images.as_ref() {
+            self.viewer.set_periodic_images(images);
+            self.last_hover = None;
+        }
+    }
+
     /// Highlight groups of atoms (each atom in at most one group) and draw `pairs` as rods.
     pub fn set_highlights(&mut self, groups: Vec<AtomGroup>, pairs: Vec<(usize, usize)>) {
         set_state_by_type(
@@ -433,6 +472,7 @@ impl Viewport3d {
             self.viewer.molecule_opacity,
         )
         .with_geometry_revision(self.viewer.revision())
+        .with_periodic_images(self.viewer.periodic_images())
         .with_visible_atoms(self.viewer.visible_atoms())
         .with_atom_attrs(
             self.viewer.atom_radii.as_deref(),
@@ -768,6 +808,26 @@ mod tests {
         assert!(view.offscreen.lod_settings().enabled);
         view.sync_scene(None, 0, Vec::new);
         assert!(view.viewer.molecule().is_none());
+    }
+
+    #[test]
+    fn a_cell_is_outlined_and_repeated_only_when_asked() {
+        let mut view = Viewport3d::new();
+        let cell = [[10.0, 0.0, 0.0], [0.0, 12.0, 0.0], [1.0, 0.0, 8.0]];
+        view.set_cell(Some(cell), Some((cell, [3, 1, 1])));
+        let stored =
+            moleucle_3dview_rs::with_state_by_type::<SimulationCellState, _>(&view.shared, |s| *s)
+                .unwrap();
+        assert!((stored.vectors[2].x - 0.1).abs() < 1e-6, "Å → nm");
+        let images = view.viewer.periodic_images().unwrap();
+        assert_eq!(images.len(), 3);
+        // One copy per axis is no images; no outline is an empty cell.
+        view.set_cell(None, Some((cell, [1, 1, 1])));
+        assert!(view.viewer.periodic_images().is_none());
+        let stored =
+            moleucle_3dview_rs::with_state_by_type::<SimulationCellState, _>(&view.shared, |s| *s)
+                .unwrap();
+        assert!(stored.is_empty());
     }
 
     #[test]

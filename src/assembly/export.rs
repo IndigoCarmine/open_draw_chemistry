@@ -1,5 +1,5 @@
-//! Writing a built assembly as PDB, XYZ or MOL2 — the app's own writers, so exporting works
-//! without OpenBabel and stays fast for large assemblies.
+//! Writing a built assembly as PDB, XYZ, MOL2 or (for a crystal) CIF — the app's own writers,
+//! so exporting works without OpenBabel and stays fast for large assemblies.
 //!
 //! Every molecule is a residue: PDB residue numbers count molecules (wrapping after 9999) and
 //! chain IDs cycle A–Z per molecule; MOL2 has one SUBSTRUCTURE per molecule. Bonds are the
@@ -8,7 +8,9 @@
 use std::fmt::Write as _;
 
 use super::build::Built;
-use super::model::Design;
+use super::math;
+use super::model::{self, Design};
+use super::symop;
 
 /// A format an assembly can be exported to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,20 +18,27 @@ pub enum AssemblyExport {
     Pdb,
     Xyz,
     Mol2,
+    /// Crystallographic Information File: only for a crystal ([`AssemblyExport::needs_crystal`]).
+    Cif,
 }
 
 impl AssemblyExport {
+    /// The formats every assembly can be written to.
     pub const ALL: [AssemblyExport; 3] = [
         AssemblyExport::Pdb,
         AssemblyExport::Xyz,
         AssemblyExport::Mol2,
     ];
 
+    /// The formats that need a crystal (a lattice step).
+    pub const CRYSTAL: [AssemblyExport; 1] = [AssemblyExport::Cif];
+
     pub fn extension(self) -> &'static str {
         match self {
             AssemblyExport::Pdb => "pdb",
             AssemblyExport::Xyz => "xyz",
             AssemblyExport::Mol2 => "mol2",
+            AssemblyExport::Cif => "cif",
         }
     }
 
@@ -38,18 +47,147 @@ impl AssemblyExport {
             AssemblyExport::Pdb => "Protein Data Bank",
             AssemblyExport::Xyz => "XYZ",
             AssemblyExport::Mol2 => "Tripos MOL2",
+            AssemblyExport::Cif => "Crystallographic Information File",
         }
+    }
+
+    pub fn needs_crystal(self) -> bool {
+        self == AssemblyExport::Cif
     }
 }
 
 /// `built` as the text of a file in `format`. `design` names the residues; `title` goes into
-/// the header.
+/// the header. CIF without a crystal is empty (the panel does not offer it).
 pub fn export(format: AssemblyExport, built: &Built, design: &Design, title: &str) -> String {
     match format {
         AssemblyExport::Pdb => pdb(built, design, title),
         AssemblyExport::Xyz => xyz(built, title),
         AssemblyExport::Mol2 => mol2(built, design, title),
+        AssemblyExport::Cif => cif(built, design, title).unwrap_or_default(),
     }
+}
+
+/// A CIF value: bare when it is a plain token, otherwise in single quotes (CIF 1.1 has no
+/// escapes, so a quote inside is replaced).
+fn cif_value(text: &str) -> String {
+    let plain = !text.is_empty()
+        && text.chars().all(|c| {
+            c.is_ascii_graphic() && !matches!(c, '\'' | '"' | '#' | '$' | '_' | ';' | '[' | ']')
+        });
+    if plain {
+        text.to_owned()
+    } else {
+        let cleaned: String = text
+            .chars()
+            .map(|c| if c == '\'' || c.is_control() { ' ' } else { c })
+            .collect();
+        format!("'{cleaned}'")
+    }
+}
+
+/// The CIF text of a crystal: the cell, the symmetry operations, and the asymmetric unit (the
+/// molecules the lattice step was applied to) as fractional coordinates, each molecule moved
+/// into the cell by its centroid. Atom labels are the element and a running number per
+/// element (`C1`, `C2`, … `H1`, …), unique in the file. The space group's name is written when
+/// the operations are one of the presets ([`symop::matching_preset`]); otherwise only the
+/// operations, which is all a reader needs. `None` without a crystal.
+///
+/// Molecules placed by hand or by steps after the lattice are not part of the crystal and are
+/// not written; bonds are left to the reader to perceive, as CIF readers do.
+pub fn cif(built: &Built, design: &Design, title: &str) -> Option<String> {
+    let crystal = built.crystal.as_ref()?;
+    let cell = &crystal.cell;
+    let mut out = String::new();
+    let block: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let block = if block.trim_matches('_').is_empty() {
+        "assembly".to_owned()
+    } else {
+        block
+    };
+    let _ = writeln!(out, "data_{block}");
+    out.push('\n');
+    let _ = writeln!(
+        out,
+        "_audit_creation_method {}",
+        cif_value("Open DrawChemistry molecular assembly")
+    );
+    let _ = writeln!(out, "_chemical_name_common {}", cif_value(title));
+    if let Some(preset) = symop::matching_preset(&crystal.symops) {
+        let _ = writeln!(
+            out,
+            "_symmetry_space_group_name_H-M {}",
+            cif_value(preset.hm)
+        );
+        let _ = writeln!(out, "_space_group_name_H-M_alt {}", cif_value(preset.hm));
+    }
+    out.push('\n');
+    for (name, value) in [
+        ("_cell_length_a", cell.a),
+        ("_cell_length_b", cell.b),
+        ("_cell_length_c", cell.c),
+        ("_cell_angle_alpha", cell.alpha),
+        ("_cell_angle_beta", cell.beta),
+        ("_cell_angle_gamma", cell.gamma),
+    ] {
+        let _ = writeln!(out, "{name:<20} {value:.4}");
+    }
+    let _ = writeln!(out, "{:<20} {:.2}", "_cell_volume", cell.volume());
+    // Z counts formula units; with a one-molecule asymmetric unit that is the molecules.
+    if crystal.asymmetric.len() == 1 {
+        let _ = writeln!(out, "{:<20} {}", "_cell_formula_units_Z", crystal.z);
+    }
+    out.push('\n');
+    let _ = writeln!(out, "loop_");
+    let _ = writeln!(out, "_space_group_symop_id");
+    let _ = writeln!(out, "_space_group_symop_operation_xyz");
+    for (i, op) in crystal.symops.iter().enumerate() {
+        let _ = writeln!(out, "{} '{op}'", i + 1);
+    }
+    out.push('\n');
+    let _ = writeln!(out, "loop_");
+    for field in [
+        "_atom_site_label",
+        "_atom_site_type_symbol",
+        "_atom_site_fract_x",
+        "_atom_site_fract_y",
+        "_atom_site_fract_z",
+        "_atom_site_occupancy",
+    ] {
+        let _ = writeln!(out, "{field}");
+    }
+    let shapes = design.shapes();
+    let mut numbers: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for inst in &crystal.asymmetric {
+        let Some(Some((positions, elements))) = shapes.get(inst.component) else {
+            continue;
+        };
+        let placed: Vec<_> = positions.iter().map(|&p| inst.transform.apply(p)).collect();
+        // The molecule moved into the cell by its centroid, as the lattice step does.
+        let shift = cell
+            .to_frac(model::centroid(&placed))
+            .map(|f| -(f + 1e-6).floor());
+        for (p, element) in placed.iter().zip(elements) {
+            let [x, y, z] = math::add(cell.to_frac(*p), shift);
+            let n = numbers.entry(element.clone()).or_default();
+            *n += 1;
+            let _ = writeln!(
+                out,
+                "{:<8} {:<3} {x:>10.6} {y:>10.6} {z:>10.6} 1",
+                format!("{element}{n}"),
+                element
+            );
+        }
+    }
+    Some(out)
 }
 
 /// PDB's serial numbers have five columns; beyond them CONECT records cannot name atoms.

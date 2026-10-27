@@ -224,8 +224,31 @@ impl Rigid {
     }
 }
 
-/// A unit cell: edge lengths in ångström and angles in degrees. Only carried through in A1
-/// (no step makes one yet); the crystal builder (A2) adds the fractional ↔ Cartesian maps.
+/// The determinant of `m`.
+pub fn det(m: &Mat3) -> f64 {
+    dot(m[0], cross(m[1], m[2]))
+}
+
+/// The inverse of `m`, or `None` when it is (near) singular.
+pub fn inverse(m: &Mat3) -> Option<Mat3> {
+    let d = det(m);
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    // The rows of the inverse's transpose are the cross products of the rows (the adjugate).
+    let adj_t = [cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1])];
+    let mut inv = transpose(&adj_t);
+    for row in &mut inv {
+        *row = scale(*row, 1.0 / d);
+    }
+    Some(inv)
+}
+
+/// A unit cell: edge lengths in ångström and angles in degrees (α between b and c, β between
+/// a and c, γ between a and b).
+///
+/// Cartesian axes follow the usual crystallographic convention (the PDB's and OpenBabel's):
+/// **a** along x, **b** in the xy plane, **c** completing a right-handed set.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Cell {
     pub a: f64,
@@ -234,6 +257,110 @@ pub struct Cell {
     pub alpha: f64,
     pub beta: f64,
     pub gamma: f64,
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Self {
+            a: 10.0,
+            b: 10.0,
+            c: 10.0,
+            alpha: 90.0,
+            beta: 90.0,
+            gamma: 90.0,
+        }
+    }
+}
+
+impl Cell {
+    /// `1 − cos²α − cos²β − cos²γ + 2 cosα cosβ cosγ`: the squared volume of the cell with unit
+    /// edges. Positive exactly when the three angles can meet at a corner.
+    fn unit_volume_sq(&self) -> f64 {
+        let (ca, cb, cg) = (
+            self.alpha.to_radians().cos(),
+            self.beta.to_radians().cos(),
+            self.gamma.to_radians().cos(),
+        );
+        1.0 - ca * ca - cb * cb - cg * cg + 2.0 * ca * cb * cg
+    }
+
+    /// Whether the cell can exist: positive finite edges, angles strictly between 0° and 180°
+    /// that can meet at a corner (each less than the sum of the other two, all three less than
+    /// 360°). The message says what is wrong, in Japanese.
+    pub fn check(&self) -> Result<(), String> {
+        for (name, v) in [("a", self.a), ("b", self.b), ("c", self.c)] {
+            if !v.is_finite() || v <= 0.0 {
+                return Err(format!("格子定数 {name} は正の長さにしてください"));
+            }
+        }
+        let angles = [("α", self.alpha), ("β", self.beta), ("γ", self.gamma)];
+        for (name, v) in angles {
+            if !v.is_finite() || v <= 0.0 || v >= 180.0 {
+                return Err(format!(
+                    "角度 {name} は 0° より大きく 180° より小さくしてください"
+                ));
+            }
+        }
+        let [x, y, z] = [self.alpha, self.beta, self.gamma];
+        if x + y + z >= 360.0 || x >= y + z || y >= x + z || z >= x + y {
+            return Err(
+                "この 3 つの角度では平行六面体になりません（どの角も他の 2 つの和より小さく、3 つの和は 360° 未満にしてください）"
+                    .to_owned(),
+            );
+        }
+        if self.unit_volume_sq() <= 1e-9 {
+            return Err("単位胞の体積が 0 になります。角度を見直してください".to_owned());
+        }
+        Ok(())
+    }
+
+    /// The volume in Å³ (0 for an impossible cell).
+    pub fn volume(&self) -> f64 {
+        self.a * self.b * self.c * self.unit_volume_sq().max(0.0).sqrt()
+    }
+
+    /// The cell vectors **a**, **b**, **c** in Cartesian Å.
+    pub fn vectors(&self) -> [Vec3; 3] {
+        let (ca, cb) = (self.alpha.to_radians().cos(), self.beta.to_radians().cos());
+        let (sg, cg) = self.gamma.to_radians().sin_cos();
+        let cy = (ca - cb * cg) / sg;
+        let cz = (1.0 - cb * cb - cy * cy).max(0.0).sqrt();
+        [
+            [self.a, 0.0, 0.0],
+            [self.b * cg, self.b * sg, 0.0],
+            [self.c * cb, self.c * cy, self.c * cz],
+        ]
+    }
+
+    /// The matrix taking fractional coordinates to Cartesian Å: its columns are the cell
+    /// vectors.
+    pub fn frac_to_cart(&self) -> Mat3 {
+        transpose(&self.vectors())
+    }
+
+    /// The matrix taking Cartesian Å to fractional coordinates (the identity for an impossible
+    /// cell, which [`Cell::check`] refuses first).
+    pub fn cart_to_frac(&self) -> Mat3 {
+        inverse(&self.frac_to_cart()).unwrap_or(IDENTITY)
+    }
+
+    pub fn to_cart(&self, frac: Vec3) -> Vec3 {
+        mat_vec(&self.frac_to_cart(), frac)
+    }
+
+    pub fn to_frac(&self, cart: Vec3) -> Vec3 {
+        mat_vec(&self.cart_to_frac(), cart)
+    }
+
+    /// The cell `reps` times as long along each edge (a supercell).
+    pub fn scaled(&self, reps: [u32; 3]) -> Cell {
+        Cell {
+            a: self.a * f64::from(reps[0].max(1)),
+            b: self.b * f64::from(reps[1].max(1)),
+            c: self.c * f64::from(reps[2].max(1)),
+            ..*self
+        }
+    }
 }
 
 #[cfg(test)]
@@ -281,6 +408,109 @@ mod tests {
             let det = dot(m[0], cross(m[1], m[2]));
             assert!((det - 1.0).abs() < 1e-12, "det {det}");
         }
+    }
+
+    #[test]
+    fn a_triclinic_cell_maps_fractional_to_cartesian_and_back() {
+        let cell = Cell {
+            a: 7.3,
+            b: 9.1,
+            c: 11.6,
+            alpha: 81.2,
+            beta: 104.5,
+            gamma: 95.7,
+        };
+        cell.check().unwrap();
+        let [va, vb, vc] = cell.vectors();
+        // The edges have their lengths and the angles between them.
+        assert!((norm(va) - 7.3).abs() < 1e-9 && va[1] == 0.0 && va[2] == 0.0);
+        assert!((norm(vb) - 9.1).abs() < 1e-9 && vb[2] == 0.0);
+        assert!((norm(vc) - 11.6).abs() < 1e-9);
+        let angle = |u: Vec3, v: Vec3| (dot(u, v) / (norm(u) * norm(v))).acos().to_degrees();
+        assert!((angle(vb, vc) - 81.2).abs() < 1e-9);
+        assert!((angle(va, vc) - 104.5).abs() < 1e-9);
+        assert!((angle(va, vb) - 95.7).abs() < 1e-9);
+        // The volume is the triple product.
+        assert!((cell.volume() - det(&[va, vb, vc])).abs() < 1e-9);
+        for f in [[0.1, 0.2, 0.3], [-1.5, 0.75, 2.25], [0.0, 0.0, 1.0]] {
+            let back = cell.to_frac(cell.to_cart(f));
+            assert!(distance(back, f) < 1e-12, "{f:?} → {back:?}");
+        }
+        assert!(close(cell.to_cart([0.0, 0.0, 1.0]), vc));
+        let m = mat_mul(&cell.frac_to_cart(), &cell.cart_to_frac());
+        assert!(Rigid::rotation(m).approx_eq(&Rigid::IDENTITY, 1e-12));
+    }
+
+    #[test]
+    fn cell_volumes_match_known_values() {
+        // Cubic and orthorhombic: the product of the edges.
+        let cubic = Cell {
+            a: 5.43,
+            b: 5.43,
+            c: 5.43,
+            ..Cell::default()
+        };
+        assert!((cubic.volume() - 5.43f64.powi(3)).abs() < 1e-9);
+        // Monoclinic: abc·sinβ.
+        let mono = Cell {
+            a: 7.39,
+            b: 9.42,
+            c: 6.81,
+            beta: 109.0,
+            ..Cell::default()
+        };
+        let expected = 7.39 * 9.42 * 6.81 * 109.0f64.to_radians().sin();
+        assert!((mono.volume() - expected).abs() < 1e-9);
+        // Hexagonal: (√3/2)a²c.
+        let hex = Cell {
+            a: 4.0,
+            b: 4.0,
+            c: 6.0,
+            gamma: 120.0,
+            ..Cell::default()
+        };
+        assert!((hex.volume() - 3f64.sqrt() / 2.0 * 16.0 * 6.0).abs() < 1e-9);
+        assert!((mono.scaled([2, 3, 1]).volume() - 6.0 * expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn impossible_cells_are_refused_in_japanese() {
+        let ok = Cell::default();
+        assert!(ok.check().is_ok());
+        for bad in [
+            Cell { a: 0.0, ..ok },
+            Cell { c: f64::NAN, ..ok },
+            Cell { beta: 180.0, ..ok },
+            Cell { alpha: -5.0, ..ok },
+            // α ≥ β + γ: the corner cannot close.
+            Cell {
+                alpha: 150.0,
+                beta: 40.0,
+                gamma: 100.0,
+                ..ok
+            },
+            // The angles sum to 360°: a flat cell.
+            Cell {
+                alpha: 120.0,
+                beta: 120.0,
+                gamma: 120.0,
+                ..ok
+            },
+        ] {
+            let err = bad.check().unwrap_err();
+            assert!(!err.is_ascii(), "{bad:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn matrices_invert() {
+        let m = euler_xyz([20.0, -40.0, 75.0]);
+        let s = [[2.0, 0.5, 0.0], [0.0, 3.0, 1.0], [0.25, 0.0, 4.0]];
+        for m in [m, s] {
+            let inv = inverse(&m).unwrap();
+            assert!(Rigid::rotation(mat_mul(&m, &inv)).approx_eq(&Rigid::IDENTITY, 1e-12));
+        }
+        assert!(inverse(&[[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [0.0, 0.0, 1.0]]).is_none());
     }
 
     #[test]

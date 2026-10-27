@@ -10,7 +10,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use super::math::Cell;
-use super::model::{AssemblyState, Design, OrientError};
+use super::model::{AssemblyState, Crystal, Design, OrientError};
 use crate::three_d::{Atom3d, Bond3d};
 
 /// The most atoms an assembly may have. Beyond this the viewer and the exports become
@@ -29,8 +29,13 @@ pub struct Built {
     pub molecule_start: Vec<usize>,
     /// The component each molecule is a copy of.
     pub component_of_molecule: Vec<usize>,
-    /// The unit cell, for a crystal (A2).
+    /// The periodic box of what was built, for a crystal: the unit cell scaled by the
+    /// repeats (a 2×2×2 crystal's box is the 2×2×2 supercell). It is what PDB's CRYST1 states
+    /// and what the viewer's periodic images repeat; the unit cell itself is in
+    /// [`Built::crystal`].
     pub cell: Option<Cell>,
+    /// The crystal a lattice step made: unit cell, operations, asymmetric unit, Z.
+    pub crystal: Option<Crystal>,
     /// The state's revision this was built at.
     pub revision: u64,
 }
@@ -48,7 +53,29 @@ impl Built {
     pub fn is_empty(&self) -> bool {
         self.atoms.is_empty()
     }
+
+    /// The mass of one unit cell's contents in g/mol (daltons): the first Z molecules, which
+    /// are the cell at the origin. `None` without a crystal or when an element has no standard
+    /// atomic weight.
+    pub fn cell_mass(&self) -> Option<f64> {
+        let crystal = self.crystal.as_ref()?;
+        let end = *self.molecule_start.get(crystal.z)?;
+        self.atoms[..end]
+            .iter()
+            .map(|a| chembuider_rs::reaction::formula::atomic_weight(&a.element))
+            .sum()
+    }
+
+    /// The crystal's density in g/cm³: the unit cell's mass over its volume.
+    pub fn density(&self) -> Option<f64> {
+        let volume = self.crystal.as_ref()?.cell.volume();
+        // g/mol ÷ (N_A · Å³) = 1.66054 g/cm³ per (g/mol per Å³).
+        (volume > 0.0).then_some(self.cell_mass()? * GRAMS_PER_CM3_PER_DALTON_PER_A3 / volume)
+    }
 }
+
+/// 10²⁴ / N_A: one dalton per cubic ångström in g/cm³.
+const GRAMS_PER_CM3_PER_DALTON_PER_A3: f64 = 1.660_539_07;
 
 /// Why an assembly could not be built.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +87,8 @@ pub enum BuildError {
         component: String,
         error: OrientError,
     },
+    /// A lattice step cannot be built (the reason, in Japanese).
+    Lattice(String),
 }
 
 impl fmt::Display for BuildError {
@@ -72,6 +101,7 @@ impl fmt::Display for BuildError {
             BuildError::Orient { component, error } => {
                 write!(f, "単量体「{component}」: {error}")
             }
+            BuildError::Lattice(e) => write!(f, "結晶: {e}"),
         }
     }
 }
@@ -95,8 +125,11 @@ pub fn build(design: &Design, revision: u64) -> Result<Built, BuildError> {
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(e) = design.lattice_error() {
+        return Err(BuildError::Lattice(e));
+    }
 
-    let instances = design.instances();
+    let (instances, crystal) = design.placements();
     let bond_count: usize = instances
         .iter()
         .filter_map(|i| design.components.get(i.component))
@@ -108,7 +141,8 @@ pub fn build(design: &Design, revision: u64) -> Result<Built, BuildError> {
         molecule_of_atom: Vec::with_capacity(atom_count),
         molecule_start: Vec::with_capacity(instances.len() + 1),
         component_of_molecule: Vec::with_capacity(instances.len()),
-        cell: None,
+        cell: crystal.as_ref().map(|c| c.cell.scaled(c.reps)),
+        crystal,
         revision,
     };
     for instance in &instances {

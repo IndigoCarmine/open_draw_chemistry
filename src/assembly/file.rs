@@ -12,7 +12,11 @@ use super::model::Design;
 pub const EXTENSION: &str = "odasm";
 
 /// The version written; files of a newer version are refused.
-pub const VERSION: u32 = 1;
+///
+/// 2 added the crystal step (`Lattice`, with its operations as `x,y,z` text). Version 1 files
+/// read unchanged; an older app opening a version 2 file says it is newer instead of calling
+/// it damaged.
+pub const VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct FileContents {
@@ -124,7 +128,7 @@ mod tests {
             }],
         };
         let text = to_string(&design);
-        assert!(text.contains("\"version\": 1"));
+        assert!(text.contains("\"version\": 2"));
         let back = from_str(&text).unwrap();
         assert_eq!(back, design);
         assert_eq!(build(&back, 1).unwrap(), build(&design, 1).unwrap());
@@ -147,5 +151,52 @@ mod tests {
         // Missing optional parts default.
         let empty = from_str(r#"{"version": 1}"#).unwrap();
         assert_eq!(empty, Design::default());
+    }
+
+    #[test]
+    fn a_crystal_step_is_saved_with_its_operations_as_text() {
+        use crate::assembly::math::Cell;
+        use crate::assembly::model::Lattice;
+        use crate::assembly::symop;
+        let design = Design {
+            components: vec![Component {
+                name: "co".into(),
+                atoms: vec![
+                    Atom3d {
+                        element: "C".into(),
+                        pos: [0.0; 3],
+                    },
+                    Atom3d {
+                        element: "O".into(),
+                        pos: [1.13, 0.0, 0.0],
+                    },
+                ],
+                bonds: Vec::new(),
+                orient: None,
+            }],
+            steps: vec![Step::Lattice(Lattice {
+                enabled: true,
+                cell: Cell {
+                    a: 5.1,
+                    b: 6.2,
+                    c: 7.3,
+                    alpha: 90.0,
+                    beta: 98.5,
+                    gamma: 90.0,
+                },
+                reps: [2, 1, 3],
+                symops: symop::parse_list("x,y,z\n-x,y+1/2,-z+1/2\n-x,-y,-z\nx,-y+1/2,z+1/2")
+                    .unwrap(),
+            })],
+            ..Default::default()
+        };
+        let text = to_string(&design);
+        assert!(text.contains("\"-x,y+1/2,-z+1/2\""), "{text}");
+        let back = from_str(&text).unwrap();
+        assert_eq!(back, design);
+        assert_eq!(build(&back, 1).unwrap(), build(&design, 1).unwrap());
+        // A damaged operation is reported, not ignored.
+        let broken = text.replace("-x,y+1/2,-z+1/2", "-x,y+1/2");
+        assert!(matches!(from_str(&broken), Err(Error::Invalid(_))));
     }
 }

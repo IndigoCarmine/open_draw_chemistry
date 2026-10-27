@@ -3,23 +3,25 @@
 //!
 //! Pure code — no egui, no OpenBabel — so it is tested on hand-built structures:
 //!
-//! - [`math`]: rigid transforms and the rotations they are made from;
+//! - [`math`]: rigid transforms, the rotations they are made from, and the unit cell;
+//! - [`symop`]: crystallographic symmetry operations (`-x,y+1/2,-z+1/2`) and space groups;
 //! - [`model`]: the monomers, the steps, the design and its undo history;
 //! - [`build`]: the design turned into atoms and bonds, cached by revision;
-//! - [`export`]: PDB, XYZ and MOL2 writers;
+//! - [`export`]: PDB, XYZ, MOL2 and CIF writers;
 //! - [`file`]: the `.odasm` file the design is saved in.
 //!
 //! The geometry is ported from IndigoCarmine's own tools (cited where it is used):
 //! build_md_rs (rosettes, stacks, orientation by three atoms), gmx_harness (`align`) and
-//! sp_builder (the row of copies, rebuilding only on change). Crystals (a lattice step with
-//! symmetry operations) and free placement of molecules by hand follow in later phases; the
-//! types leave room for them ([`model::Design::manual`], [`build::Built::cell`]).
+//! sp_builder (the row of copies, rebuilding only on change). A crystal is a lattice step
+//! ([`model::Lattice`]): the cell constants and a space group's operations copy everything
+//! built before it.
 
 pub mod build;
 pub mod export;
 pub mod file;
 pub mod math;
 pub mod model;
+pub mod symop;
 
 pub use build::{BuildError, Built, MAX_ATOMS};
 pub use export::AssemblyExport;
