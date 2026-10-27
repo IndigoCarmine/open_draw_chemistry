@@ -38,6 +38,27 @@ openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
+# The OLE server (src/ole_server/): COM objects, structured storage, metafiles and the
+# registry. The same version eframe/wgpu already pull in.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media",
+    "Win32_Media_Audio",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-core = "0.62.2"
+
 # Upstream winit/egui-winit do not implement native drag-and-drop on Wayland.
 # These forks do; without them DnD silently does nothing under a Wayland session.
 [patch.crates-io]
