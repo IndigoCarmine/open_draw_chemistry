@@ -19,7 +19,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 
 # The 2D structure editor widget, reaction schemes and CDX/CDXML codecs. Pinned to a rev
 # because it is not on crates.io; it must share this app's egui version.
-chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs", rev = "65c6495d214557e8d5adea86277c3164d10af950" }
+chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs", rev = "a0e78e60d859d207f93339171868f7a007257489" }
 rfd = "0.17.2"
 # The per-user config directory, where the user's own fragments are kept.
 dirs = "6.0.0"

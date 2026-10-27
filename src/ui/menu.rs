@@ -145,6 +145,16 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
                 Command::ToggleCleanup,
                 out,
             );
+            ui.separator();
+            item(ui, "IUPAC 名をコピー", "", state.has_document, Command::CopyIupacName, out);
+            item(
+                ui,
+                "IUPAC 名をテキストとして挿入",
+                "",
+                state.has_document,
+                Command::InsertIupacName,
+                out,
+            );
         });
 
         ui.menu_button("反応", |ui| {

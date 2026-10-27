@@ -99,6 +99,10 @@ pub enum Command {
     Paste,
     FitView,
     ToggleCleanup,
+    /// IUPAC 名をコピー: copy the name of the selected structures (or the whole drawing).
+    CopyIupacName,
+    /// IUPAC 名をテキストとして挿入: put that name on the page under the structures.
+    InsertIupacName,
     ToggleProperties,
     SetView(ViewMode),
     /// Generate the active document's 3D model from its drawing (again: the same molecule

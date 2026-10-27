@@ -476,6 +476,22 @@ impl OpenDrawApp {
                     crate::ui::palette::select_text_tool(&mut doc.editor);
                 }
             }
+            Command::CopyIupacName | Command::InsertIupacName => {
+                let config = &self.config;
+                let Some(doc) = self.docs.get_mut(self.active) else {
+                    return;
+                };
+                self.status = if command == Command::CopyIupacName {
+                    crate::iupac::name(&doc.editor, config).map(|name| {
+                        ctx.copy_text(name.clone());
+                        format!("IUPAC 名をコピーしました: {name}")
+                    })
+                } else {
+                    crate::iupac::insert_name(&mut doc.editor, config)
+                        .map(|name| format!("IUPAC 名を挿入しました: {name}"))
+                }
+                .unwrap_or_else(|message| message);
+            }
             Command::CreateAssembly => self.create_assembly(),
             Command::AssemblyAddFile => self.assembly_add_file(),
             Command::AssemblyExport(export) => self.export_assembly(export),
