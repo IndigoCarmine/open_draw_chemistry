@@ -11,6 +11,7 @@ use crate::io::Export;
 pub mod icons;
 pub mod menu;
 pub mod palette;
+pub mod periodic_table;
 pub mod properties;
 pub mod status;
 pub mod tabs;
