@@ -921,6 +921,54 @@ impl eframe::App for OpenDrawApp {
 mod tests {
     use super::*;
 
+    /// eframe's storage holding one saved state, as `app.ron` would.
+    struct SavedState(String);
+
+    impl eframe::Storage for SavedState {
+        fn get_string(&self, key: &str) -> Option<String> {
+            (key == eframe::APP_KEY).then(|| self.0.clone())
+        }
+        fn set_string(&mut self, _key: &str, value: String) {
+            self.0 = value;
+        }
+        fn remove_string(&mut self, _key: &str) {
+            self.0.clear();
+        }
+        fn flush(&mut self) {}
+    }
+
+    /// 3D styles that were dropped load as the light spheres; the state around them (and the
+    /// styles that remain) loads as saved.
+    #[test]
+    fn a_dropped_3d_style_loads_as_light_spheres() {
+        use crate::ui::viewport3d::Style3d;
+        for (saved, expected) in [
+            ("BallStick", Style3d::Light),
+            ("SpaceFilling", Style3d::Light),
+            ("Spheres", Style3d::Light),
+            ("SomethingNewer", Style3d::Light),
+            ("Light", Style3d::Light),
+            ("Wireframe", Style3d::Wireframe),
+        ] {
+            let storage = SavedState(format!(
+                "(show_properties: false, view3d: (style: {saved}, numbers: true))"
+            ));
+            let app: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY)
+                .unwrap_or_else(|| panic!("{saved}: the saved state did not load"));
+            assert_eq!(app.view3d.style, expected, "{saved}");
+            assert!(app.view3d.numbers, "{saved}");
+            assert!(!app.show_properties, "{saved}");
+        }
+
+        // And the choice round-trips.
+        let mut storage = SavedState(String::new());
+        let mut app = OpenDrawApp::default();
+        app.view3d.style = Style3d::Wireframe;
+        eframe::set_value(&mut storage, eframe::APP_KEY, &app);
+        let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert_eq!(back.view3d.style, Style3d::Wireframe);
+    }
+
     /// A file holding one carbon atom, in a fresh directory.
     fn one_atom_file(name: &str) -> (PathBuf, PathBuf) {
         let dir = std::env::temp_dir().join(format!("odc-app-test-{}-{name}", std::process::id()));

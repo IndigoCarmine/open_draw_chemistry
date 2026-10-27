@@ -15,7 +15,7 @@ use moleucle_3dview_rs::{
     Atom, AtomGroup, AtomGroupRender, AtomGroupState, AtomPairRender, AtomPairState, Bond, Element,
     Molecule, MoleculeViewer, OffscreenRenderer, RenderFrameState, RenderStyle, SharedRenderStates,
     camera::{Camera, OrbitalCamera},
-    new_shared_states, set_state_by_type,
+    new_shared_states, set_state_by_type, vdw_radius,
     viewer::ViewerEvent,
 };
 use serde::{Deserialize, Serialize};
@@ -27,41 +27,50 @@ const NM_PER_ANGSTROM: f32 = 0.1;
 
 /// How the model is drawn. The app's own enum (the library's is not serialisable) so the choice
 /// is remembered between runs.
+///
+/// Earlier versions offered more styles (ball-and-stick, space-filling, impostor spheres); any
+/// name not listed here — those included — loads as [`Style3d::Light`], so a state saved
+/// before keeps loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Style3d {
-    #[default]
-    BallStick,
-    SpaceFilling,
-    Spheres,
+    /// Bonds as lines only.
     Wireframe,
+    /// Small spheres joined by thin sticks. Last, as serde requires of the catch-all.
+    #[default]
+    #[serde(other)]
+    Light,
 }
 
 impl Style3d {
-    pub const ALL: [Style3d; 4] = [
-        Style3d::BallStick,
-        Style3d::SpaceFilling,
-        Style3d::Spheres,
-        Style3d::Wireframe,
-    ];
+    pub const ALL: [Style3d; 2] = [Style3d::Light, Style3d::Wireframe];
 
     pub fn label(self) -> &'static str {
         match self {
-            Style3d::BallStick => "ボール＆スティック",
-            Style3d::SpaceFilling => "空間充填",
-            Style3d::Spheres => "球（軽量）",
-            Style3d::Wireframe => "ワイヤーフレーム",
+            Style3d::Light => "球（軽量）",
+            Style3d::Wireframe => "Wireframe",
         }
     }
 
     fn render_style(self) -> RenderStyle {
         match self {
-            Style3d::BallStick => RenderStyle::BallStick,
-            Style3d::SpaceFilling => RenderStyle::BallOnly,
-            Style3d::Spheres => RenderStyle::Circles,
+            // Ball-and-stick geometry with the atoms shrunk (`LIGHT_ATOM_SCALE`) at the
+            // library's coarsest sphere mesh. The impostor-only `Circles` style is cheaper
+            // still but draws no bonds.
+            Style3d::Light => RenderStyle::BallStick,
             Style3d::Wireframe => RenderStyle::Wireframe,
         }
     }
 }
+
+/// Atom radius in the light style, as a fraction of the van der Waals radius: carbon 0.43 Å,
+/// hydrogen 0.30 Å, against the library ball-and-stick's 0.3 (0.51 Å for carbon). The sticks
+/// are the library's fixed 0.18 Å, so this keeps the atoms clearly wider than the bonds.
+const LIGHT_ATOM_SCALE: f32 = 0.25;
+
+/// Sphere mesh resolution (latitude bands; twice as many longitudes). The library's default
+/// and minimum, 3, turns atoms this small into hexagons; 6 is still coarse (72 triangles a
+/// sphere), and the library halves it on its own when a large model would overflow.
+const SPHERE_RESOLUTION: usize = 6;
 
 /// What a ray through the pointer hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +142,7 @@ impl Viewport3d {
         pairs.set_radius(0.028);
         offscreen.add_additional_render(Box::new(pairs));
         offscreen.set_render_style(Style3d::default().render_style());
+        offscreen.set_mesh_resolution(SPHERE_RESOLUTION);
         let mut camera = OrbitalCamera::default();
         camera.set_aspect(1.0);
         Self {
@@ -222,6 +232,13 @@ impl Viewport3d {
                 .atoms
                 .iter()
                 .map(|a| element_color(&a.element))
+                .collect(),
+        ));
+        self.viewer.set_atom_radii(Some(
+            model
+                .atoms
+                .iter()
+                .map(|a| vdw_radius(&a.element) * LIGHT_ATOM_SCALE)
                 .collect(),
         ));
         self.shown = Some(Shown {
