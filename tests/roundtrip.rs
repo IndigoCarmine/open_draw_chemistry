@@ -37,6 +37,7 @@ fn page_objects(mol: &chembuider_rs::Molecule) -> Vec<(String, [i32; 2])> {
         .map(|o| match o {
             PageObject::Arrow(a) => (format!("{:?}", a.kind), r(a.tail)),
             PageObject::Text(t) => (t.text.clone(), r(t.pos)),
+            PageObject::Table(t) => ("Table".to_owned(), r(t.pos)),
         })
         .collect()
 }

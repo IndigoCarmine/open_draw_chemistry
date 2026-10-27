@@ -102,6 +102,8 @@ pub enum Command {
     ArrowTool(chembuider_rs::molecule::ArrowKind),
     /// Switch the active document's editor to the text tool (reaction conditions).
     TextTool,
+    /// Put a reaction (stoichiometry) table under the active document's reaction.
+    InsertReactionTable,
 }
 
 #[cfg(test)]

@@ -154,6 +154,15 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             ] {
                 item(ui, label, "", state.has_document, command, out);
             }
+            ui.separator();
+            item(
+                ui,
+                "反応表を挿入",
+                "",
+                state.has_document,
+                Command::InsertReactionTable,
+                out,
+            );
         });
         ui.menu_button("3D", |ui| {
             item(

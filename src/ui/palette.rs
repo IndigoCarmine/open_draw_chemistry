@@ -5,7 +5,7 @@ use chembuider_rs::{BondOrder, BondStereo, ChemStructEditor, Tool};
 use egui::vec2;
 
 use super::icons::{self, Frame, Icon};
-use super::periodic_table;
+use super::{Command, periodic_table};
 
 /// Elements offered as buttons; anything else is picked from the 周期表… popup.
 pub const ELEMENTS: [&str; 10] = ["C", "H", "N", "O", "S", "P", "F", "Cl", "Br", "I"];
@@ -15,6 +15,8 @@ pub const ELEMENTS: [&str; 10] = ["C", "H", "N", "O", "S", "P", "F", "Cl", "Br",
 enum Action {
     Tool(PaletteTool),
     Bond(BondKind),
+    /// Not a tool: asks the app to run this command (which reports in the status bar).
+    Command(PaletteCommand),
     /// Shown for the design's later tools (rings, chains, brackets) but not available yet: the
     /// editor widget has no mouse tool for them.
     Planned,
@@ -35,6 +37,19 @@ impl PaletteTool {
             PaletteTool::Eraser => Tool::Eraser,
             PaletteTool::Text => Tool::Text,
             PaletteTool::Arrow(kind) => Tool::Arrow(kind),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PaletteCommand {
+    InsertReactionTable,
+}
+
+impl PaletteCommand {
+    fn command(self) -> Command {
+        match self {
+            PaletteCommand::InsertReactionTable => Command::InsertReactionTable,
         }
     }
 }
@@ -62,7 +77,7 @@ impl BondKind {
     }
 }
 
-const BUTTONS: [(Icon, &str, Action); 16] = [
+const BUTTONS: [(Icon, &str, Action); 17] = [
     (Icon::Select, "選択", Action::Tool(PaletteTool::Select)),
     (Icon::Eraser, "消しゴム", Action::Tool(PaletteTool::Eraser)),
     (Icon::Single, "単結合", Action::Bond(BondKind::Single)),
@@ -87,6 +102,11 @@ const BUTTONS: [(Icon, &str, Action); 16] = [
         Action::Tool(PaletteTool::Arrow(ArrowKind::Equilibrium)),
     ),
     (Icon::Bracket, "ブラケット", Action::Planned),
+    (
+        Icon::Table,
+        "反応表を挿入",
+        Action::Command(PaletteCommand::InsertReactionTable),
+    ),
 ];
 
 /// Whether `action` is the editor's current state.
@@ -99,7 +119,7 @@ fn is_selected(editor: &ChemStructEditor, action: Action) -> bool {
                 && editor.current_bond_order == order
                 && editor.current_bond_stereo == stereo
         }
-        Action::Planned => false,
+        Action::Command(_) | Action::Planned => false,
     }
 }
 
@@ -112,7 +132,7 @@ fn apply(editor: &mut ChemStructEditor, action: Action) {
             editor.current_bond_stereo = stereo;
             editor.tool = Tool::Bond;
         }
-        Action::Planned => {}
+        Action::Command(_) | Action::Planned => {}
     }
 }
 
@@ -142,7 +162,25 @@ pub fn select_text_tool(editor: &mut ChemStructEditor) {
     apply(editor, Action::Tool(PaletteTool::Text));
 }
 
-pub fn palette(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custom_element: &mut String) {
+/// 「反応表を挿入」: put a reaction table under the selected arrow's reaction (or the first
+/// reaction on the page) and switch to the select tool, with which its cells are edited by a
+/// double-click. The status bar message: what was done, or why nothing was.
+pub fn insert_reaction_table(editor: &mut ChemStructEditor) -> &'static str {
+    match editor.insert_reaction_table() {
+        Some(_) => {
+            apply(editor, Action::Tool(PaletteTool::Select));
+            "反応表を挿入しました。セルをダブルクリックすると当量・質量などを入力できます（入力欄は Enter で確定）"
+        }
+        None => "反応表にする構造がありません。先に構造と反応矢印を描いてください",
+    }
+}
+
+pub fn palette(
+    ui: &mut egui::Ui,
+    editor: &mut ChemStructEditor,
+    custom_element: &mut String,
+    out: &mut Vec<Command>,
+) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         let gap = 4.0;
         let cell = vec2((ui.available_width() - gap) / 2.0, 44.0);
@@ -163,7 +201,10 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custom_element:
                     if icons::icon_button(ui, icon, cell, Frame::Tile, selected, !planned, &tip)
                         .clicked()
                     {
-                        apply(editor, action);
+                        match action {
+                            Action::Command(command) => out.push(command.command()),
+                            _ => apply(editor, action),
+                        }
                     }
                     if i % 2 == 1 {
                         ui.end_row();
@@ -325,6 +366,40 @@ mod tests {
                 "シクロヘキサン",
                 "ブラケット"
             ]
+        );
+    }
+
+    /// 「反応表を挿入」 puts a table under the reaction and leaves the select tool on, so a
+    /// double-click edits its cells; with nothing drawn it says why nothing happened.
+    #[test]
+    fn inserting_a_reaction_table() {
+        let mut editor = ChemStructEditor::default();
+        assert!(insert_reaction_table(&mut editor).starts_with("反応表にする構造がありません"));
+        assert!(editor.molecule.objects.is_empty());
+        let m = &mut editor.molecule;
+        let a = m.add_atom("C".into(), [0.0, 0.0], 0);
+        let b = m.add_atom("O".into(), [1.3, 0.0], 0);
+        m.add_bond(a, b, BondOrder::Single);
+        m.add_arrow([2.5, 0.0], [5.5, 0.0], ArrowKind::Reaction);
+        m.add_atom("C".into(), [6.5, 0.0], 0);
+        editor.tool = Tool::Bond;
+        assert!(insert_reaction_table(&mut editor).starts_with("反応表を挿入しました"));
+        assert_eq!(editor.tool, Tool::Select);
+        let table = editor
+            .molecule
+            .objects
+            .iter()
+            .find_map(|o| o.as_table())
+            .expect("a table");
+        assert_eq!((table.reactants.len(), table.products.len()), (1, 1));
+        assert!(table.pos[1] > 0.0, "under the reaction");
+        assert!(editor.undo());
+        assert!(
+            editor
+                .molecule
+                .objects
+                .iter()
+                .all(|o| o.as_table().is_none())
         );
     }
 
