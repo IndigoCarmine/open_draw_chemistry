@@ -131,9 +131,7 @@ impl Document {
 
     /// An untitled document nobody has drawn in: opening a file replaces it.
     pub fn is_pristine(&self) -> bool {
-        self.path.is_none()
-            && self.editor.molecule.atoms.is_empty()
-            && self.editor.undo_stack.is_empty()
+        self.path.is_none() && self.editor.molecule.is_blank() && self.editor.undo_stack.is_empty()
     }
 
     /// The tab's title: the file name, or "Untitled N".
@@ -234,6 +232,31 @@ mod tests {
             doc.show(ui);
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn an_arrow_or_text_alone_makes_the_document_dirty() {
+        let mut doc = Document::new(&Config::default(), 1);
+        doc.editor.molecule.add_arrow(
+            [0.0, 0.0],
+            [4.5, 0.0],
+            chembuider_rs::molecule::ArrowKind::Reaction,
+        );
+        assert!(doc.is_dirty());
+        assert!(!doc.is_pristine());
+
+        let mut doc = opened_reaction();
+        assert!(!doc.is_dirty());
+        if let Some(chembuider_rs::molecule::PageObject::Text(t)) = doc
+            .editor
+            .molecule
+            .objects
+            .iter_mut()
+            .find(|o| o.as_text().is_some())
+        {
+            t.text = "(II)".to_owned();
+        }
+        assert!(doc.is_dirty(), "editing a caption is an edit");
     }
 
     fn opened_reaction() -> Document {

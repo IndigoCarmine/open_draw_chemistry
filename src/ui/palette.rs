@@ -1,5 +1,6 @@
 //! The tool palette on the left: drawing tools and elements, as in the design.
 
+use chembuider_rs::molecule::ArrowKind;
 use chembuider_rs::{BondOrder, BondStereo, ChemStructEditor, Tool};
 use egui::vec2;
 
@@ -14,8 +15,8 @@ pub const ELEMENTS: [&str; 10] = ["C", "H", "N", "O", "S", "P", "F", "Cl", "Br",
 enum Action {
     Tool(PaletteTool),
     Bond(BondKind),
-    /// Shown for the design's later tools (rings, chains, text, arrows, brackets) but not
-    /// available yet: the editor widget has no mouse tool for them.
+    /// Shown for the design's later tools (rings, chains, brackets) but not available yet: the
+    /// editor widget has no mouse tool for them.
     Planned,
 }
 
@@ -23,6 +24,19 @@ enum Action {
 enum PaletteTool {
     Select,
     Eraser,
+    Text,
+    Arrow(ArrowKind),
+}
+
+impl PaletteTool {
+    fn tool(self) -> Tool {
+        match self {
+            PaletteTool::Select => Tool::Select,
+            PaletteTool::Eraser => Tool::Eraser,
+            PaletteTool::Text => Tool::Text,
+            PaletteTool::Arrow(kind) => Tool::Arrow(kind),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -61,17 +75,24 @@ const BUTTONS: [(Icon, &str, Action); 16] = [
     (Icon::Benzene, "ベンゼン環", Action::Planned),
     (Icon::Cyclopentane, "シクロペンタン", Action::Planned),
     (Icon::Cyclohexane, "シクロヘキサン", Action::Planned),
-    (Icon::Text, "テキスト", Action::Planned),
-    (Icon::Arrow, "反応矢印", Action::Planned),
-    (Icon::Equilibrium, "平衡矢印", Action::Planned),
+    (Icon::Text, "テキスト", Action::Tool(PaletteTool::Text)),
+    (
+        Icon::Arrow,
+        "反応矢印",
+        Action::Tool(PaletteTool::Arrow(ArrowKind::Reaction)),
+    ),
+    (
+        Icon::Equilibrium,
+        "平衡矢印",
+        Action::Tool(PaletteTool::Arrow(ArrowKind::Equilibrium)),
+    ),
     (Icon::Bracket, "ブラケット", Action::Planned),
 ];
 
 /// Whether `action` is the editor's current state.
 fn is_selected(editor: &ChemStructEditor, action: Action) -> bool {
     match action {
-        Action::Tool(PaletteTool::Select) => editor.tool == Tool::Select,
-        Action::Tool(PaletteTool::Eraser) => editor.tool == Tool::Eraser,
+        Action::Tool(tool) => editor.tool == tool.tool(),
         Action::Bond(kind) => {
             let (order, stereo) = kind.order_and_stereo();
             editor.tool == Tool::Bond
@@ -84,8 +105,7 @@ fn is_selected(editor: &ChemStructEditor, action: Action) -> bool {
 
 fn apply(editor: &mut ChemStructEditor, action: Action) {
     match action {
-        Action::Tool(PaletteTool::Select) => editor.tool = Tool::Select,
-        Action::Tool(PaletteTool::Eraser) => editor.tool = Tool::Eraser,
+        Action::Tool(tool) => editor.tool = tool.tool(),
         Action::Bond(kind) => {
             let (order, stereo) = kind.order_and_stereo();
             editor.current_bond_order = order;
@@ -106,7 +126,20 @@ pub fn tool_name(editor: &ChemStructEditor) -> &'static str {
         Tool::Select => "選択",
         Tool::Bond => "結合",
         Tool::Eraser => "消しゴム",
+        Tool::Text => "テキスト",
+        Tool::Arrow(ArrowKind::Reaction) => "反応矢印",
+        Tool::Arrow(ArrowKind::Equilibrium) => "平衡矢印",
     }
+}
+
+/// Switch the editor to the arrow tool of `kind` (the 反応 menu's 「反応矢印を追加」「平衡矢印を追加」).
+pub fn select_arrow_tool(editor: &mut ChemStructEditor, kind: ArrowKind) {
+    apply(editor, Action::Tool(PaletteTool::Arrow(kind)));
+}
+
+/// Switch the editor to the text tool (the 反応 menu's 「反応条件のテキスト」).
+pub fn select_text_tool(editor: &mut ChemStructEditor) {
+    apply(editor, Action::Tool(PaletteTool::Text));
 }
 
 pub fn palette(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custom_element: &mut String) {
@@ -265,6 +298,34 @@ mod tests {
         assert_eq!(editor.current_bond_order, BondOrder::Single);
         assert_eq!(editor.current_bond_stereo, BondStereo::WedgeDown);
         assert_eq!(tool_name(&editor), "破線くさび");
+    }
+
+    #[test]
+    fn the_arrow_and_text_buttons_select_their_tools() {
+        let mut editor = ChemStructEditor::default();
+        select_arrow_tool(&mut editor, ArrowKind::Equilibrium);
+        assert_eq!(editor.tool, Tool::Arrow(ArrowKind::Equilibrium));
+        assert_eq!(tool_name(&editor), "平衡矢印");
+        select_arrow_tool(&mut editor, ArrowKind::Reaction);
+        assert_eq!(tool_name(&editor), "反応矢印");
+        select_text_tool(&mut editor);
+        assert_eq!(editor.tool, Tool::Text);
+        assert_eq!(tool_name(&editor), "テキスト");
+        let planned: Vec<&str> = BUTTONS
+            .iter()
+            .filter(|(_, _, a)| *a == Action::Planned)
+            .map(|(_, name, _)| *name)
+            .collect();
+        assert_eq!(
+            planned,
+            [
+                "鎖",
+                "ベンゼン環",
+                "シクロペンタン",
+                "シクロヘキサン",
+                "ブラケット"
+            ]
+        );
     }
 
     #[test]

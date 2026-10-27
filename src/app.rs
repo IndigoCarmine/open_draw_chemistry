@@ -170,16 +170,14 @@ impl OpenDrawApp {
         };
         match io::load(path) {
             Ok(loaded) => {
-                let hidden = loaded.other_objects;
+                let summary = loaded.summary();
                 let doc = Document::from_loaded(&self.config, path, format, loaded);
                 let name = doc.title();
                 self.add_opened(doc, path);
-                self.status = if hidden > 0 {
-                    format!(
-                        "{name} を開きました（表示されないオブジェクト {hidden} 個は保存時に保持されます）"
-                    )
-                } else {
+                self.status = if summary.is_empty() {
                     format!("{name} を開きました")
+                } else {
+                    format!("{name} を開きました（{summary}）")
                 };
             }
             Err(e) => self.status = format!("{} を開けませんでした: {e}", path.display()),
@@ -450,6 +448,16 @@ impl OpenDrawApp {
                 // Pick up files added to the folder by hand since the last look.
                 self.reload_fragments();
                 self.fragment_manager.open = true;
+            }
+            Command::ArrowTool(kind) => {
+                if let Some(doc) = self.active_doc_mut() {
+                    crate::ui::palette::select_arrow_tool(&mut doc.editor, kind);
+                }
+            }
+            Command::TextTool => {
+                if let Some(doc) = self.active_doc_mut() {
+                    crate::ui::palette::select_text_tool(&mut doc.editor);
+                }
             }
             Command::Undo
             | Command::Redo

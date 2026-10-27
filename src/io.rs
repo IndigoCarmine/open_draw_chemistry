@@ -1,9 +1,10 @@
 //! Reading and writing documents, independent of the UI.
 //!
-//! A document is kept in memory as a [`Molecule`] plus, when it came from a file, that file's
-//! ChemDraw object tree as CDX bytes. Saving merges the edited structures back into that tree
-//! ([`merge_into_cdx`]), so arrows, captions and other objects the editor cannot show yet
-//! survive an open → edit → save round trip. CDXML is the same object tree written as XML, so
+//! A document is kept in memory as a [`Molecule`] (its structures, and the reaction arrows and
+//! texts on the page as [`Molecule::objects`]) plus, when it came from a file, that file's
+//! ChemDraw object tree as CDX bytes. Saving merges the edited structures, arrows and texts
+//! back into that tree ([`merge_into_cdx`]), so shapes, brackets, curved arrows and the other
+//! objects the editor cannot show yet survive an open → edit → save round trip. CDXML is the same object tree written as XML, so
 //! both formats share one path.
 //!
 //! 3D structure files (MOL2, PDB, XYZ, MOL, SDF) open too ([`Kind::Structure3d`], read by
@@ -162,8 +163,45 @@ pub struct Loaded {
     pub molecule: Molecule,
     /// The file's object tree as CDX bytes, to merge the edited structures back into.
     pub original: Vec<u8>,
-    /// Objects other than structures (arrows, text, shapes, …) that are kept but not shown.
+    /// Objects other than structures and the arrows and texts the editor shows (shapes,
+    /// brackets, curved arrows, reaction schemes, …): kept but not shown.
     pub other_objects: usize,
+}
+
+impl Loaded {
+    /// What opening the file brought, for the status bar after 「… を開きました」: the arrows
+    /// and texts that can be edited, and the objects that are kept but not shown. Empty when
+    /// there are neither.
+    pub fn summary(&self) -> String {
+        let arrows = self
+            .molecule
+            .objects
+            .iter()
+            .filter(|o| o.as_arrow().is_some())
+            .count();
+        let texts = self.molecule.objects.len() - arrows;
+        let mut parts = Vec::new();
+        if arrows > 0 {
+            parts.push(format!("矢印 {arrows} 本"));
+        }
+        if texts > 0 {
+            parts.push(format!("テキスト {texts} 個"));
+        }
+        let mut out = String::new();
+        if !parts.is_empty() {
+            out.push_str(&format!("{}を編集できます", parts.join("・")));
+        }
+        if self.other_objects > 0 {
+            if !out.is_empty() {
+                out.push('。');
+            }
+            out.push_str(&format!(
+                "表示されないオブジェクト {} 個は保存時に保持されます",
+                self.other_objects
+            ));
+        }
+        out
+    }
 }
 
 /// Read a document from `path`, choosing the format by extension.
@@ -234,7 +272,13 @@ pub fn save(
 
 /// The bytes of `mol` exported as `export`.
 pub fn export(export: Export, mol: &Molecule) -> Result<Vec<u8>, Error> {
-    if mol.atoms.is_empty() {
+    // A picture of arrows and text alone is still a picture; the chemical formats need atoms.
+    let empty = match export {
+        #[cfg(windows)]
+        Export::Png => mol.is_blank(),
+        _ => mol.atoms.is_empty(),
+    };
+    if empty {
         return Err(Error::Empty);
     }
     match export {
@@ -296,6 +340,49 @@ mod tests {
             assert_eq!(back.molecule.bonds.len(), 2, "{format:?}");
             assert_eq!(back.other_objects, 0, "{format:?}");
         }
+    }
+
+    #[test]
+    fn drawn_arrows_and_text_survive_both_formats() {
+        let mut mol = ethanol();
+        mol.add_arrow(
+            [4.0, 0.0],
+            [8.5, 0.0],
+            chembuider_rs::molecule::ArrowKind::Reaction,
+        );
+        mol.add_arrow(
+            [4.0, 2.0],
+            [8.5, 2.0],
+            chembuider_rs::molecule::ArrowKind::Equilibrium,
+        );
+        mol.add_text([4.5, -0.6], "H_2SO_4\nreflux");
+        for format in Format::ALL {
+            let bytes = encode(format, &mol, None).unwrap();
+            let back = decode(format, &bytes).unwrap();
+            assert_eq!(back.molecule.objects.len(), 3, "{format:?}");
+            assert_eq!(back.other_objects, 0, "{format:?}");
+            let text = back.molecule.objects[2].as_text().unwrap();
+            assert_eq!(text.text, "H_2SO_4\nreflux", "{format:?}");
+            assert_eq!(back.summary(), "矢印 2 本・テキスト 1 個を編集できます");
+        }
+    }
+
+    #[test]
+    fn the_summary_names_what_is_editable_and_what_is_kept() {
+        let loaded = Loaded {
+            molecule: ethanol(),
+            original: Vec::new(),
+            other_objects: 2,
+        };
+        assert_eq!(
+            loaded.summary(),
+            "表示されないオブジェクト 2 個は保存時に保持されます"
+        );
+        let plain = Loaded {
+            other_objects: 0,
+            ..loaded
+        };
+        assert_eq!(plain.summary(), "");
     }
 
     #[test]
