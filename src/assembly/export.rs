@@ -98,21 +98,18 @@ pub fn cif(built: &Built, design: &Design, title: &str) -> Option<String> {
     let crystal = built.crystal.as_ref()?;
     let cell = &crystal.cell;
     let mut out = String::new();
-    let block: String = title
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let block = if block.trim_matches('_').is_empty() {
-        "assembly".to_owned()
-    } else {
-        block
-    };
+    // The block name: the title's ASCII letters, digits and hyphens, other runs as one `_`
+    // (CIF 1.1 is ASCII; a Japanese title leaves what ASCII it has, or `assembly`).
+    let mut block = String::new();
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' {
+            block.push(c);
+        } else if !block.is_empty() && !block.ends_with('_') {
+            block.push('_');
+        }
+    }
+    let block = block.trim_end_matches('_');
+    let block = if block.is_empty() { "assembly" } else { block };
     let _ = writeln!(out, "data_{block}");
     out.push('\n');
     let _ = writeln!(
@@ -120,7 +117,9 @@ pub fn cif(built: &Built, design: &Design, title: &str) -> Option<String> {
         "_audit_creation_method {}",
         cif_value("Open DrawChemistry molecular assembly")
     );
-    let _ = writeln!(out, "_chemical_name_common {}", cif_value(title));
+    if title.is_ascii() {
+        let _ = writeln!(out, "_chemical_name_common {}", cif_value(title));
+    }
     if let Some(preset) = symop::matching_preset(&crystal.symops) {
         let _ = writeln!(
             out,

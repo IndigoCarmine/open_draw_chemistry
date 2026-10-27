@@ -269,6 +269,16 @@ fn a_crystal_exports_as_cif_and_pdb() {
     let f = centroid(&frac);
     assert!(math::distance(f, [0.15, 0.2, 0.3]) < 1e-5, "{f:?}");
 
+    // CIF 1.1 is ASCII: a Japanese title leaves its ASCII part as the block name.
+    let named = export::cif(&built, &design, "無題 1_assembly").unwrap();
+    assert!(named.starts_with("data_1_assembly\n"), "{named}");
+    assert!(named.is_ascii());
+    assert!(
+        export::cif(&built, &design, "結晶")
+            .unwrap()
+            .starts_with("data_assembly\n")
+    );
+
     // No crystal, no CIF.
     let plain = Design {
         steps: vec![Step::new_ring()],
