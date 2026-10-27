@@ -63,6 +63,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\resources\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+; OpenBabel, for 3D generation (scripts/fetch-openbabel.sh unpacks it): the DLLs and .obf
+; plugins beside the executable, the data at {app}\data, which is where openbabel_rs looks in an
+; installed application. Skipped when the app was built without the `openbabel` feature.
+Source: "..\third_party\openbabel-prebuilt\bin\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\third_party\openbabel-prebuilt\bin\*.obf"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\third_party\openbabel-prebuilt\bin\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"

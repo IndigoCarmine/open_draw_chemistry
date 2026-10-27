@@ -21,6 +21,10 @@ serde = { version = "1.0.229", features = ["derive"] }
 chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs", rev = "65f35859729ae807133c0aa3694c14fd9e2496d0" }
 rfd = "0.17.2"
 
+# 2D → 3D generation and force-field optimisation (see `src/three_d/`). Behind the `openbabel`
+# feature because it needs a prebuilt OpenBabel (`scripts/fetch-openbabel.sh`) or CMake.
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.3", optional = true }
+
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
@@ -29,6 +33,12 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 [patch.crates-io]
 winit = { git = "https://github.com/IndigoCarmine/winit", branch = "wayland-native-dnd" }
 egui-winit = { git = "https://github.com/IndigoCarmine/egui-winit", branch = "main" }
+
+[features]
+default = ["openbabel"]
+# 3D generation through OpenBabel. Without it the app builds anywhere and the 3D panel says that
+# generation is unavailable (the macOS x86_64 release slice, which has no prebuilt OpenBabel).
+openbabel = ["dep:openbabel"]
 
 [dev-dependencies]
 serde_json = "1.0.154"
