@@ -618,7 +618,20 @@ impl eframe::App for OpenDrawApp {
                     .default_size(270.0)
                     .size_range(220.0..=360.0)
                     .show(ui, |ui| {
-                        ui::properties::properties(ui, doc, &mut self.analysis)
+                        if ui::properties::properties(ui, doc, &mut self.analysis) {
+                            commands.push(Command::ToggleProperties);
+                        }
+                    });
+            } else {
+                // Collapsed: a narrow strip that expands the panel back to its last width.
+                egui::Panel::right("properties_collapsed")
+                    .frame(bar(visuals.panel_fill, 4, 10))
+                    .resizable(false)
+                    .exact_size(ui::properties::COLLAPSED_WIDTH)
+                    .show(ui, |ui| {
+                        if ui::properties::collapsed(ui) {
+                            commands.push(Command::ToggleProperties);
+                        }
                     });
             }
         }
