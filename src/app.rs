@@ -10,8 +10,9 @@ use chembuider_rs::{Config, bond_menu};
 use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
-use crate::io::{self, Export, Format};
+use crate::io::{self, Export, Format, Kind};
 use crate::theme;
+use crate::three_d::read::Format3d;
 use crate::three_d::{self, Export3d};
 use crate::ui::{self, Command, ViewMode, menu::MenuState};
 
@@ -133,26 +134,24 @@ impl OpenDrawApp {
             self.active = i;
             return;
         }
-        let Some(format) = Format::from_path(path) else {
-            self.status = format!(
-                "{} を開けませんでした: {}",
-                path.display(),
-                io::Error::UnknownFormat
-            );
-            return;
+        let format = match Kind::from_path(path) {
+            Some(Kind::Document(format)) => format,
+            Some(Kind::Structure3d(format)) => return self.open_3d(path, format),
+            None => {
+                self.status = format!(
+                    "{} を開けませんでした: {}",
+                    path.display(),
+                    io::Error::UnknownFormat
+                );
+                return;
+            }
         };
         match io::load(path) {
             Ok(loaded) => {
                 let hidden = loaded.other_objects;
                 let doc = Document::from_loaded(&self.config, path, format, loaded);
                 let name = doc.title();
-                if self.active_doc().is_some_and(Document::is_pristine) {
-                    self.docs[self.active] = doc;
-                } else {
-                    self.docs.push(doc);
-                    self.active = self.docs.len() - 1;
-                }
-                self.remember(path);
+                self.add_opened(doc, path);
                 self.status = if hidden > 0 {
                     format!(
                         "{name} を開きました（表示されないオブジェクト {hidden} 個は保存時に保持されます）"
@@ -165,6 +164,50 @@ impl OpenDrawApp {
         }
     }
 
+    /// Open the 3D structure file at `path`: its coordinates become the document's 3D model
+    /// and a 2D depiction goes into the editor. The 3D view is shown if it was hidden.
+    fn open_3d(&mut self, path: &Path, format: Format3d) {
+        let opened = match io::load_3d(path) {
+            Ok(opened) => opened,
+            Err(e) => {
+                self.status = format!("{} を開けませんでした: {e}", path.display());
+                return;
+            }
+        };
+        let records = opened.records;
+        let projected = opened.projected;
+        let has_model = opened.model.is_some();
+        let doc = Document::from_structure_3d(&self.config, path, format, opened);
+        let name = doc.title();
+        self.add_opened(doc, path);
+        if has_model && !self.view.shows_3d() {
+            self.view = ViewMode::Split;
+        }
+        let mut status = format!("{name} を開きました");
+        if records > 1 {
+            status += &format!("（{records} 件の構造のうち最初の 1 件のみ）");
+        }
+        if !has_model {
+            status += "。座標が平面のため 3D モデルは「2D から 3D を生成」で作成してください";
+        }
+        if projected {
+            status += "。2D 配置は 3D 座標の投影です（クリーンアップで整えられます）";
+        }
+        status += "。保存は CDX/CDXML への「名前を付けて保存」になります";
+        self.status = status;
+    }
+
+    /// Show a newly opened document, in place of an untouched untitled one in the active tab.
+    fn add_opened(&mut self, doc: Document, path: &Path) {
+        if self.active_doc().is_some_and(Document::is_pristine) {
+            self.docs[self.active] = doc;
+        } else {
+            self.docs.push(doc);
+            self.active = self.docs.len() - 1;
+        }
+        self.remember(path);
+    }
+
     fn remember(&mut self, path: &Path) {
         self.recent.retain(|p| p != path);
         self.recent.insert(0, path.to_owned());
@@ -172,7 +215,16 @@ impl OpenDrawApp {
     }
 
     fn open_dialog(&mut self) {
-        let mut dialog = rfd::FileDialog::new().add_filter("ChemDraw", &["cdx", "cdxml"]);
+        let chemdraw = Format::ALL.map(Format::extension);
+        let all: Vec<&str> = chemdraw
+            .iter()
+            .chain(Format3d::EXTENSIONS.iter())
+            .copied()
+            .collect();
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("対応するすべての形式", &all)
+            .add_filter("ChemDraw", &chemdraw)
+            .add_filter("3D 構造 (MOL2, PDB, XYZ, MOL, SDF)", &Format3d::EXTENSIONS);
         if let Some(dir) = self.recent.first().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
         }
@@ -617,7 +669,9 @@ fn welcome(ui: &mut egui::Ui, out: &mut Vec<Command>) {
                 out.push(Command::Open);
             }
             ui.add_space(8.0);
-            ui.weak("CDX / CDXML ファイルをここにドロップして開くこともできます");
+            ui.weak(
+                "CDX / CDXML や 3D 構造（MOL2・PDB・XYZ・MOL・SDF）のファイルをここにドロップして開くこともできます",
+            );
         });
     });
 }
@@ -816,6 +870,37 @@ mod tests {
         assert_eq!(app.docs.len(), 1);
         assert!(app.recent.is_empty());
         assert!(app.status.contains("picture.png"));
+    }
+
+    #[test]
+    fn opening_a_3d_file_shows_its_model_and_saves_elsewhere() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/ethanol.xyz");
+        let mut app = app_with_one_untitled();
+        app.view = ViewMode::TwoD;
+        app.open_path(&path);
+        if !three_d::AVAILABLE {
+            assert_eq!(app.docs.len(), 1);
+            assert!(app.docs[0].path.is_none(), "the untitled document stays");
+            assert!(app.status.contains("OpenBabel が必要"), "{}", app.status);
+            assert!(app.recent.is_empty());
+            return;
+        }
+        assert_eq!(
+            app.docs.len(),
+            1,
+            "replaces the untouched untitled document"
+        );
+        let doc = &app.docs[0];
+        assert_eq!(doc.title(), "ethanol.xyz");
+        assert!(doc.three_d.model().is_some(), "{}", app.status);
+        assert_eq!(doc.editor.molecule.atoms.len(), 3);
+        assert_eq!(app.view, ViewMode::Split, "the 3D view is shown");
+        assert_eq!(app.recent, vec![path.clone()]);
+        assert!(app.status.contains("名前を付けて保存"), "{}", app.status);
+        // Opening it again switches to it rather than reading it twice.
+        app.new_document();
+        app.open_path(&path);
+        assert_eq!((app.docs.len(), app.active), (2, 0));
     }
 
     #[test]

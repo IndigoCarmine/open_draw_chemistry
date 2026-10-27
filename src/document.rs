@@ -6,6 +6,7 @@ use chembuider_rs::{ChemStructEditor, Config, Molecule};
 
 use crate::io::{self, Format, Loaded};
 use crate::three_d::Job;
+use crate::three_d::read::{Format3d, Opened3d};
 
 pub struct Document {
     pub editor: ChemStructEditor,
@@ -28,6 +29,9 @@ pub struct Document {
     untitled_number: usize,
     /// The structure's 3D model, generated on demand.
     pub three_d: Job,
+    /// Set when [`Document::path`] is a 3D structure file the document was read from. That
+    /// file is never written: saving asks for a CDX/CDXML file instead.
+    pub imported_3d: Option<Format3d>,
 }
 
 impl Document {
@@ -43,6 +47,7 @@ impl Document {
             auto_fit: None,
             untitled_number,
             three_d: Job::default(),
+            imported_3d: None,
         }
     }
 
@@ -60,6 +65,35 @@ impl Document {
             auto_fit: Some(AutoFit::default()),
             untitled_number: 0,
             three_d: Job::default(),
+            imported_3d: None,
+        }
+    }
+
+    /// A document holding the structure read from the 3D file at `path`: the file's model as
+    /// the 3D state and its 2D depiction in the editor. Saving goes to a new CDX/CDXML file.
+    pub fn from_structure_3d(
+        config: &Config,
+        path: &Path,
+        format: Format3d,
+        opened: Opened3d,
+    ) -> Self {
+        let mut editor = editor(config);
+        editor.molecule = opened.drawing.clone();
+        let three_d = match opened.model {
+            Some(model) => Job::with_model(model, &opened.drawing),
+            None => Job::default(),
+        };
+        Self {
+            editor,
+            path: Some(path.to_owned()),
+            format: Format::Cdxml,
+            original: None,
+            other_objects: 0,
+            saved: opened.drawing,
+            auto_fit: Some(AutoFit::default()),
+            untitled_number: 0,
+            three_d,
+            imported_3d: Some(format),
         }
     }
 
@@ -120,13 +154,15 @@ impl Document {
         )?;
         self.path = Some(path.to_owned());
         self.format = format;
+        self.imported_3d = None;
         self.saved = self.editor.molecule.clone();
         Ok(())
     }
 
-    /// Save to the document's own path; `Ok(false)` when it has none yet (ask for one).
+    /// Save to the document's own path; `Ok(false)` when it has none yet, or only the 3D file
+    /// it was read from (ask for one).
     pub fn save(&mut self) -> Result<bool, io::Error> {
-        let Some(path) = self.path.clone() else {
+        let Some(path) = self.path.clone().filter(|_| self.imported_3d.is_none()) else {
             return Ok(false);
         };
         self.save_as(&path, self.format)?;

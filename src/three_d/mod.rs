@@ -21,6 +21,7 @@ use chembuider_rs::{Config, Molecule};
 mod engine;
 pub mod job;
 pub mod molfile;
+pub mod read;
 
 pub use job::{Job, JobState, Task};
 
