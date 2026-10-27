@@ -2005,6 +2005,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lin_alg"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54862356f5aefd08c1280144613f13c3b71a6320f2c069555d4d16670c2ff7f3"
+dependencies = [
+ "num-traits",
+ "paste",
+]
+
+[[package]]
 name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2100,6 +2110,18 @@ checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
 dependencies = [
  "adler2",
  "simd-adler32",
+]
+
+[[package]]
+name = "moleucle_3dview_rs"
+version = "0.14.0"
+source = "git+https://github.com/IndigoCarmine/moleucle_3dview_rs?rev=0a110d4b7ea0ce57db8688957feff67aa89171d7#0a110d4b7ea0ce57db8688957feff67aa89171d7"
+dependencies = [
+ "bytemuck",
+ "eframe",
+ "egui",
+ "egui-wgpu",
+ "lin_alg",
 ]
 
 [[package]]
@@ -2562,6 +2584,8 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "lin_alg",
+ "moleucle_3dview_rs",
  "openbabel",
  "rfd",
  "serde",

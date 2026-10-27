@@ -17,6 +17,7 @@ pub mod properties;
 pub mod status;
 pub mod tabs;
 pub mod view3d;
+pub mod viewport3d;
 
 /// Which views share the window: the 2D drawing, the 3D model, or both side by side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

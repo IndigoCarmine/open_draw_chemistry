@@ -34,6 +34,8 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport,
+        // The 3D viewer renders through wgpu; glow (the default) has no render state for it.
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 
