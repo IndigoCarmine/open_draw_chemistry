@@ -6,6 +6,8 @@
 //! - [`math`]: rigid transforms and the rotations they are made from;
 //! - [`model`]: the monomers, the steps, the design and its undo history;
 //! - [`build`]: the design turned into atoms and bonds, cached by revision;
+//! - [`place`]: molecules placed by hand — their pose, mouse moves, a free spot for a new one;
+//! - [`clash`]: atoms of different molecules too close, by a cell list (periodic or not);
 //! - [`export`]: PDB, XYZ and MOL2 writers;
 //! - [`file`]: the `.odasm` file the design is saved in.
 //!
@@ -16,10 +18,12 @@
 //! types leave room for them ([`model::Design::manual`], [`build::Built::cell`]).
 
 pub mod build;
+pub mod clash;
 pub mod export;
 pub mod file;
 pub mod math;
 pub mod model;
+pub mod place;
 
 pub use build::{BuildError, Built, MAX_ATOMS};
 pub use export::AssemblyExport;

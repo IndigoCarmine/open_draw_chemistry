@@ -210,6 +210,7 @@ mod tests {
                 component: 0,
                 transform: Rigid::translation([0.0, 0.0, -10.0]),
             }],
+            ..Default::default()
         };
         let built = build(&design, 7).unwrap();
         assert_eq!(built.revision, 7);

@@ -673,11 +673,45 @@ pub const CLASH_FACTOR: f64 = 0.75;
 /// (≈1.5 Å) it is.
 pub const HBOND_CLASH_FACTOR: f64 = 0.55;
 
-fn is_hbond_pair(elements: &[&str], graph: &Graph, h: usize, acceptor: usize) -> bool {
-    let polar = |e: &str| matches!(e, "N" | "O" | "F");
-    elements[h] == "H"
-        && polar(elements[acceptor])
-        && graph.neighbors(h).iter().any(|&d| polar(elements[d]))
+/// N, O and F: the atoms that give and take hydrogen bonds.
+fn is_polar(element: &str) -> bool {
+    matches!(element, "N" | "O" | "F")
+}
+
+/// What decides whether an atom clashes with another: its van der Waals radius and its part in
+/// a hydrogen bond. Shared by [`clashes`] here and the assembly builder's cell-list search
+/// (`assembly::clash`), so both judge a pair the same way.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClashKind {
+    pub radius: f64,
+    /// N, O or F: may accept a hydrogen bond.
+    pub acceptor: bool,
+    /// A hydrogen on N, O or F: may give one.
+    pub donor_h: bool,
+}
+
+impl ClashKind {
+    /// The kind of an atom of `element` bonded to atoms of `neighbors`.
+    pub fn of<'a>(element: &str, mut neighbors: impl Iterator<Item = &'a str>) -> Self {
+        Self {
+            radius: vdw_radius(element),
+            acceptor: is_polar(element),
+            donor_h: element == "H" && neighbors.any(is_polar),
+        }
+    }
+}
+
+/// The distance under which two non-bonded atoms clash: [`CLASH_FACTOR`] of their van der
+/// Waals contact, or [`HBOND_CLASH_FACTOR`] of it for a hydrogen bond (a hydrogen on N/O/F
+/// next to an N/O/F acceptor). Never more than `CLASH_FACTOR · (rₐ + r_b)`.
+pub fn clash_limit(a: ClashKind, b: ClashKind) -> f64 {
+    let hbond = (a.donor_h && b.acceptor) || (b.donor_h && a.acceptor);
+    let factor = if hbond {
+        HBOND_CLASH_FACTOR
+    } else {
+        CLASH_FACTOR
+    };
+    factor * (a.radius + b.radius)
 }
 
 /// A pair of atoms closer than [`CLASH_FACTOR`] of their van der Waals contact.
@@ -693,18 +727,21 @@ pub struct Clash {
 /// torsion is exactly what drives them together.
 pub fn clashes(coords: &[Vec3], elements: &[&str], graph: &Graph) -> Vec<Clash> {
     let n = coords.len().min(elements.len());
-    let radii: Vec<f64> = elements.iter().map(|e| vdw_radius(e)).collect();
+    let kinds: Vec<ClashKind> = (0..n)
+        .map(|i| {
+            ClashKind::of(
+                elements[i],
+                graph
+                    .neighbors(i)
+                    .iter()
+                    .filter_map(|&j| elements.get(j).copied()),
+            )
+        })
+        .collect();
     let mut out = Vec::new();
     for i in 0..n {
         for j in i + 1..n {
-            let hbond =
-                is_hbond_pair(elements, graph, i, j) || is_hbond_pair(elements, graph, j, i);
-            let factor = if hbond {
-                HBOND_CLASH_FACTOR
-            } else {
-                CLASH_FACTOR
-            };
-            let limit = factor * (radii[i] + radii[j]);
+            let limit = clash_limit(kinds[i], kinds[j]);
             let d = distance(coords[i], coords[j]);
             if d < limit && !graph.bonded(i, j) && !graph.one_three(i, j) {
                 out.push((
@@ -956,6 +993,21 @@ mod tests {
         let found = clashes(&coords, &["C", "H", "H", "H"], &graph);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!((found[0].a, found[0].b), (1, 3));
+    }
+
+    #[test]
+    fn a_hydrogen_bond_has_its_own_threshold() {
+        let water = ClashKind::of("O", std::iter::empty());
+        let hydroxyl_h = ClashKind::of("H", ["O"].into_iter());
+        let methyl_h = ClashKind::of("H", ["C"].into_iter());
+        assert!(hydroxyl_h.donor_h && !methyl_h.donor_h && water.acceptor);
+        // 1.7 Å: a hydrogen bond, no clash; the same distance from a C–H is one.
+        assert!(1.7 > clash_limit(hydroxyl_h, water));
+        assert!(1.7 < clash_limit(methyl_h, water));
+        assert_eq!(
+            clash_limit(water, hydroxyl_h),
+            clash_limit(hydroxyl_h, water)
+        );
     }
 
     #[test]

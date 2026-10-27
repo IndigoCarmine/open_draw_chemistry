@@ -120,6 +120,9 @@ pub struct Frame3d {
     pub hovered: Option<Hit>,
     /// Wheel travel in notches, when the caller claimed the wheel (the camera did not zoom).
     pub wheel_notches: f32,
+    /// This frame's primary drag in points, when the caller claimed the drag (see
+    /// [`Viewport3d::claim_drag`]; the camera did not move).
+    pub drag: Option<egui::Vec2>,
 }
 
 /// Everything a hover pick depends on, so a still pointer over a still scene reuses the last
@@ -154,6 +157,8 @@ pub struct Viewport3d {
     /// The [`Scene`] shown (source, revision) and the key of its colours.
     scene: Option<(u64, u64)>,
     scene_colors: Option<u64>,
+    /// The caller takes this frame's primary drag (moving a molecule) instead of the camera.
+    drag_claimed: bool,
 }
 
 impl Default for Viewport3d {
@@ -189,6 +194,43 @@ impl Viewport3d {
             clear_color: [0.08, 0.10, 0.14, 1.0],
             scene: None,
             scene_colors: None,
+            drag_claimed: false,
+        }
+    }
+
+    /// Whether the next [`Viewport3d::show`] hands a primary drag to the caller
+    /// ([`Frame3d::drag`]) instead of orbiting or panning the camera.
+    pub fn claim_drag(&mut self, claim: bool) {
+        self.drag_claimed = claim;
+    }
+
+    /// The point the camera turns about, in ångström.
+    pub fn view_center(&self) -> [f64; 3] {
+        let c = self.camera.center;
+        [c.x, c.y, c.z].map(|v| f64::from(v / NM_PER_ANGSTROM))
+    }
+
+    /// The camera's directions in the scene and the ångström a screen point spans at the depth
+    /// of `at` (Å), for moving things with the pointer in `rect`.
+    pub fn screen_basis(&self, rect: Rect, at: [f64; 3]) -> crate::assembly::place::ScreenBasis {
+        let rotation = self.camera.camera_rotation();
+        let axis = |v: Vec3| {
+            let w = rotation.rotate_vec(v);
+            [f64::from(w.x), f64::from(w.y), f64::from(w.z)]
+        };
+        // Camera space: +x right, +y up, +z into the screen (see `project`).
+        let forward = axis(Vec3::new(0.0, 0.0, 1.0));
+        let depth_nm = (to_nm(at) - self.camera.position())
+            .dot(rotation.rotate_vec(Vec3::new(0.0, 0.0, 1.0)))
+            .max(1e-3);
+        let tan_half = (self.camera.fov_y() * 0.5).tan();
+        let angstrom_per_point = f64::from(2.0 * depth_nm * tan_half / NM_PER_ANGSTROM)
+            / f64::from(rect.height().max(1.0));
+        crate::assembly::place::ScreenBasis {
+            right: axis(Vec3::new(1.0, 0.0, 0.0)),
+            up: axis(Vec3::new(0.0, 1.0, 0.0)),
+            toward_viewer: forward.map(|v| -v),
+            angstrom_per_point,
         }
     }
 
@@ -466,6 +508,7 @@ impl Viewport3d {
             secondary: None,
             hovered: None,
             wheel_notches: 0.0,
+            drag: None,
         };
 
         if response.hovered()
@@ -499,7 +542,9 @@ impl Viewport3d {
         }
 
         let delta = response.drag_delta();
-        if response.dragged_by(PointerButton::Primary) {
+        if response.dragged_by(PointerButton::Primary) && self.drag_claimed {
+            out.drag = Some(delta);
+        } else if response.dragged_by(PointerButton::Primary) {
             if ctx.input(|i| i.modifiers.shift) {
                 self.camera.pan(Vec2::new(delta.x * 0.01, delta.y * 0.01));
             } else {
@@ -686,6 +731,35 @@ mod tests {
         )
         .unwrap();
         assert!((centre - rect.center()).length() < 1e-2, "{centre:?}");
+    }
+
+    /// The screen basis agrees with the projection: a point moved by a Shift+drag's translation
+    /// lands under the pointer, and the toward-the-viewer direction comes nearer the camera.
+    #[test]
+    fn the_screen_basis_follows_the_pointer() {
+        use crate::assembly::place::drag_translation;
+        let mut view = Viewport3d::new();
+        view.camera.center = Vec3::new(0.2, 0.1, -0.3);
+        view.camera.radius = 4.0;
+        view.camera.orbit(0.9, -0.5);
+        let rect = Rect::from_min_size(Pos2::new(10.0, 30.0), egui::vec2(500.0, 400.0));
+        view.camera.set_aspect(500.0 / 400.0);
+        let at = [3.0, -1.0, 2.0];
+        let basis = view.screen_basis(rect, at);
+        let before = view.project(rect, at).unwrap();
+        let moved = crate::assembly::math::add(at, drag_translation(&basis, [25.0, -15.0]));
+        let after = view.project(rect, moved).unwrap();
+        let shift = after - before;
+        assert!(
+            (shift.x - 25.0).abs() < 0.5 && (shift.y + 15.0).abs() < 0.5,
+            "{shift:?}"
+        );
+        let camera = view.camera.position();
+        let distance = |p: [f64; 3]| (to_nm(p) - camera).magnitude();
+        let nearer = crate::assembly::math::add(at, basis.toward_viewer);
+        assert!(distance(nearer) < distance(at));
+        let c = view.view_center();
+        assert!((c[0] - 2.0).abs() < 1e-5 && (c[2] + 3.0).abs() < 1e-5);
     }
 
     #[test]
