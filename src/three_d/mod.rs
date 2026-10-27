@@ -21,6 +21,7 @@ pub mod edit;
 #[cfg(feature = "openbabel")]
 mod engine;
 pub mod geom;
+pub mod interactions;
 pub mod job;
 pub mod molfile;
 pub mod part;
