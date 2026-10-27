@@ -76,6 +76,9 @@ pub struct OpenDrawApp {
     fragment_entries: Vec<fragments::Entry>,
     #[serde(skip)]
     fragment_manager: FragmentManager,
+    /// The atom the canvas was last right-clicked on, for the context menu's 3D化.
+    #[serde(skip)]
+    context_atom: Option<u32>,
 }
 
 impl Default for OpenDrawApp {
@@ -99,6 +102,7 @@ impl Default for OpenDrawApp {
             fragment_store: FragmentStore::default(),
             fragment_entries: Vec::new(),
             fragment_manager: FragmentManager::default(),
+            context_atom: None,
         }
     }
 }
@@ -183,7 +187,7 @@ impl OpenDrawApp {
     }
 
     /// Open the 3D structure file at `path`: its coordinates become the document's 3D model
-    /// and a 2D depiction goes into the editor. The 3D view is shown if it was hidden.
+    /// and a 2D depiction goes into the editor. The 3D view is shown when there is a model.
     fn open_3d(&mut self, path: &Path, format: Format3d) {
         let opened = match io::load_3d(path) {
             Ok(opened) => opened,
@@ -198,8 +202,8 @@ impl OpenDrawApp {
         let doc = Document::from_structure_3d(&self.config, path, format, opened);
         let name = doc.title();
         self.add_opened(doc, path);
-        if has_model && !self.view.shows_3d() {
-            self.view = ViewMode::Split;
+        if has_model {
+            self.view = ViewMode::ThreeD;
         }
         let mut status = format!("{name} を開きました");
         if records > 1 {
@@ -427,8 +431,10 @@ impl OpenDrawApp {
             Command::Generate3d => {
                 if let Some(doc) = self.docs.get_mut(self.active) {
                     doc.three_d.generate(&doc.editor.molecule, &self.config);
+                    self.view = ViewMode::ThreeD;
                 }
             }
+            Command::Make3d(scope) => self.make_3d(scope),
             Command::Optimize3d => {
                 if let Some(doc) = self.active_doc_mut() {
                     doc.three_d.optimize();
@@ -483,6 +489,22 @@ impl OpenDrawApp {
                 }
             }
         }
+    }
+
+    /// 3D化: start generating the model of the molecules holding `scope`'s atoms (the whole
+    /// drawing for `None`) and switch to the 3D view, which shows it once it is ready.
+    fn make_3d(&mut self, scope: Option<Vec<u32>>) {
+        let Some(doc) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        doc.three_d
+            .generate_part(&doc.editor.molecule, scope, &self.config);
+        self.status = match &doc.three_d.state {
+            three_d::JobState::Failed(message) => message.clone(),
+            three_d::JobState::Running(task) => task.running_label().to_owned(),
+            _ => String::new(),
+        };
+        self.view = ViewMode::ThreeD;
     }
 
     /// The app's own shortcuts. The editor handles the rest (undo, copy, paste, drawing keys).
@@ -720,28 +742,74 @@ fn japanese_analysis() -> AnalysisPanel {
     panel
 }
 
-/// The canvas of the active document, with ChemDraw's bond menu on right-click.
-fn editor_canvas(ui: &mut egui::Ui, doc: &mut Document) {
-    let out = doc.show(ui);
+/// The canvas of the active document, with a menu on right-click: ChemDraw's bond menu on a
+/// bond, and 3D化 for the molecule clicked on (or the selected ones, or the whole drawing).
+fn editor_canvas(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    context_atom: &mut Option<u32>,
+    out: &mut Vec<Command>,
+) {
+    let response = doc.show(ui).response;
     let editor = &mut doc.editor;
+    // The pointer is over the menu while it is open, so the atom under it is taken now, the
+    // way the editor keeps the bond (see `context_bond`).
+    if response.secondary_clicked() {
+        *context_atom = response
+            .interact_pointer_pos()
+            .and_then(|pos| editor.hit_test_atom(pos, response.rect.center()));
+    }
     // The choice is applied after the menu closure lets go of the editor.
     let mut chosen = None;
-    let menu = out.response.context_menu(|ui| {
-        match editor
+    let mut make_3d = None;
+    let menu = response.context_menu(|ui| {
+        let bond = editor
             .context_bond()
-            .and_then(|id| editor.molecule.bond_by_id(id))
-        {
+            .and_then(|id| editor.molecule.bond_by_id(id));
+        match bond {
             Some(bond) => chosen = bond_menu(ui, bond, true),
             None => {
-                ui.label("結合を右クリックすると種類を変更できます");
+                ui.weak("結合を右クリックすると種類を変更できます");
             }
+        }
+        ui.separator();
+        let clicked = context_atom.or(bond.map(|b| b.begin));
+        let target = three_d::part::target(
+            &editor.molecule,
+            editor.selected_atoms.iter().copied(),
+            clicked,
+        );
+        if ui
+            .add_enabled(target.is_some(), egui::Button::new("3D化"))
+            .on_hover_text(make_3d_tip(editor, clicked))
+            .on_disabled_hover_text("描画が空です")
+            .clicked()
+        {
+            make_3d = target;
+            ui.close();
         }
     });
     if menu.is_none() {
         editor.clear_context_bond();
+        *context_atom = None;
     }
     if let (Some(action), Some(id)) = (chosen, editor.context_bond()) {
         editor.apply_bond_menu(id, action);
+    }
+    if let Some(scope) = make_3d {
+        out.push(Command::Make3d(scope));
+    }
+}
+
+/// What 3D化 in the canvas's menu turns into a model, for its tooltip.
+fn make_3d_tip(editor: &chembuider_rs::ChemStructEditor, clicked: Option<u32>) -> &'static str {
+    let exists = |id: &u32| editor.molecule.atom_by_id(*id).is_some();
+    if editor.selected_atoms.iter().any(exists) {
+        "選択した原子を含む分子の 3D モデルを作り、3D 画面に表示します"
+    } else if clicked.as_ref().is_some_and(exists) {
+        "この分子の 3D モデルを作り、3D 画面に表示します"
+    } else {
+        "描画全体の 3D モデルを作り、3D 画面に表示します"
     }
 }
 
@@ -820,22 +888,46 @@ impl eframe::App for OpenDrawApp {
                 ui::status::status_bar(ui, self.docs.get(self.active), &self.status)
             });
 
+        let view = self.view;
         if let Some(doc) = self.docs.get_mut(self.active) {
-            egui::Panel::left("palette")
-                .frame(bar(visuals.panel_fill, 8, 10))
-                .resizable(false)
-                .exact_size(112.0)
-                .show(ui, |ui| {
-                    ui::palette::palette(ui, &mut doc.editor, &mut self.custom_element)
-                });
+            // The drawing tools only act on the canvas, which the 3D view replaces.
+            if !view.is_3d() {
+                egui::Panel::left("palette")
+                    .frame(bar(visuals.panel_fill, 8, 10))
+                    .resizable(false)
+                    .exact_size(112.0)
+                    .show(ui, |ui| {
+                        ui::palette::palette(ui, &mut doc.editor, &mut self.custom_element)
+                    });
+            }
+            // The right panel follows the view: 解析 of the drawing, or 3D 編集 of the model.
+            let title = ui::properties::title(view);
             if self.show_properties {
                 egui::Panel::right("properties")
                     .frame(bar(visuals.panel_fill, 14, 12))
                     .resizable(true)
-                    .default_size(270.0)
-                    .size_range(220.0..=360.0)
+                    .default_size(280.0)
+                    .size_range(220.0..=420.0)
                     .show(ui, |ui| {
-                        if ui::properties::properties(ui, doc, &mut self.analysis) {
+                        let collapse = ui::properties::properties(ui, |ui| {
+                            if view.is_3d() {
+                                ui::view3d::edit_panel(
+                                    ui,
+                                    Some(doc),
+                                    &mut self.view3d,
+                                    &mut commands,
+                                );
+                            } else {
+                                // The panel reports a click on its copy button; the status bar
+                                // is not told here.
+                                let _ = self.analysis.ui(
+                                    ui,
+                                    &doc.editor.molecule,
+                                    &doc.editor.selected_atoms,
+                                );
+                            }
+                        });
+                        if collapse {
                             commands.push(Command::ToggleProperties);
                         }
                     });
@@ -846,7 +938,7 @@ impl eframe::App for OpenDrawApp {
                     .resizable(false)
                     .exact_size(ui::properties::COLLAPSED_WIDTH)
                     .show(ui, |ui| {
-                        if ui::properties::collapsed(ui) {
+                        if ui::properties::collapsed(ui, title) {
                             commands.push(Command::ToggleProperties);
                         }
                     });
@@ -866,46 +958,25 @@ impl eframe::App for OpenDrawApp {
                     ui::tabs::tab_strip(ui, &self.docs, self.active, &mut commands)
                 });
         }
-        let view = self.view;
         let title = self.active_doc().map(Document::title).unwrap_or_default();
         let render_state = frame.wgpu_render_state();
-        if !self.docs.is_empty() && view.shows_3d() {
-            let active = self.docs.get_mut(self.active);
-            let panel = if view.shows_2d() {
-                egui::Panel::right("view3d")
-                    .resizable(true)
-                    .default_size(380.0)
-            } else {
-                // 3D only: the panel takes the whole area the canvas would have. Its own id, or
-                // the split view's panel would come back remembering the full width.
-                egui::Panel::right("view3d_full")
-                    .resizable(false)
-                    .exact_size(ui.available_width())
-            };
-            panel
-                .frame(egui::Frame::new().fill(theme::DARK_SURFACE))
-                .show(ui, |ui| {
-                    ui::view3d::view3d(
-                        ui,
-                        &title,
-                        active,
-                        &mut self.view3d,
-                        render_state,
-                        &mut commands,
-                    )
-                });
-        }
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(theme::canvas_back(dark))
-                    .inner_margin(egui::Margin::same(18)),
-            )
-            .show(ui, |ui| match self.docs.get_mut(self.active) {
-                Some(doc) if view.shows_2d() => editor_canvas(ui, doc),
-                Some(_) => {}
+        // The central area shows one view: the drawing, or the 3D model (dark in both themes).
+        let central = if view.is_3d() && !self.docs.is_empty() {
+            egui::Frame::new().fill(theme::DARK_SURFACE)
+        } else {
+            egui::Frame::new()
+                .fill(theme::canvas_back(dark))
+                .inner_margin(egui::Margin::same(18))
+        };
+        egui::CentralPanel::default().frame(central).show(ui, |ui| {
+            match self.docs.get_mut(self.active) {
+                Some(doc) if view.is_3d() => {
+                    ui::view3d::viewer_area(ui, &title, Some(doc), &mut self.view3d, render_state)
+                }
+                Some(doc) => editor_canvas(ui, doc, &mut self.context_atom, &mut commands),
                 None => welcome(ui, &mut commands),
-            });
+            }
+        });
 
         for command in commands {
             self.run(&ctx, command);
@@ -1042,7 +1113,7 @@ mod tests {
         assert_eq!(doc.title(), "ethanol.xyz");
         assert!(doc.three_d.model().is_some(), "{}", app.status);
         assert_eq!(doc.editor.molecule.atoms.len(), 3);
-        assert_eq!(app.view, ViewMode::Split, "the 3D view is shown");
+        assert_eq!(app.view, ViewMode::ThreeD, "the 3D view is shown");
         assert_eq!(app.recent, vec![path.clone()]);
         assert!(app.status.contains("名前を付けて保存"), "{}", app.status);
         // Opening it again switches to it rather than reading it twice.
@@ -1179,20 +1250,108 @@ mod tests {
         assert!(app.docs[0].three_d.model().is_some(), "{}", app.status);
         assert!(app.status.contains("最適化しました"), "{}", app.status);
 
-        // One headless frame of the panel with the model in it.
+        // One headless frame of the viewer and the panel with the model in it.
         let mut commands = Vec::new();
         let mut view = ui::view3d::View3d::default();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            ui::view3d::view3d(
-                ui,
-                "test",
-                app.docs.first_mut(),
-                &mut view,
-                None,
-                &mut commands,
-            );
+            ui::view3d::edit_panel(ui, app.docs.first_mut(), &mut view, &mut commands);
+            ui::view3d::viewer_area(ui, "test", app.docs.first_mut(), &mut view, None);
         });
         output.textures_delta.clear();
         assert!(commands.is_empty());
+    }
+
+    /// The 2D＋3D split view is gone: a saved state in it opens in 2D, the rest as saved.
+    #[test]
+    fn a_saved_split_view_opens_in_2d() {
+        for (saved, expected) in [
+            ("Split", ViewMode::TwoD),
+            ("TwoD", ViewMode::TwoD),
+            ("ThreeD", ViewMode::ThreeD),
+            ("SomethingNewer", ViewMode::TwoD),
+        ] {
+            let storage = SavedState(format!(
+                "(show_properties: false, view: {saved}, view3d: (numbers: true))"
+            ));
+            let app: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY)
+                .unwrap_or_else(|| panic!("{saved}: the saved state did not load"));
+            assert_eq!(app.view, expected, "{saved}");
+            assert!(!app.show_properties && app.view3d.numbers, "{saved}");
+        }
+    }
+
+    /// Two molecules drawn: ethanol (C–C–O) and, apart from it, methylamine (C–N). Returns
+    /// the ids [c1, c2, o, c3, n].
+    fn draw_two_molecules(app: &mut OpenDrawApp) -> [u32; 5] {
+        use chembuider_rs::BondOrder;
+        let mol = &mut app.docs[app.active].editor.molecule;
+        let c1 = mol.add_atom("C".to_owned(), [0.0, 0.0], 0);
+        let c2 = mol.add_atom("C".to_owned(), [1.3, 0.0], 0);
+        let o = mol.add_atom("O".to_owned(), [2.0, 1.0], 0);
+        mol.add_bond(c1, c2, BondOrder::Single);
+        mol.add_bond(c2, o, BondOrder::Single);
+        let c3 = mol.add_atom("C".to_owned(), [10.0, 0.0], 0);
+        let n = mol.add_atom("N".to_owned(), [11.3, 0.0], 0);
+        mol.add_bond(c3, n, BondOrder::Single);
+        [c1, c2, o, c3, n]
+    }
+
+    /// 3D化 on one molecule of the drawing: the view switches to 3D, and the model is of that
+    /// molecule only (or, without OpenBabel, the 3D view says why there is none). Editing the
+    /// other molecule leaves the model current; editing its own makes it stale.
+    #[test]
+    fn make_3d_shows_the_molecule_clicked_on_in_the_3d_view() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_one_untitled();
+        let [_, _, o, c3, n] = draw_two_molecules(&mut app);
+        assert_eq!(app.view, ViewMode::TwoD);
+        let editor = &app.docs[0].editor;
+        let scope =
+            three_d::part::target(&editor.molecule, [], Some(c3)).expect("something is drawn");
+        app.run(&ctx, Command::Make3d(scope));
+        assert_eq!(app.view, ViewMode::ThreeD);
+
+        if !three_d::AVAILABLE {
+            assert!(app.docs[0].three_d.model().is_none());
+            assert!(app.status.contains("利用できません"), "{}", app.status);
+        } else {
+            assert!(app.docs[0].three_d.is_running());
+            while app.docs[0].three_d.is_running() {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                app.poll_3d(&ctx);
+            }
+            let model = app.docs[0].three_d.model().expect(&app.status);
+            // Methylamine, CH3NH2: the ethanol is not part of it.
+            assert_eq!(model.atoms.len(), 7, "{}", model.formula);
+            assert!(!app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule));
+            let mol = &mut app.docs[0].editor.molecule;
+            let cl = mol.add_atom("Cl".to_owned(), [3.0, 1.0], 0);
+            mol.add_bond(o, cl, chembuider_rs::BondOrder::Single);
+            assert!(
+                !app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule),
+                "the other molecule was edited"
+            );
+            let mol = &mut app.docs[0].editor.molecule;
+            mol.atom_by_id_mut(n).unwrap().element = "O".to_owned();
+            assert!(app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule));
+        }
+
+        // A headless frame of the 3D view's two parts: 3D 編集 for the right panel and the
+        // viewer (no renderer here, so it shows the summary).
+        let mut commands = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui::view3d::edit_panel(ui, app.docs.first_mut(), &mut app.view3d, &mut commands);
+            ui::view3d::viewer_area(ui, "test", app.docs.first_mut(), &mut app.view3d, None);
+        });
+        output.textures_delta.clear();
+        assert!(commands.is_empty());
+    }
+
+    /// The canvas's 3D化 is disabled with nothing drawn.
+    #[test]
+    fn make_3d_needs_a_drawing() {
+        let app = app_with_one_untitled();
+        let editor = &app.docs[0].editor;
+        assert_eq!(three_d::part::target(&editor.molecule, [], None), None);
     }
 }

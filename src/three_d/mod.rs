@@ -23,6 +23,7 @@ mod engine;
 pub mod geom;
 pub mod job;
 pub mod molfile;
+pub mod part;
 pub mod read;
 
 pub use edit::{Constraint, Edit3d};

@@ -121,7 +121,7 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             }
             ui.separator();
             let mut show = state.show_properties;
-            if ui.checkbox(&mut show, "解析パネル").clicked() {
+            if ui.checkbox(&mut show, "右パネル").clicked() {
                 out.push(Command::ToggleProperties);
                 ui.close();
             }
@@ -248,7 +248,7 @@ pub fn toolbar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>)
     });
 }
 
-/// The 2D / 2D＋3D / 3D segmented control.
+/// The 2D / 3D segmented control.
 fn view_switch(ui: &mut egui::Ui, current: ViewMode, out: &mut Vec<Command>) {
     let border = ui.visuals().widgets.inactive.bg_stroke;
     egui::Frame::new()
