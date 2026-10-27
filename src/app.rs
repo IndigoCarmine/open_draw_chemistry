@@ -10,9 +10,11 @@ use chembuider_rs::{Config, bond_menu};
 use serde::{Deserialize, Serialize};
 
 use crate::document::Document;
+use crate::fragments::{self, FragmentStore};
 use crate::io::{self, Export, Format};
 use crate::theme;
 use crate::three_d::{self, Export3d};
+use crate::ui::fragments::{FragmentAction, FragmentManager, ManagerContext};
 use crate::ui::{self, Command, ViewMode, menu::MenuState};
 
 /// How many files "Open Recent" remembers.
@@ -63,6 +65,14 @@ pub struct OpenDrawApp {
     /// The window title last sent, so it is only sent when it changes.
     #[serde(skip)]
     window_title: String,
+    /// The user's own fragments (see [`crate::fragments`]).
+    #[serde(skip)]
+    fragment_store: FragmentStore,
+    /// Every fragment with its source, as the 断片の管理 window lists it.
+    #[serde(skip)]
+    fragment_entries: Vec<fragments::Entry>,
+    #[serde(skip)]
+    fragment_manager: FragmentManager,
 }
 
 impl Default for OpenDrawApp {
@@ -82,6 +92,9 @@ impl Default for OpenDrawApp {
             quit_confirmed: false,
             show_about: false,
             window_title: String::new(),
+            fragment_store: FragmentStore::default(),
+            fragment_entries: Vec::new(),
+            fragment_manager: FragmentManager::default(),
         }
     }
 }
@@ -97,8 +110,10 @@ impl OpenDrawApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
             .unwrap_or_default();
-        // User shortcuts and fragments, from the working directory when present.
+        // User shortcuts from the working directory when present; fragments are the built-in
+        // ones plus the user's, from their config directory.
         app.config = Config::load();
+        app.reload_fragments();
         for file in &files {
             app.open_path(file);
         }
@@ -370,6 +385,11 @@ impl OpenDrawApp {
                     doc.three_d.force_field = ff;
                 }
             }
+            Command::ManageFragments => {
+                // Pick up files added to the folder by hand since the last look.
+                self.reload_fragments();
+                self.fragment_manager.open = true;
+            }
             Command::Undo
             | Command::Redo
             | Command::Copy
@@ -550,6 +570,73 @@ impl OpenDrawApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
+    }
+
+    /// Re-read the user's fragments and hand the merged list to the app's config and every open
+    /// editor, so a change applies at once.
+    fn reload_fragments(&mut self) {
+        self.fragment_entries = self.fragment_store.entries();
+        self.config.fragments = self
+            .fragment_entries
+            .iter()
+            .map(|e| e.def.clone())
+            .collect();
+        for doc in &mut self.docs {
+            doc.editor.config.fragments = self.config.fragments.clone();
+        }
+    }
+
+    fn fragment_window(&mut self, ctx: &egui::Context) {
+        if !self.fragment_manager.open {
+            return;
+        }
+        let cx = ManagerContext {
+            entries: &self.fragment_entries,
+            style: &self.config.style,
+            selected: self.active_doc().map(|d| d.editor.selected_atoms.len()),
+            dir: self.fragment_store.dir(),
+        };
+        let Some(action) = self.fragment_manager.show(ctx, &cx) else {
+            return;
+        };
+        let store = &self.fragment_store;
+        let result = match &action {
+            FragmentAction::AddFromSelection(name) => self
+                .active_doc()
+                .ok_or_else(|| "文書が開かれていません".to_owned())
+                .and_then(|doc| fragments::selection_fragment(&doc.editor, name))
+                .and_then(|def| {
+                    store.save(&def)?;
+                    Ok(format!(
+                        "断片「{}」を追加しました（{} 原子）",
+                        def.name,
+                        def.atoms.len()
+                    ))
+                }),
+            FragmentAction::Delete(name) => store
+                .delete(name)
+                .map(|()| format!("断片「{name}」を削除しました")),
+            FragmentAction::Rename { from, to } => store
+                .rename(from, to)
+                .map(|()| format!("「{from}」を「{to}」に名前変更しました")),
+            FragmentAction::OpenFolder => match store.dir() {
+                Some(dir) => fragments::open_in_file_manager(dir).map(|()| String::new()),
+                None => Err("ユーザー設定フォルダーが見つかりません".to_owned()),
+            },
+        };
+        if result.is_ok() && matches!(action, FragmentAction::AddFromSelection(_)) {
+            self.fragment_manager.clear_new_name();
+        }
+        if action != FragmentAction::OpenFolder {
+            self.reload_fragments();
+        }
+        match &result {
+            // Opening the folder needs no message.
+            Ok(message) if message.is_empty() => return,
+            Ok(message) => self.status = message.clone(),
+            Err(_) => {}
+        }
+        self.fragment_manager.set_result(result);
     }
 
     fn about_window(&mut self, ctx: &egui::Context) {
@@ -759,6 +846,7 @@ impl eframe::App for OpenDrawApp {
         }
         self.unsaved_changes_dialog(&ctx);
         self.about_window(&ctx);
+        self.fragment_window(&ctx);
         self.update_window_title(&ctx);
     }
 }
@@ -869,6 +957,32 @@ mod tests {
         app.remove_tab(0);
         assert!(app.docs.is_empty());
         assert_eq!(app.active, 0);
+    }
+
+    #[test]
+    fn reloading_fragments_reaches_every_open_editor() {
+        let dir = std::env::temp_dir().join(format!("odc-app-frag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = app_with_one_untitled();
+        app.fragment_store = FragmentStore::at(&dir);
+        app.new_document();
+
+        let editor = &mut app.docs[0].editor;
+        let a = editor.molecule.add_atom("C".to_owned(), [0.0, 0.0], 0);
+        let b = editor.molecule.add_atom("N".to_owned(), [1.5, 0.0], 0);
+        editor
+            .molecule
+            .add_bond(a, b, chembuider_rs::BondOrder::Triple);
+        editor.selected_atoms.extend([a, b]);
+        let def = fragments::selection_fragment(editor, "MyCN").unwrap();
+        app.fragment_store.save(&def).unwrap();
+        app.reload_fragments();
+
+        assert!(app.config.resolve_fragment("MyCN").is_some());
+        for doc in &app.docs {
+            assert!(doc.editor.config.resolve_fragment("MyCN").is_some());
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Guards the persistence contract: state must survive a serialize round-trip, which is

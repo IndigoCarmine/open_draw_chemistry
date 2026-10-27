@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::io::Export;
 use crate::three_d::{Export3d, ForceField};
 
+pub mod fragments;
 pub mod icons;
 pub mod menu;
 pub mod palette;
@@ -76,4 +77,6 @@ pub enum Command {
     /// The force field the active document's next generation or optimisation uses.
     SetForceField(ForceField),
     About,
+    /// Open the 断片の管理 window.
+    ManageFragments,
 }

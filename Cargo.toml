@@ -20,6 +20,10 @@ serde = { version = "1.0.229", features = ["derive"] }
 # because it is not on crates.io; it must share this app's egui version.
 chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs", rev = "65f35859729ae807133c0aa3694c14fd9e2496d0" }
 rfd = "0.17.2"
+# The per-user config directory, where the user's own fragments are kept.
+dirs = "6.0.0"
+# Reads and writes fragment files in chembuider-rs's JSON format.
+serde_json = "1.0.154"
 
 # 2D → 3D generation and force-field optimisation (see `src/three_d/`). Behind the `openbabel`
 # feature because it needs a prebuilt OpenBabel (`scripts/fetch-openbabel.sh`) or CMake.
@@ -39,9 +43,6 @@ default = ["openbabel"]
 # 3D generation through OpenBabel. Without it the app builds anywhere and the 3D panel says that
 # generation is unavailable (the macOS x86_64 release slice, which has no prebuilt OpenBabel).
 openbabel = ["dep:openbabel"]
-
-[dev-dependencies]
-serde_json = "1.0.154"
 
 [build-dependencies]
 winresource = "0.1.34"

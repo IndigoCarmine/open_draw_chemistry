@@ -182,7 +182,8 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             });
         });
         ui.menu_button("ツール", |ui| {
-            planned(ui, &["周期表", "断片の管理"]);
+            planned(ui, &["周期表"]);
+            item(ui, "断片の管理", "", true, Command::ManageFragments, out);
         });
 
         ui.menu_button("ヘルプ", |ui| {
