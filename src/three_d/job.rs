@@ -12,6 +12,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use chembuider_rs::{Config, Molecule};
 
+use super::part::{self, Scope};
 use super::{Edit3d, Error, ForceField, Model3d};
 
 /// What a [`Job`] is busy with.
@@ -53,8 +54,12 @@ pub struct Job {
     pub force_field: ForceField,
     /// Hand edits of the model: selection, restraints and the undo history.
     pub edit: Edit3d,
-    /// The drawing the model was generated from, to tell when it has since changed.
+    /// The drawing (or the part of it, see [`Job::scope`]) the model was generated from, to
+    /// tell when it has since changed.
     source: Option<Molecule>,
+    /// The part of the drawing the model is of: the molecules holding these atoms, or the
+    /// whole drawing for `None`.
+    scope: Option<Scope>,
     /// Where the running work's result arrives.
     result: Option<Receiver<Result<Model3d, Error>>>,
     /// The model being optimised, still shown (and restored if the optimisation fails).
@@ -106,14 +111,42 @@ impl Job {
         }
     }
 
-    /// Whether there is a model and the drawing has changed since it was generated.
+    /// Whether there is a model and its part of the drawing has changed since it was
+    /// generated. A model of some molecules of the drawing is compared with those molecules
+    /// as they are now, so edits to the drawing's other molecules leave it current.
     pub fn is_stale(&self, drawing: &Molecule) -> bool {
-        self.model().is_some() && self.source.as_ref() != Some(drawing)
+        if self.model().is_none() {
+            return false;
+        }
+        let Some(source) = &self.source else {
+            return true;
+        };
+        match &self.scope {
+            None => source != drawing,
+            Some(scope) => *source != part::scoped(drawing, Some(scope)),
+        }
     }
 
-    /// Start generating a model of `drawing` in the background, replacing the current one.
-    /// Conversion problems (unknown labels, an empty drawing) fail at once, without a thread.
+    /// The part of the drawing the model is of (`None`: all of it).
+    pub fn scope(&self) -> Option<&[u32]> {
+        self.scope.as_deref()
+    }
+
+    /// Start generating a model of `drawing` in the background, replacing the current one:
+    /// of the same part of the drawing as the current model while any of that part is left,
+    /// else of the whole drawing. Conversion problems (unknown labels, an empty drawing) fail
+    /// at once, without a thread.
     pub fn generate(&mut self, drawing: &Molecule, config: &Config) {
+        let scope = self
+            .scope
+            .clone()
+            .filter(|scope| scope.iter().any(|&id| drawing.atom_by_id(id).is_some()));
+        self.generate_part(drawing, scope, config);
+    }
+
+    /// Start generating a model of the molecules of `drawing` holding the atoms of `scope`
+    /// (all of `drawing` for `None`), as [`Job::generate`] does.
+    pub fn generate_part(&mut self, drawing: &Molecule, scope: Option<Scope>, config: &Config) {
         if self.is_running() {
             return;
         }
@@ -121,8 +154,11 @@ impl Job {
             self.state = JobState::Failed(Error::Unavailable.to_string());
             return;
         }
-        self.source = Some(drawing.clone());
-        let molfile = match super::molfile::to_molfile(drawing, config) {
+        let source = part::scoped(drawing, scope.as_deref());
+        let molfile = super::molfile::to_molfile(&source, config);
+        self.source = Some(source);
+        self.scope = scope;
+        let molfile = match molfile {
             Ok(molfile) => molfile,
             Err(e) => {
                 self.state = JobState::Failed(e.to_string());
@@ -279,6 +315,45 @@ mod tests {
         };
         assert_eq!(message, &expected.to_string());
         assert!(job.poll().is_none());
+    }
+
+    /// A model of one molecule of a drawing goes stale when that molecule changes, not when
+    /// another one does.
+    #[test]
+    fn a_partial_model_is_compared_with_its_own_molecule() {
+        let mut drawing = Molecule::default();
+        let c = drawing.add_atom("C".to_owned(), [0.0, 0.0], 0);
+        let o = drawing.add_atom("O".to_owned(), [1.5, 0.0], 0);
+        drawing.add_bond(c, o, chembuider_rs::BondOrder::Single);
+        let n = drawing.add_atom("N".to_owned(), [9.0, 0.0], 0);
+        let scope = vec![c, o];
+        // As a generation leaves it (the model's coordinates do not matter here).
+        let model = Model3d {
+            atoms: Vec::new(),
+            bonds: Vec::new(),
+            force_field: ForceField::default(),
+            energy: 0.0,
+            energy_unit: "kcal/mol".to_owned(),
+            formula: "CH4O".to_owned(),
+            molfile: String::new(),
+        };
+        let mut job = Job::with_model(model, &part::scoped(&drawing, Some(&scope)));
+        job.scope = Some(scope.clone());
+        assert!(!job.is_stale(&drawing), "the part is as generated");
+
+        let far = drawing.add_atom("Cl".to_owned(), [10.0, 0.0], 0);
+        drawing.add_bond(n, far, chembuider_rs::BondOrder::Single);
+        assert!(!job.is_stale(&drawing), "another molecule was edited");
+
+        drawing.add_bond(o, n, chembuider_rs::BondOrder::Single);
+        assert!(
+            job.is_stale(&drawing),
+            "its own molecule was joined to another"
+        );
+
+        // Regenerating keeps to the same part (failing at once without OpenBabel).
+        job.generate(&drawing, &Config::default());
+        assert_eq!(job.scope(), Some(&scope[..]));
     }
 
     #[test]
