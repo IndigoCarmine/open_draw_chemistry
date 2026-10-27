@@ -174,7 +174,7 @@ pub fn atom_colors(built: &Built, mode: ColorMode) -> Vec<[f32; 4]> {
 /// The central area in the assembly view.
 pub fn viewer_area(
     ui: &mut egui::Ui,
-    title: &str,
+    _title: &str,
     doc: Option<&mut Document>,
     view: &mut AssemblyView,
     render_state: Option<&RenderState>,
@@ -196,8 +196,7 @@ pub fn viewer_area(
     {
         view.orient = None;
     }
-    header(ui, title, &doc.assembly, view);
-    separator(ui);
+    orient_prompt(ui, &doc.assembly, view);
 
     let message = if doc.assembly.is_empty() {
         Some("単量体がありません。\n3D 画面で 3D モデルを作り「3D」メニューの「分子集合体を作成」を選ぶか、\n右パネルの「今の 3D モデルを追加」「ファイルから追加」で単量体を加えてください".to_owned())
@@ -222,60 +221,36 @@ pub fn viewer_area(
     }
 }
 
-fn header(ui: &mut egui::Ui, title: &str, state: &AssemblyState, view: &mut AssemblyView) {
+/// While orienting a monomer, the prompt for the next atom and a cancel button (nothing
+/// otherwise: the viewer has no header bar).
+fn orient_prompt(ui: &mut egui::Ui, state: &AssemblyState, view: &mut AssemblyView) {
+    let Some(pick) = &view.orient else { return };
+    let mut cancel = false;
     ui.horizontal(|ui| {
         ui.add_space(12.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(12.0);
-            if ui
-                .small_button("⟲")
-                .on_hover_text("表示をリセット（何もない所をダブルクリックでも）")
-                .clicked()
-                && let Some(viewport) = &mut view.viewport
-            {
-                viewport.reset_view();
-            }
-            let mut cancel = false;
-            if let Some(pick) = &view.orient {
-                cancel = ui
-                    .small_button("やめる")
-                    .on_hover_text("Esc でも")
-                    .clicked();
-                let name = state
-                    .design
-                    .components
-                    .get(pick.component)
-                    .map_or("", |c| c.name.as_str());
-                let next = pick.atoms.len().min(2);
-                ui.label(
-                    RichText::new(format!(
-                        "「{name}」の向き合わせ：{}に置く原子をクリック（{}/3）",
-                        ORIENT_ROLES[next],
-                        pick.atoms.len() + 1
-                    ))
-                    .size(12.0)
-                    .color(PICK_STROKE),
-                );
-            }
-            if cancel {
-                view.orient = None;
-            }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add(
-                    egui::Label::new(RichText::new(format!("集合体：{title}")).size(12.0))
-                        .truncate(),
-                );
-            });
-        });
+        let name = state
+            .design
+            .components
+            .get(pick.component)
+            .map_or("", |c| c.name.as_str());
+        let next = pick.atoms.len().min(2);
+        ui.label(
+            RichText::new(format!(
+                "「{name}」の向き合わせ：{}に置く原子をクリック（{}/3）",
+                ORIENT_ROLES[next],
+                pick.atoms.len() + 1
+            ))
+            .size(12.0)
+            .color(PICK_STROKE),
+        );
+        cancel = ui
+            .small_button("やめる")
+            .on_hover_text("Esc でも")
+            .clicked();
     });
-}
-
-fn separator(ui: &mut egui::Ui) {
-    let y = ui.cursor().top();
-    let x = ui.max_rect().x_range();
-    ui.painter()
-        .hline(x, y, egui::Stroke::new(1.0, dark::BORDER));
-    ui.add_space(6.0);
+    if cancel {
+        view.orient = None;
+    }
 }
 
 /// Undo, redo and Escape (stop orienting, clear the selection) from the keyboard.
@@ -693,6 +668,14 @@ pub fn panel(
     });
     let has_crystal = state.built().is_ok_and(|b| b.crystal.is_some());
     crystal_display(ui, &mut view.crystal, has_crystal, &ink);
+    if ui
+        .add_enabled(view.viewport.is_some(), egui::Button::new("視点をリセット"))
+        .on_hover_text("何もない所をダブルクリックでも")
+        .clicked()
+        && let Some(viewport) = &mut view.viewport
+    {
+        viewport.reset_view();
+    }
 
     section(ui, "情報");
     info_section(ui, state, &ink);
