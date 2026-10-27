@@ -128,6 +128,8 @@ pub enum Command {
     /// Save the active assembly as `.odasm`, or open one into it.
     AssemblySave,
     AssemblyOpen,
+    /// Put a reaction (stoichiometry) table under the active document's reaction.
+    InsertReactionTable,
 }
 
 #[cfg(test)]

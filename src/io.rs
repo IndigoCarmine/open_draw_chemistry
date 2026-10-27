@@ -169,23 +169,23 @@ pub struct Loaded {
 }
 
 impl Loaded {
-    /// What opening the file brought, for the status bar after 「… を開きました」: the arrows
-    /// and texts that can be edited, and the objects that are kept but not shown. Empty when
-    /// there are neither.
+    /// What opening the file brought, for the status bar after 「… を開きました」: the arrows,
+    /// texts and reaction tables that can be edited, and the objects that are kept but not
+    /// shown. Empty when there are neither.
     pub fn summary(&self) -> String {
-        let arrows = self
-            .molecule
-            .objects
-            .iter()
-            .filter(|o| o.as_arrow().is_some())
-            .count();
-        let texts = self.molecule.objects.len() - arrows;
+        let objects = &self.molecule.objects;
+        let arrows = objects.iter().filter(|o| o.as_arrow().is_some()).count();
+        let texts = objects.iter().filter(|o| o.as_text().is_some()).count();
+        let tables = objects.iter().filter(|o| o.as_table().is_some()).count();
         let mut parts = Vec::new();
         if arrows > 0 {
             parts.push(format!("矢印 {arrows} 本"));
         }
         if texts > 0 {
             parts.push(format!("テキスト {texts} 個"));
+        }
+        if tables > 0 {
+            parts.push(format!("反応表 {tables} 個"));
         }
         let mut out = String::new();
         if !parts.is_empty() {
@@ -383,6 +383,32 @@ mod tests {
             ..loaded
         };
         assert_eq!(plain.summary(), "");
+    }
+
+    /// ChemDraw's own reaction table (its 「Reaction Analysis」 grid) opens as an editable
+    /// table, not as a hidden object, and both formats keep it.
+    #[test]
+    fn a_chemdraw_reaction_table_is_editable_and_kept() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data/ReactionAnalysis.cdx");
+        let loaded = load(&path).unwrap();
+        assert_eq!(
+            loaded.summary(),
+            "矢印 1 本・反応表 1 個を編集できます。表示されないオブジェクト 1 個は保存時に保持されます"
+        );
+        for format in Format::ALL {
+            let bytes = encode(format, &loaded.molecule, Some(&loaded.original)).unwrap();
+            let back = decode(format, &bytes).unwrap();
+            let tables: Vec<_> = back
+                .molecule
+                .objects
+                .iter()
+                .filter_map(|o| o.as_table())
+                .collect();
+            assert_eq!(tables.len(), 1, "{format:?}");
+            assert!(tables[0].reactants[0].limiting, "{format:?}");
+            assert_eq!(back.other_objects, 1, "{format:?}");
+        }
     }
 
     #[test]

@@ -486,6 +486,12 @@ impl OpenDrawApp {
                 }
                 .to_owned();
             }
+            Command::InsertReactionTable => {
+                if let Some(doc) = self.active_doc_mut() {
+                    let message = crate::ui::palette::insert_reaction_table(&mut doc.editor);
+                    self.status = message.to_owned();
+                }
+            }
             Command::Undo
             | Command::Redo
             | Command::Copy
@@ -1103,7 +1109,12 @@ impl eframe::App for OpenDrawApp {
                     .resizable(false)
                     .exact_size(112.0)
                     .show(ui, |ui| {
-                        ui::palette::palette(ui, &mut doc.editor, &mut self.custom_element)
+                        ui::palette::palette(
+                            ui,
+                            &mut doc.editor,
+                            &mut self.custom_element,
+                            &mut commands,
+                        )
                     });
             }
             // The right panel follows the view: 解析 of the drawing, 3D 編集 of the model, or

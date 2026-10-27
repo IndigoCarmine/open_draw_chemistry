@@ -30,6 +30,8 @@ pub enum Icon {
     Arrow,
     Equilibrium,
     Bracket,
+    /// A small grid: the reaction (stoichiometry) table.
+    Table,
     /// "»": collapse a panel towards the right edge.
     ChevronsRight,
     /// "«": expand a panel collapsed on the right edge.
@@ -209,6 +211,18 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Bracket => {
             c.line(&[(7.0, 3.0), (4.0, 3.0), (4.0, 17.0), (7.0, 17.0)]);
             c.line(&[(13.0, 3.0), (16.0, 3.0), (16.0, 17.0), (13.0, 17.0)]);
+        }
+        Icon::Table => {
+            c.line(&[
+                (3.0, 4.0),
+                (17.0, 4.0),
+                (17.0, 16.0),
+                (3.0, 16.0),
+                (3.0, 4.0),
+            ]);
+            c.line(&[(8.0, 4.0), (8.0, 16.0)]);
+            c.line(&[(3.0, 8.0), (17.0, 8.0)]);
+            c.line(&[(3.0, 12.0), (17.0, 12.0)]);
         }
         Icon::ChevronsRight => {
             for chevron in CHEVRONS_RIGHT {
