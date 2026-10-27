@@ -81,7 +81,7 @@ impl View3d {
 /// why there is nothing to show. The controls are in the right panel ([`edit_panel`]).
 pub fn viewer_area(
     ui: &mut egui::Ui,
-    title: &str,
+    _title: &str,
     doc: Option<&mut Document>,
     view: &mut View3d,
     render_state: Option<&RenderState>,
@@ -94,8 +94,9 @@ pub fn viewer_area(
     ui.visuals_mut().override_text_color = Some(dark::TEXT);
 
     let running = doc.as_deref().is_some_and(|d| d.three_d.is_running());
-    header(ui, title, view, running);
-    separator(ui);
+    if running {
+        running_overlay(ui);
+    }
 
     let has_model = doc
         .as_deref()
@@ -122,31 +123,25 @@ pub fn viewer_area(
     }
 }
 
-/// The line over the viewer: what it shows, the work running, and resetting the view.
-fn header(ui: &mut egui::Ui, title: &str, view: &mut View3d, running: bool) {
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        // Laid out right to left so the controls keep their room and the title is truncated.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(12.0);
-            if ui
-                .small_button("⟲")
-                .on_hover_text("表示をリセット（何もない所をダブルクリックでも）")
-                .clicked()
-                && let Some(viewport) = &mut view.viewport
-            {
-                viewport.reset_view();
-            }
-            if running {
-                ui.spinner();
-            }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add(
-                    egui::Label::new(RichText::new(format!("3D：{title}")).size(12.0)).truncate(),
-                );
-            });
+/// While generation or optimisation runs: a small spinner in the viewer's top-left corner,
+/// over the model, taking clicks only in its own area.
+fn running_overlay(ui: &egui::Ui) {
+    let pos = ui.max_rect().left_top() + egui::vec2(10.0, 10.0);
+    egui::Area::new(ui.scope_id().with("running3d"))
+        .fixed_pos(pos)
+        .order(egui::Order::Foreground)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(theme::DARK_SURFACE.gamma_multiply(0.8))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("処理中…").size(11.0).color(dark::TEXT));
+                    });
+                });
         });
-    });
 }
 
 /// The right panel's contents in the 3D view: how the model is shown, generating and
@@ -177,6 +172,14 @@ pub fn edit_panel(
         ui.toggle_value(&mut view.numbers, "原子番号")
             .on_hover_text("すべての原子に番号を表示");
     });
+    if ui
+        .add_enabled(view.viewport.is_some(), egui::Button::new("視点をリセット"))
+        .on_hover_text("何もない所をダブルクリックでも")
+        .clicked()
+        && let Some(viewport) = &mut view.viewport
+    {
+        viewport.reset_view();
+    }
 
     section(ui, "モデル");
     model_section(ui, doc.as_deref(), &ink, out);
@@ -1007,14 +1010,6 @@ fn summary(ui: &mut egui::Ui, state: Option<&JobState>, stale: bool, can_render:
 
 fn muted(text: &str) -> RichText {
     RichText::new(text).size(11.0).color(dark::MUTED)
-}
-
-fn separator(ui: &mut egui::Ui) {
-    let y = ui.cursor().top();
-    let x = ui.max_rect().x_range();
-    ui.painter()
-        .hline(x, y, egui::Stroke::new(1.0, dark::BORDER));
-    ui.add_space(6.0);
 }
 
 #[cfg(test)]
