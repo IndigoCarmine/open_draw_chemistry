@@ -17,11 +17,14 @@ use std::fmt;
 
 use chembuider_rs::{Config, Molecule};
 
+pub mod edit;
 #[cfg(feature = "openbabel")]
 mod engine;
+pub mod geom;
 pub mod job;
 pub mod molfile;
 
+pub use edit::{Constraint, Edit3d};
 pub use job::{Job, JobState, Task};
 
 /// Whether this build can generate 3D models (it was built with the `openbabel` feature).
@@ -221,13 +224,36 @@ pub fn generate_from_molfile(molfile: &str, force_field: ForceField) -> Result<M
 
 /// Minimise `model` further under `force_field`, which may differ from the one it was made with.
 pub fn optimize(model: &Model3d, force_field: ForceField) -> Result<Model3d, Error> {
+    optimize_with(model, force_field, &[])
+}
+
+/// [`optimize`] holding `constraints` (fixed atoms, restrained lengths, angles and dihedrals).
+pub fn optimize_with(
+    model: &Model3d,
+    force_field: ForceField,
+    constraints: &[Constraint],
+) -> Result<Model3d, Error> {
     #[cfg(feature = "openbabel")]
     {
-        engine::optimize(&model.molfile, force_field, OPTIMIZE_STEPS)
+        engine::optimize(&model.molfile, force_field, OPTIMIZE_STEPS, constraints)
     }
     #[cfg(not(feature = "openbabel"))]
     {
-        let _ = (model, force_field, OPTIMIZE_STEPS);
+        let _ = (model, force_field, constraints, OPTIMIZE_STEPS);
+        Err(Error::Unavailable)
+    }
+}
+
+/// The single-point energy of `model`'s current geometry under `force_field`, in the force
+/// field's unit. For the energy after a hand edit; slow-ish, so off the UI thread.
+pub fn energy(model: &Model3d, force_field: ForceField) -> Result<f64, Error> {
+    #[cfg(feature = "openbabel")]
+    {
+        engine::energy(&model.molfile, force_field)
+    }
+    #[cfg(not(feature = "openbabel"))]
+    {
+        let _ = (model, force_field);
         Err(Error::Unavailable)
     }
 }
