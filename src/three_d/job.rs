@@ -71,7 +71,7 @@ impl Job {
             force_field: model.force_field,
             state: JobState::Done(model),
             source: Some(drawing.clone()),
-            result: None,
+            ..Self::default()
         }
     }
 
