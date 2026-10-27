@@ -20,6 +20,10 @@ serde = { version = "1.0.229", features = ["derive"] }
 # because it is not on crates.io; it must share this app's egui version.
 chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs", rev = "65f35859729ae807133c0aa3694c14fd9e2496d0" }
 rfd = "0.17.2"
+# The per-user config directory, where the user's own fragments are kept.
+dirs = "6.0.0"
+# Reads and writes fragment files in chembuider-rs's JSON format.
+serde_json = "1.0.154"
 
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -29,9 +33,6 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 [patch.crates-io]
 winit = { git = "https://github.com/IndigoCarmine/winit", branch = "wayland-native-dnd" }
 egui-winit = { git = "https://github.com/IndigoCarmine/egui-winit", branch = "main" }
-
-[dev-dependencies]
-serde_json = "1.0.154"
 
 [build-dependencies]
 winresource = "0.1.34"

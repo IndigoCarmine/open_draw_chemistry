@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod document;
+pub mod fragments;
 pub mod io;
 pub mod theme;
 pub mod ui;

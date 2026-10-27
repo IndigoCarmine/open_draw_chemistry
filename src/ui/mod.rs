@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::io::Export;
 
+pub mod fragments;
 pub mod icons;
 pub mod menu;
 pub mod palette;
@@ -67,4 +68,6 @@ pub enum Command {
     ToggleProperties,
     SetView(ViewMode),
     About,
+    /// Open the 断片の管理 window.
+    ManageFragments,
 }
