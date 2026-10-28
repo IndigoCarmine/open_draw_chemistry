@@ -1,9 +1,8 @@
 # Open DrawChemistry — Italian (it) UI strings.
 #
-# Partial: a key missing here (or left empty) is shown in English. To translate, copy keys
-# from en.toml, keeping each key and every {placeholder}; en.toml's header and
+# Complete translation of en.toml. Keep each key and every {placeholder}; en.toml's header and
 # locales/README.md explain the placeholder and plural syntax. Plural categories for this
-# language are listed in locales/README.md.
+# language are listed in locales/README.md (`many` is left out: `other` is used for it).
 
 [common]
 cancel = "Annulla"
@@ -12,3 +11,1012 @@ coming_soon = "Prossimamente"
 [language]
 menu = "Lingua (Language)"
 tooltip = "Lingua (Language)"
+
+[app.status]
+open_failed = "Impossibile aprire {path}: {error}"
+opened = "Aperto: {name}"
+opened_summary = "Aperto: {name} ({summary})"
+opened_first_record = { one = " (solo la prima di {n} struttura)", other = " (solo la prima di {n} strutture)" }
+opened_flat = ". Le coordinate sono piane: crea il modello 3D con “Genera 3D da 2D”"
+opened_projected = ". Il layout 2D è una proiezione delle coordinate 3D (usa “Riordina” per sistemarlo)"
+opened_save_note = ". Per salvare, usa “Salva con nome…” in CDX/CDXML"
+saved = "Salvato: {name}"
+save_failed = "Impossibile salvare: {error}"
+export_failed = "Impossibile esportare: {error}"
+exported = "Esportato in {path}"
+no_3d_model_to_export = "Nessun modello 3D da esportare"
+iupac_copied = "Nome IUPAC copiato: {name}"
+iupac_inserted = "Nome IUPAC inserito: {name}"
+assembly_undone = "Modifica dell’assemblaggio annullata"
+assembly_redone = "Modifica dell’assemblaggio ripristinata"
+nothing_to_undo = "Niente da annullare"
+nothing_to_redo = "Niente da ripetere"
+nothing_to_copy = "Niente da copiare"
+pasted = "Incollato"
+no_structure_on_clipboard = "Negli appunti non c’è alcuna struttura"
+running_with_note = "{label} ({note})"
+assembly_shown = "Passato alla vista assemblaggio"
+no_model_for_monomer = "Nessun modello 3D da usare come monomero. Creane prima uno con “Genera 3D da 2D” nel menu 3D"
+assembly_created = { one = "Assemblaggio creato con “{name}” ({n} atomo) come monomero. Aggiungi passaggi (anello, impilamento, serie) nel pannello destro", other = "Assemblaggio creato con “{name}” ({n} atomi) come monomero. Aggiungi passaggi (anello, impilamento, serie) nel pannello destro" }
+monomer_added = { one = "Monomero “{name}” aggiunto ({n} atomo)", other = "Monomero “{name}” aggiunto ({n} atomi)" }
+load_failed = "Impossibile leggere {path}: {error}"
+no_assembly_to_export = "Nessun assemblaggio da esportare"
+write_failed = "Impossibile esportare: {error}"
+assembly_exported = "Esportato in {path} (molecole: {molecules}, atomi: {atoms})"
+assembly_saved = "Assemblaggio salvato in {path}"
+assembly_save_failed = "Impossibile salvare l’assemblaggio: {error}"
+assembly_opened = "Assemblaggio aperto: {path}"
+no_document = "Nessun documento aperto"
+fragment_added = { one = "Frammento “{name}” aggiunto ({n} atomo)", other = "Frammento “{name}” aggiunto ({n} atomi)" }
+fragment_deleted = "Frammento “{name}” eliminato"
+fragment_renamed = "“{from}” rinominato in “{to}”"
+settings_folder_missing = "Cartella delle impostazioni utente non trovata"
+flat_coordinates = "Le coordinate sono piane, quindi non possono essere usate come struttura 3D"
+
+[app.canvas]
+bond_hint = "Fai clic destro su un legame per cambiarne il tipo"
+make_3d = "Crea 3D"
+drawing_empty = "Il disegno è vuoto"
+make_3d_selection_tip = "Crea un modello 3D delle molecole che contengono gli atomi selezionati e lo mostra nella vista 3D"
+make_3d_molecule_tip = "Crea un modello 3D di questa molecola e lo mostra nella vista 3D"
+make_3d_drawing_tip = "Crea un modello 3D dell’intero disegno e lo mostra nella vista 3D"
+
+[app.welcome]
+new = "Nuovo documento"
+open = "Apri file…"
+drop_hint = "Puoi anche trascinare qui file CDX / CDXML o di strutture 3D (MOL2, PDB, XYZ, MOL, SDF) per aprirli"
+
+[dialog.filter]
+all_supported = "Tutti i formati supportati"
+structure_3d = "Strutture 3D (MOL2, PDB, XYZ, MOL, SDF)"
+assembly = "Assemblaggio (Open DrawChemistry)"
+
+[dialog.unsaved]
+tab_title = "Salvare le modifiche?"
+tab_message = "“{name}” contiene modifiche non salvate."
+quit_title = "Salvare prima di uscire?"
+quit_message = { one = "{n} documento contiene modifiche non salvate.", other = "{n} documenti contengono modifiche non salvate." }
+save = "Salva"
+discard = "Non salvare"
+
+[dialog.about]
+title = "Informazioni"
+
+[ole.embed]
+load_failed = "Impossibile leggere l’oggetto incorporato: {error}"
+editing = "Modifica di un oggetto incorporato in {app}. Salva o chiudi la scheda per aggiornare il documento di {app}"
+committed = "Documento di {app} aggiornato"
+
+[document]
+untitled = "Senza titolo {number}"
+embedded = "Incorporato in {app}"
+embedded_named = "Incorporato in {app} — {name}"
+
+[view]
+assembly = "Assemblaggio"
+
+[status_bar]
+tool = "Strumento: "
+element = "Elemento: "
+counts = "Atomi {atoms} · Legami {bonds}"
+ready = "Pronto"
+
+[tabs]
+new_document = "Nuovo documento"
+close = "Chiudi"
+close_unsaved = "Chiudi (modifiche non salvate)"
+
+[menu.file]
+title = "File"
+new = "Nuovo"
+open = "Apri…"
+open_recent = "Apri recenti"
+save = "Salva"
+save_as = "Salva con nome…"
+export = "Esporta"
+close = "Chiudi"
+quit = "Esci"
+
+[menu.edit]
+title = "Modifica"
+undo = "Annulla"
+redo = "Ripeti"
+copy = "Copia"
+paste = "Incolla"
+
+[menu.view]
+title = "Visualizza"
+fit = "Adatta alla finestra"
+right_panel = "Pannello destro"
+
+[menu.structure]
+title = "Struttura"
+cleanup = "Riordina"
+stop_cleanup = "Interrompi riordino"
+copy_iupac = "Copia nome IUPAC"
+insert_iupac = "Inserisci nome IUPAC come testo"
+bracket_sru = "Racchiudi tra parentesi (unità ripetitiva)"
+bracket_kind = "Tipo e forma delle parentesi"
+
+[menu.reaction]
+title = "Reazione"
+add_arrow = "Aggiungi freccia di reazione"
+add_equilibrium_arrow = "Aggiungi freccia di equilibrio"
+conditions_text = "Testo delle condizioni di reazione"
+insert_table = "Inserisci tabella di reazione"
+
+[menu.three_d]
+generate = "Genera 3D da 2D"
+optimize = "Ottimizza struttura"
+export = "Esporta 3D"
+parameter_scan = "Scansione dei parametri…"
+create_assembly = "Crea assemblaggio molecolare"
+create_assembly_tip = "Usa il modello 3D corrente come monomero per costruire assemblaggi come anelli, impilamenti ed eliche (passa alla vista assemblaggio)"
+
+[menu.tools]
+title = "Strumenti"
+periodic_table = "Tavola periodica"
+manage_fragments = "Gestisci frammenti"
+
+[menu.help]
+title = "Aiuto"
+about = "Informazioni"
+
+[toolbar]
+new = "Nuovo"
+open = "Apri"
+save = "Salva"
+undo = "Annulla"
+redo = "Ripeti"
+fit = "Adatta alla finestra"
+cleanup = "Riordina"
+stop_cleanup = "Interrompi riordino"
+
+[fragments.source]
+builtin = "Predefinito"
+user = "Utente"
+user_override = "Utente (sostituisce il predefinito)"
+
+[fragments.error]
+no_config_dir = "Cartella delle impostazioni utente non trovata"
+case_clash = "Esiste già un frammento “{name}” che differisce solo per maiuscole/minuscole"
+invalid_structure = "La struttura del frammento non è valida ({error})"
+create_folder = "Impossibile creare la cartella: {error}"
+not_found = "Frammento utente “{name}” non trovato"
+exists = "Il frammento utente “{name}” esiste già"
+file_exists = "Il file {file} esiste già"
+rename = "Impossibile rinominare: {error}"
+delete = "Impossibile eliminare: {error}"
+save = "Impossibile salvare: {error}"
+empty_name = "Inserisci un nome per il frammento"
+invalid_name = "Questo nome non può essere usato per un frammento (caratteri non ammessi nei nomi di file o nome riservato: {error})"
+no_selection = "Seleziona prima gli atomi del frammento con lo strumento di selezione"
+atom_missing = "Un atomo selezionato non è stato trovato"
+open_folder = "Impossibile aprire la cartella: {error}"
+
+[fragments.manager]
+title = "Gestisci frammenti"
+usage = "Uso: seleziona un atomo, digita il nome di un frammento come etichetta e premi X per espanderlo. I frammenti utente hanno la precedenza su quelli predefiniti con lo stesso nome."
+add_heading = "Aggiungi dalla selezione"
+name = "Nome"
+name_hint = "ad es. CO2tBu"
+overwrite = "Sovrascrivi"
+add = "Aggiungi"
+no_document = "Nessun documento aperto"
+select_atoms = "Seleziona gli atomi del frammento con lo strumento di selezione (si lega tramite l’atomo di attacco o, in mancanza, il primo atomo disegnato)"
+selected_atoms = { one = "{n} atomo selezionato (si lega tramite l’atomo di attacco o, in mancanza, il primo atomo disegnato)", other = "{n} atomi selezionati (si lega tramite l’atomo di attacco o, in mancanza, il primo atomo disegnato)" }
+replaces_builtin = "Questo frammento sostituirà quello predefinito “{name}”"
+overwrites_user = "Il frammento utente “{name}” verrà sovrascritto"
+search = "Cerca"
+search_hint = "Nome del frammento"
+open_folder = "Apri cartella"
+no_match = "Nessun frammento corrispondente"
+rename_apply = "Rinomina"
+atom_count = { one = "{n} atomo", other = "{n} atomi" }
+confirm_delete = "Elimina"
+delete_question = "Eliminarlo?"
+delete = "Elimina"
+rename = "Rinomina"
+
+[io.export]
+png = "Immagine PNG"
+
+[io.error]
+unknown_format = "Formato di file non supportato"
+unreadable = "Impossibile leggere il file come {format}"
+empty = "Nessuna struttura disegnata"
+export_failed = "Impossibile esportare in {format}"
+brackets = "{format} non può rappresentare le parentesi (unità ripetitive, gruppi multipli), quindi il disegno non può essere esportato. Rimuovi le parentesi o salva come CDX/CDXML"
+
+[io.summary]
+editable = "Modificabili: {items}"
+arrows = { one = "{n} freccia", other = "{n} frecce" }
+texts = { one = "{n} testo", other = "{n} testi" }
+tables = { one = "{n} tabella di reazione", other = "{n} tabelle di reazione" }
+brackets = { one = "{n} parentesi", other = "{n} parentesi" }
+list_separator = ", "
+list_last_separator = " e "
+sentence_separator = ". "
+kept = { one = "{n} oggetto nascosto verrà mantenuto al salvataggio", other = "{n} oggetti nascosti verranno mantenuti al salvataggio" }
+
+[smiles.row]
+too_large = { one = "La struttura è troppo grande (massimo {n} atomo)", other = "La struttura è troppo grande (massimo {n} atomi)" }
+computing = "Calcolo in corso…"
+copy_tip = "Copia SMILES"
+copied = "Copiato: {smiles}"
+unsupported = "— (non supportato: {reason})"
+
+[smiles.error]
+empty = "Nessuna struttura"
+quadruple_bond = "I legami quadrupli non sono supportati in SMILES"
+unknown_labels = "Alcune etichette non possono essere scritte in SMILES: {labels}"
+label_separator = ", "
+
+[properties]
+collapse = "Comprimi pannello"
+expand = "Apri il pannello {title}"
+
+[properties.title]
+analysis = "Analisi"
+edit_3d = "Modifica 3D"
+assembly = "Assemblaggio"
+
+[iupac.error]
+empty = "Nessuna struttura da denominare"
+unsupported = "I nomi IUPAC per questa struttura non sono ancora supportati ({reason})"
+
+[ole.clipboard]
+copied_for_office = "Copiato (si incolla in Word e PowerPoint come oggetto ChemDraw e in ChemDraw come struttura)"
+copied = "Copiato"
+
+[ole.paste]
+cdx_unreadable = "Impossibile leggere i dati ChemDraw negli appunti"
+wrong_class = "L’oggetto incorporato negli appunti non è una struttura ChemDraw, quindi non può essere incollato (classe {class})"
+no_contents = "L’oggetto ChemDraw negli appunti non contiene dati di struttura (CONTENTS), quindi non può essere incollato"
+unreadable = "Impossibile leggere l’oggetto incorporato negli appunti"
+
+[ole.server]
+user_type = "Struttura Open DrawChemistry"
+user_type_short = "Struttura"
+verb_edit = "&Modifica"
+verb_open = "&Apri"
+
+[periodic_table]
+tooltip = "{symbol}  {name}\nNumero atomico {z}\nMassa atomica {weight}\n{category}"
+name_with_english = "{name} ({english})"
+
+[periodic_table.category]
+nonmetal = "Non metallo"
+noble_gas = "Gas nobile"
+alkali = "Metallo alcalino"
+alkaline_earth = "Metallo alcalino-terroso"
+transition = "Metallo di transizione"
+post_transition = "Metallo post-transizione"
+metalloid = "Semimetallo"
+halogen = "Alogeno"
+lanthanide = "Lantanide"
+actinide = "Attinide"
+
+[periodic_table.element]
+h = "Idrogeno"
+he = "Elio"
+li = "Litio"
+be = "Berillio"
+b = "Boro"
+c = "Carbonio"
+n = "Azoto"
+o = "Ossigeno"
+f = "Fluoro"
+ne = "Neon"
+na = "Sodio"
+mg = "Magnesio"
+al = "Alluminio"
+si = "Silicio"
+p = "Fosforo"
+s = "Zolfo"
+cl = "Cloro"
+ar = "Argon"
+k = "Potassio"
+ca = "Calcio"
+sc = "Scandio"
+ti = "Titanio"
+v = "Vanadio"
+cr = "Cromo"
+mn = "Manganese"
+fe = "Ferro"
+co = "Cobalto"
+ni = "Nichel"
+cu = "Rame"
+zn = "Zinco"
+ga = "Gallio"
+ge = "Germanio"
+as = "Arsenico"
+se = "Selenio"
+br = "Bromo"
+kr = "Kripton"
+rb = "Rubidio"
+sr = "Stronzio"
+y = "Ittrio"
+zr = "Zirconio"
+nb = "Niobio"
+mo = "Molibdeno"
+tc = "Tecnezio"
+ru = "Rutenio"
+rh = "Rodio"
+pd = "Palladio"
+ag = "Argento"
+cd = "Cadmio"
+in = "Indio"
+sn = "Stagno"
+sb = "Antimonio"
+te = "Tellurio"
+i = "Iodio"
+xe = "Xeno"
+cs = "Cesio"
+ba = "Bario"
+la = "Lantanio"
+ce = "Cerio"
+pr = "Praseodimio"
+nd = "Neodimio"
+pm = "Promezio"
+sm = "Samario"
+eu = "Europio"
+gd = "Gadolinio"
+tb = "Terbio"
+dy = "Disprosio"
+ho = "Olmio"
+er = "Erbio"
+tm = "Tulio"
+yb = "Itterbio"
+lu = "Lutezio"
+hf = "Afnio"
+ta = "Tantalio"
+w = "Tungsteno"
+re = "Renio"
+os = "Osmio"
+ir = "Iridio"
+pt = "Platino"
+au = "Oro"
+hg = "Mercurio"
+tl = "Tallio"
+pb = "Piombo"
+bi = "Bismuto"
+po = "Polonio"
+at = "Astato"
+rn = "Radon"
+fr = "Francio"
+ra = "Radio"
+ac = "Attinio"
+th = "Torio"
+pa = "Protoattinio"
+u = "Uranio"
+np = "Nettunio"
+pu = "Plutonio"
+am = "Americio"
+cm = "Curio"
+bk = "Berkelio"
+cf = "Californio"
+es = "Einsteinio"
+fm = "Fermio"
+md = "Mendelevio"
+no = "Nobelio"
+lr = "Laurenzio"
+rf = "Rutherfordio"
+db = "Dubnio"
+sg = "Seaborgio"
+bh = "Bohrio"
+hs = "Hassio"
+mt = "Meitnerio"
+ds = "Darmstadtio"
+rg = "Roentgenio"
+cn = "Copernicio"
+nh = "Nihonio"
+fl = "Flerovio"
+mc = "Moscovio"
+lv = "Livermorio"
+ts = "Tennesso"
+og = "Oganesson"
+
+[palette.tool]
+select = "Seleziona"
+eraser = "Gomma"
+single_bond = "Legame singolo"
+double_bond = "Legame doppio"
+triple_bond = "Legame triplo"
+wedge_bond = "Legame a cuneo"
+hashed_wedge = "Cuneo tratteggiato"
+wavy_bond = "Legame ondulato"
+chain = "Catena"
+benzene = "Anello benzenico"
+cyclopentane = "Ciclopentano"
+cyclohexane = "Cicloesano"
+text = "Testo"
+reaction_arrow = "Freccia di reazione"
+equilibrium_arrow = "Freccia di equilibrio"
+bracket = "Parentesi"
+insert_reaction_table = "Inserisci tabella di reazione"
+bond = "Legame"
+planned = "{name} (prossimamente)"
+
+[palette.heading]
+draw = "Disegna"
+elements = "Elementi"
+
+[palette.reaction_table]
+inserted = "Tabella di reazione inserita. Fai doppio clic su una cella per inserire equivalenti, masse e così via (Invio conferma il campo)"
+nothing_to_tabulate = "Nessuna struttura per una tabella di reazione. Disegna prima le strutture e una freccia di reazione"
+
+[palette.bracket]
+enclose_heading = "Racchiudi tra parentesi gli atomi selezionati"
+shape_heading = "Forma delle parentesi selezionate"
+usage_changed = "Parentesi selezionate cambiate in “{name}”"
+usage_unchanged = "Le parentesi selezionate sono già “{name}”"
+select_atoms = "Seleziona gli atomi da racchiudere tra parentesi (trascina un riquadro con lo strumento di selezione)"
+added_sru = "Parentesi di unità ripetitiva aggiunte. Fai doppio clic sull’etichetta n per modificarla"
+added_multiple_group = "Parentesi di gruppo multiplo aggiunte. Fai doppio clic sul numero di ripetizioni (2) per modificarlo"
+added = "Parentesi “{name}” aggiunte"
+crossing_note = { one = " ({n} legame attraversa le parentesi; un’unità ripetitiva di solito ne ha uno per lato)", other = " ({n} legami attraversano le parentesi; un’unità ripetitiva di solito ne ha uno per lato)" }
+select_brackets = "Seleziona le parentesi di cui cambiare la forma"
+shape_changed = "Parentesi cambiate in {shape}"
+shape_unchanged = "Le parentesi sono già {shape}"
+
+[palette.bracket.usage]
+sru = "Unità ripetitiva (n)"
+multiple_group = "Gruppo multiplo (×n)"
+copolymer = "Copolimero (co)"
+alternating = "Copolimero alternato (alt)"
+random = "Copolimero statistico (ran)"
+block = "Copolimero a blocchi (blk)"
+generic = "Polimero (generico, gen)"
+mixture = "Miscela (mix)"
+unknown = "Parentesi"
+
+[palette.bracket.shape]
+square = "Parentesi quadre [ ]"
+round = "Parentesi tonde ( )"
+curly = "Parentesi graffe { }"
+
+[palette.periodic_table]
+button = "Tavola periodica…"
+enter_symbol = "Simbolo dell’elemento"
+set_symbol = "Applica"
+
+[three_d.view]
+working = "Elaborazione…"
+title = "Modifica 3D"
+section_display = "Visualizzazione"
+section_model = "Modello"
+section_edit = "Modifica"
+section_export = "Esporta"
+style_light = "Sfere (leggero)"
+style_wireframe = "Fil di ferro"
+atom_numbers = "Numeri degli atomi"
+atom_numbers_tip = "Mostra un numero su ogni atomo"
+reset_view = "Ripristina vista"
+reset_view_tip = "Oppure fai doppio clic su uno spazio vuoto"
+export_tip = "Esporta come {format}"
+export_no_model = "Nessun modello 3D da esportare"
+render_failed = "Errore della vista 3D: {error}"
+fixed = "Fisso"
+redone = "Ripetuto: {label}"
+undone = "Annullato: {label}"
+no_history = "Nessuna cronologia delle modifiche 3D"
+busy_optimizing = "Impossibile modificare durante l’ottimizzazione"
+hbond_hint = "Fai clic su un legame a idrogeno per selezionare D, H e A (mostra l’angolo)"
+undo = "↶ Annulla"
+undo_none = "Niente da annullare"
+undo_tip = "Annulla: {label} (Ctrl+Z)"
+redo = "↷ Ripeti"
+redo_none = "Niente da ripetere"
+redo_tip = "Ripeti: {label} (Ctrl+Y)"
+pick_hint = "Fai clic sugli atomi per selezionarli (fino a 4) · clic su un legame per selezionarne le due estremità · clic destro su un atomo per fissarlo"
+selection = "Selezione"
+clear = "Cancella"
+anchor_tip = "Le modifiche spostano il lato che non contiene questo atomo"
+bond_length = "Lunghezza di legame"
+distance = "Distanza"
+bond_angle = "Angolo di legame"
+angle = "Angolo"
+dihedral = "Angolo diedro"
+measure_only = "(Non è una catena legata: solo misurato)"
+set = "Applica"
+enter_number = "Inserisci un numero"
+preset_linear = "Lineare 180°"
+preset_cis = "Cis 0°"
+preset_gauche_plus = "Gauche 60°"
+preset_gauche_minus = "Gauche −60°"
+preset_anti = "Anti 180°"
+turn_between = "Ruota i legami singoli tra di essi:"
+farthest = "Massima distanza"
+closest = "Minima distanza"
+rotate = "Ruota"
+wheel_hint = "Oppure ruota con la rotellina del mouse (Maiusc 1°, Ctrl 15°)"
+cannot_rotate = "Ruota: {reason}"
+lock_on_set = "Mantieni i valori impostati durante l’ottimizzazione"
+lock_on_set_tip = "Ogni valore impostato aggiunge un vincolo"
+constrain_current = "Vincola il valore corrente"
+constrain_current_tip = "Mantiene il valore corrente degli atomi selezionati come vincolo durante l’ottimizzazione (fissa l’atomo se ne è selezionato uno solo)"
+fix_atom = "Mantieni {atom} fisso durante l’ottimizzazione"
+constraints_header = "Vincoli di ottimizzazione ({count})"
+use_constraints = "Usa i vincoli durante l’ottimizzazione"
+remove_constraint = "Rimuovi questo vincolo"
+constraint_status = "Obiettivo {target}{unit} · attuale {now}{unit}"
+no_clashes = "Nessuna collisione tra atomi"
+clashes = { one = "{n} collisione tra atomi (la più vicina {a}···{b} {distance} Å): l’ottimizzazione della struttura può risolverla", other = "{n} collisioni tra atomi (la più vicina {a}···{b} {distance} Å): l’ottimizzazione della struttura può risolverle" }
+force_field = "Campo di forza"
+regenerate = "Rigenera da 2D"
+regenerate_tip = "Ricostruisce il modello 3D dalla struttura 2D"
+optimize = "Ottimizza struttura"
+optimize_tip = "Ottimizza la struttura con il campo di forza"
+optimize_constrained_tip = { one = "Ottimizza mantenendo {n} vincolo", other = "Ottimizza mantenendo {n} vincoli" }
+no_model_hint = "Fai clic destro su una molecola nella vista 2D e scegli “Crea 3D”, oppure usa “Rigenera da 2D”, per creare un modello 3D"
+idle_hint = "Fai clic destro su una molecola nella vista 2D e scegli “Crea 3D”, oppure usa “Rigenera da 2D” nel pannello destro,\nper generare un modello 3D dalla struttura 2D"
+energy_recalculating = "E = {energy} {unit} (ricalcolo in corso)"
+about = { one = "{formula} · {n} atomo ({hydrogens} H)", other = "{formula} · {n} atomi ({hydrogens} H)" }
+about_part = " · alcune molecole del disegno"
+stale = "Il disegno 2D è cambiato"
+stale_tip = "Usa “Rigenera da 2D” per allineare il modello 3D alla struttura ridisegnata"
+retry_hint = "Controlla la struttura e riprova con “Rigenera da 2D”"
+formula = "Formula"
+atom_count = "Atomi"
+atom_count_value = "{atoms} ({hydrogens} H)"
+energy = "Energia"
+stale_long = "La struttura 2D è cambiata. Aggiornala con “Rigenera da 2D”"
+no_wgpu = "La vista 3D richiede il renderer wgpu (non disponibile qui)"
+
+[three_d.edit]
+constraint_fix = "Fisso"
+constraint_distance = "Distanza"
+constraint_angle = "Angolo"
+constraint_torsion = "Diedro"
+constraint_conflict = "Con vincoli sia di angolo sia di diedro, OpenBabel ignora i vincoli di diedro"
+undo_bond_length = "Modifica lunghezza di legame"
+undo_distance = "Modifica distanza"
+undo_bond_angle = "Modifica angolo di legame"
+undo_dihedral = "Modifica angolo diedro"
+undo_rotate = "Ruota legame"
+value_set = "Valore applicato"
+rotated = "Ruotato di {degrees}°"
+distance_fixed = "Ruotare i legami non cambia questa distanza"
+distance_already = "Già {distance} Å"
+distance_unreachable = "Impossibile raggiungerla: {achieved} Å (raggiungibile ruotando i legami: {near}–{far} Å)"
+distance_set = "Impostata a {distance} Å"
+clash_note = { one = "{text} ({n} collisione tra atomi: {a}···{b} {distance} Å)", other = "{text} ({n} collisioni tra atomi: {a}···{b} {distance} Å)" }
+
+[three_d.interactions]
+stack_parallel = "Parallelo"
+stack_t_shaped = "A T"
+
+[three_d.job]
+generating = "Generazione del modello 3D…"
+optimizing = "Ottimizzazione della struttura…"
+start_failed = "Impossibile avviare: {error}"
+generated = { one = "Modello 3D generato ({formula}, {n} atomo)", other = "Modello 3D generato ({formula}, {n} atomi)" }
+optimized = "Struttura ottimizzata (E = {energy} {unit})"
+undo_optimize = "Ottimizzazione della struttura"
+
+[three_d.molfile]
+note_polymer_unit = "Generazione 3D di una unità ripetitiva (n = 1, con i gruppi terminali)"
+note_written_out = "Generazione 3D con le ripetizioni delle parentesi esplicitate"
+
+[three_d.error]
+empty = "Nessuna struttura disegnata"
+unknown_labels = "Alcune etichette non possono essere convertite in 3D: {labels}"
+list_separator = ", "
+quadruple_bond = "I legami quadrupli non sono supportati nella generazione 3D"
+multiple_group = "Le parentesi di gruppo multiplo che non possono essere esplicitate (numero di ripetizioni non numerico, tre o più legami che attraversano la parentesi, …) non possono essere convertite in 3D. Imposta come etichetta un numero di ripetizioni (2, 3, …) o rimuovi le parentesi"
+too_large = "La struttura è troppo grande (massimo 999 atomi e 999 legami)"
+unreadable = "OpenBabel non è riuscito a leggere la struttura"
+generation_failed = "Impossibile generare le coordinate 3D"
+force_field = "Impossibile applicare il campo di forza {force_field} a questa struttura"
+export_failed = "Impossibile esportare come {format}"
+texture = "Impossibile preparare la texture per la vista 3D"
+edit_not_bonded = "Gli atomi selezionati non sono legati"
+edit_in_ring = "I legami in un anello non possono essere modificati"
+edit_anchor_blocks = "L’atomo fisso non lascia alcun lato libero di muoversi"
+edit_not_connected = "I due atomi non sono nella stessa molecola"
+edit_no_rotatable_bond = "Nessun legame singolo ruotabile tra i due atomi"
+edit_bad_target = "Il valore obiettivo è fuori intervallo"
+edit_degenerate = "Gli atomi si sovrappongono, quindi la direzione non è definita"
+rotate_not_a_bond = "Non è un legame"
+rotate_multiple = "I legami multipli e aromatici non possono essere ruotati"
+rotate_ring = "I legami in un anello non possono essere ruotati"
+rotate_terminal = "Ruotare un legame terminale non cambia la forma"
+read_file_too_large = "Il file è troppo grande (massimo {max} MB)"
+read_empty = "Il file non contiene atomi"
+read_too_many_atoms = "Troppi atomi ({count}; se ne possono leggere al massimo {max})"
+read_unreadable = "Impossibile leggere come {format}"
+
+[assembly.view]
+title = "Assemblaggio"
+no_document = "Nessun documento aperto"
+tab_build = "Costruisci"
+tab_display = "Visualizzazione"
+section_monomers = "Monomeri"
+section_placement = "Posizionamento"
+section_appearance = "Aspetto"
+section_interactions = "Interazioni"
+section_info = "Informazioni"
+section_export = "Esporta"
+style = "Stile"
+color = "Colore"
+color_element = "Elemento"
+color_molecule = "Per molecola"
+color_component = "Per monomero"
+reset_view = "Ripristina vista"
+reset_view_tip = "Oppure fai doppio clic su uno spazio vuoto"
+role_origin = "nell’origine"
+role_x_axis = "sull’asse +x"
+role_xy_plane = "nel piano xy"
+no_monomers = "Nessun monomero.\nNella vista 3D crea un modello 3D e scegli “Crea assemblaggio molecolare” dal menu “3D”,\noppure aggiungi monomeri con “Aggiungi modello 3D corrente” o “Aggiungi da file…” nel pannello destro"
+no_renderer = "La vista 3D richiede il renderer wgpu (non disponibile qui)"
+orient_prompt = "Orientamento di “{name}”: fai clic sull’atomo da porre {role} ({step}/3)"
+orient_stop = "Interrompi"
+orient_stop_tip = "Oppure premi Esc"
+undone = "Annullato"
+redone = "Ripetuto"
+nothing_to_undo = "Niente da annullare"
+nothing_to_redo = "Niente da ripetere"
+render_failed = "Errore della vista 3D: {error}"
+oriented = "“{name}” orientato con gli atomi {a}, {b}, {c}"
+placed_manually = "manuale"
+placed_by_steps = "passaggi"
+hover_molecule = "Molecola {n} ({name}, {how}) · {atom}"
+scan = "Scansione dei parametri…"
+scan_tip = "Calcola l’energia MM (single point) variando i parametri dei passaggi (spaziatura, torsione, raggio, costanti di cella, …) o le posizioni delle molecole posizionate a mano, e la mostra come curva o mappa di calore"
+unit_molecules = { one = "molecola", other = "molecole" }
+unit_atoms = { one = "atomo", other = "atomi" }
+unit_bonds = { one = "legame", other = "legami" }
+redo_tip = "Ripeti la modifica annullata (Ctrl+Y)"
+undo_tip = "Annulla la modifica dell’assemblaggio (Ctrl+Z)"
+monomer_added = { one = "Monomero “{name}” aggiunto ({n} atomo)", other = "Monomero “{name}” aggiunto ({n} atomi)" }
+no_monomers_short = "Nessun monomero. Aggiungi un modello 3D o caricane uno da file"
+name_tip = "Nome del monomero. Le prime 3 lettere o cifre diventano il nome del residuo in PDB e MOL2 (Invio per confermare)"
+atoms_rename_tip = { one = "{n} atomo (doppio clic per rinominare)", other = "{n} atomi (doppio clic per rinominare)" }
+base = "Base"
+base_tip = "Il monomero copiato dai passaggi"
+monomer_actions = "Azioni sul monomero"
+orient = "Orienta con 3 atomi"
+orient_tip = "Fai clic su tre atomi in sequenza nel visualizzatore. Il primo va nell’origine, il secondo sull’asse +x, il terzo nel piano xy (lato y < 0).\nIn un passaggio ad anello il primo atomo si trova sulla circonferenza e la molecola si estende lungo +x (verso l’esterno)"
+clear_orient = "Rimuovi orientamento"
+clear_orient_tip = "Smette di orientare e usa le coordinate così come sono state lette"
+rename = "Rinomina"
+set_base = "Imposta come monomero base"
+set_base_tip = "Fa sì che i passaggi copino questo monomero"
+remove = "Elimina"
+remove_tip = "Elimina questo monomero"
+orienting = "Orientamento: fai clic sugli atomi nel visualizzatore"
+orientation = "Orientamento: atomi {a}, {b}, {c}"
+add_model = "Aggiungi modello 3D corrente"
+add_model_tip = "Aggiunge il modello 3D di questo documento come monomero"
+add_model_none = "Nessun modello 3D. Usa prima “Genera 3D da 2D”"
+add_file = "Aggiungi da file…"
+add_file_tip = "Aggiunge come monomero una struttura 3D da MOL2, PDB, XYZ, MOL o SDF"
+show_cell = "Mostra cella elementare"
+show_cell_tip = "Disegna il contorno della cella elementare nell’origine"
+needs_crystal = "Disponibile quando c’è un passaggio cristallo"
+images = "Immagini periodiche"
+images_tip = "Quante copie dell’intero cristallo costruito (il riquadro dopo le ripetizioni) mostrare lungo a, b e c.\n1 non ne mostra nessuna. Solo visualizzazione; non incluse nelle esportazioni. Facendo clic su un’immagine periodica si seleziona la molecola originale"
+info_cell = "Cella elementare"
+info_cell_tip = "Volume della cella elementare"
+info_z_tip = "Numero di molecole in una cella elementare (unità asimmetrica × operazioni di simmetria, meno quelle che coincidono in posizioni speciali)"
+info_z_asymmetric = { one = "{z} (unità asimmetrica: {n} molecola)", other = "{z} (unità asimmetrica: {n} molecole)" }
+info_density = "Densità"
+info_density_tip = "Massa del contenuto della cella elementare ÷ volume della cella elementare"
+info_density_unknown = "— (alcuni elementi non hanno massa atomica)"
+selected = "Selezionata: molecola {n} ({name}, atomi {first}–{last})"
+select_hint = "Fai clic su un atomo per selezionarne la molecola"
+
+[assembly.export]
+to_format = "Esporta in {format}"
+to_format_crystal = "Esporta in {format} (costanti di cella, operazioni di simmetria, coordinate frazionarie dell’unità asimmetrica)"
+nothing = "Nessun assemblaggio da esportare"
+needs_crystal = "CIF richiede un passaggio cristallo (aggiungi “Cristallo” ai passaggi)"
+save = "Salva assemblaggio…"
+save_tip = "Salva i monomeri e i passaggi in un file .odasm (aprendolo si ottiene lo stesso assemblaggio)"
+open = "Apri assemblaggio…"
+open_tip = "Apre un file .odasm e lo sostituisce all’assemblaggio di questo documento (annullabile)"
+
+[assembly.contacts]
+intramolecular = "Includi intramolecolari"
+intramolecular_tip = "Mostra anche i legami a idrogeno e l’impilamento π all’interno della stessa molecola (disattivato: solo tra molecole)"
+checking = "Legami a idrogeno e impilamento π: verifica in corso…"
+atom = "Molecola {n} {atom}"
+updating = " (aggiornamento…)"
+click_tip = "Fai clic per selezionare quella molecola"
+
+[assembly.model]
+step_ring = "Anello"
+step_stack = "Impilamento / elica"
+step_array = "Serie"
+step_lattice = "Cristallo"
+
+[assembly.model.ring]
+count = "Numero"
+count_tip = "Numero di molecole nell’anello. La i-esima è posta ruotata di 360°/numero × i attorno all’asse z"
+radius = "Raggio"
+radius_tip = "Raggio della circonferenza su cui si trova l’origine della molecola (il primo atomo di orientamento). Troppo piccolo e si sovrappongono; troppo grande e i legami a idrogeno non arrivano"
+tilt = "Inclinazione"
+tilt_tip = "Angolo di inclinazione della molecola attorno all’asse y prima di porla sulla circonferenza. A 0 la molecola giace nel piano dell’anello (il piano xy)"
+
+[assembly.model.stack]
+layers = "Strati"
+layers_tip = "Numero di strati (dischi) da impilare"
+rise = "Distanza"
+rise_tip = "Spaziatura tra gli strati lungo z. Circa 3,4–3,5 Å per l’impilamento π"
+twist = "Torsione"
+twist_tip = "Angolo di rotazione di ogni strato attorno all’asse z. Positivo è antiorario visto da +z.\nPer chiudere periodicamente, fai sì che strati × torsione sia un multiplo di 360°/numero dell’anello"
+slip = "Scorrimento"
+slip_tip = "Spostamento laterale tra strati vicini. Se non è 0, gli strati seguono una circonferenza di raggio (scorrimento/2) / sen(torsione/2) attorno all’asse dell’elica (l’asse z). Con torsione nulla scorrono in linea retta lungo x"
+helix_radius = "Raggio dell’elica"
+helix_radius_tip = "Deriva da scorrimento e torsione"
+no_helix_straight = "— (torsione 0: scorrimento rettilineo)"
+no_helix_no_slip = "— (nessuno scorrimento)"
+
+[assembly.model.array]
+count = "Numero"
+count_tip = "Quante copie porre (la prima resta dov’è)"
+offset = "Spaziatura"
+offset_tip = "Sposta la i-esima di i × spaziatura"
+rotation = "Rotazione"
+rotation_tip = "Ruota la i-esima di i × angolo attorno all’origine prima di spostarla (attorno a x, poi y, poi z)"
+
+[assembly.model.lattice]
+space_group = "Gruppo spaziale"
+space_group_tip = "Sceglierne uno sostituisce le operazioni di simmetria sotto con le posizioni generali di quel gruppo spaziale"
+custom_ops = "(operazioni personalizzate)"
+length_tip = "Lunghezza dello spigolo della cella elementare. a giace lungo l’asse x, b nel piano xy"
+alpha_tip = "Angolo tra b e c"
+beta_tip = "Angolo tra a e c"
+gamma_tip = "Angolo tra a e b"
+repeats = "Ripetizioni"
+repeats_tip = "Quante celle elementari porre lungo a, b e c"
+symops = "Operazioni di simmetria"
+symops_tip = "Una per riga nella forma x,y,z (ad es. -x,y+1/2,-z+1/2). Le righe di _space_group_symop di un CIF possono essere incollate così come sono. Includi sempre x,y,z"
+summary = "{ops} operazioni × {cells} celle (le molecole che coincidono in posizioni speciali vengono unite)"
+
+[assembly.error]
+orient_out_of_range = "Un numero di atomo di orientamento supera il numero di atomi del monomero"
+orient_repeated = "Scegli tre atomi diversi per l’orientamento"
+orient_collinear = "I tre atomi di orientamento sono allineati, quindi non definiscono alcun orientamento"
+op_misfits_cell = "L’operazione di simmetria “{op}” non è compatibile con queste costanti di cella (le molecole risulterebbero distorte). Usa lunghezze e angoli coerenti con il sistema cristallino del gruppo spaziale"
+cell_length = "La costante di cella {name} deve essere una lunghezza positiva"
+cell_angle = "L’angolo {name} deve essere maggiore di 0° e minore di 180°"
+cell_angles = "Questi tre angoli non formano un parallelepipedo (ciascuno deve essere minore della somma degli altri due, e tutti e tre insieme meno di 360°)"
+cell_volume = "Il volume della cella elementare è 0. Controlla gli angoli"
+file_invalid = "Impossibile leggere come file di assemblaggio ({detail})"
+file_newer = "Questo file è stato salvato da una versione più recente dell’app (formato {version}; questa versione legge fino a {supported})"
+file_no_version = "versione mancante"
+too_large = "Troppi atomi ({count}; se ne possono costruire al massimo {max}). Riduci il numero di ripetizioni"
+monomer = "Monomero “{name}”: {error}"
+lattice = "Cristallo: {error}"
+
+[assembly.place]
+hint_manual = "Alt+trascina per ruotare, Maiusc+trascina per spostare (Esc per deselezionare)"
+hint_step = "Questa molecola è posizionata dai passaggi. Per spostarla, usa “Posiziona a mano” nella sezione “Posizionamento” del pannello destro"
+empty = "Aggiungi un monomero per posizionare qui le molecole una alla volta"
+component_tip = "Il monomero da posizionare. Aggiungi prima una molecola ospite con “Aggiungi da file…” in “Monomeri”, poi sceglila qui"
+add = "Aggiungi"
+add_tip = "Posiziona una molecola del monomero scelto che puoi spostare a mano.\nViene posta accanto alla molecola selezionata (o al centro della vista se non ce n’è una selezionata), dove non si sovrappone a nulla"
+no_manual = "Nessuna molecola posizionata a mano"
+manual_item = "{index}. {name} (molecola {molecule})"
+click_to_select = "Fai clic per selezionare"
+excluded = { one = "{n} molecola tolta dai passaggi", other = "{n} molecole tolte dai passaggi" }
+restore = "Riporta ai passaggi"
+restore_tip = "Riporta nella posizione data dai passaggi tutte le molecole tolte da essi eliminandole o posizionandole a mano\n(le molecole che hai posizionato a mano restano come sono)"
+manual_title = "Molecola {molecule} (posizionata a mano {index})"
+drag_hint = "Nel visualizzatore, Alt+trascina ruota attorno al baricentro e Maiusc+trascina sposta parallelamente allo schermo"
+step_title = "Molecola {molecule} (posizionata dai passaggi)"
+step_note = "Una molecola posizionata dai passaggi è determinata dai parametri dei passaggi"
+detach = "Posiziona a mano"
+detach_tip = "Toglie questa molecola dai passaggi e la rende una molecola posizionata a mano nella stessa posizione.\nPoi puoi spostarla da sola (Annulla ripristina)"
+duplicate = "Duplica"
+duplicate_tip = "Posiziona una molecola con lo stesso orientamento accanto a questa, dove non si sovrappone a nulla"
+remove_manual_tip = "Elimina questa molecola"
+remove_step_tip = "Toglie questa molecola dai passaggi (“Riporta ai passaggi” la ripristina)"
+remove = "Elimina"
+select_hint = "Fai clic su un atomo nel visualizzatore per selezionarne la molecola"
+position = "Posizione"
+position_tip = "Coordinate del baricentro della molecola"
+rotation = "Rotazione"
+rotation_tip = "Rotazione attorno al baricentro, attorno all’asse x, poi y, poi z (angoli di Eulero XYZ estrinseci)"
+
+[assembly.place.report]
+added = "“{name}” posizionato come molecola {molecule}"
+duplicated = "Molecola {source} duplicata come molecola {molecule}"
+removed = "Molecola {molecule} eliminata"
+detached = "La molecola {source} ora è posizionata a mano (molecola {molecule}). Spostala con Alt/Maiusc+trascina o con i campi"
+restored = "Le molecole tolte dai passaggi sono state riportate"
+
+[assembly.place.clash]
+checking = "Contatti tra molecole: verifica in corso…"
+updating = " (aggiornamento…)"
+none = "Contatti tra molecole: nessuno{pending}"
+at_least = " o più"
+count = { one = "Atomi troppo vicini tra molecole: {n} coppia{more}{pending}", other = "Atomi troppo vicini tra molecole: {n} coppie{more}{pending}" }
+tip = "Coppie di atomi di molecole diverse più vicini di 0,75 × la somma dei loro raggi di van der Waals (0,55 × per i legami a idrogeno), dalla più vicina"
+atom = "Molecola {molecule} {element}{index}"
+periodic_image = " (immagine periodica)"
+pair = "{a} – {b}{image}: {distance} Å"
+pick_tip = "Fai clic per selezionare la prima molecola"
+more = { one = "Ancora {n} coppia", other = "Altre {n} coppie" }
+
+[assembly.pipeline]
+drag_tip = "Trascina per riordinare"
+collapse = "Nascondi parametri"
+expand = "Mostra parametri"
+remove = "Elimina questo passaggio"
+lattice_single = "Può esserci un solo passaggio cristallo"
+duplicate = "Duplica questo passaggio (inserito subito dopo)"
+enabled_tip = "In uso (clic per saltarlo)"
+disabled_tip = "Saltato (clic per usarlo)"
+
+[assembly.pipeline.summary]
+copies = { one = "{n} copia", other = "{n} copie" }
+rotated = "ruotato"
+slip = "scorr. {value}Å"
+operations = { one = "{n} operazione", other = "{n} operazioni" }
+no_spacing = "spaziatura 0Å"
+
+[assembly.pipeline.count]
+skipped = { one = "Saltato → {n} molecola", other = "Saltato → {n} molecole" }
+cannot_build = { one = "Impossibile costruire → {n} molecola", other = "Impossibile costruire → {n} molecole" }
+result = { one = "→ {n} molecola", other = "→ {n} molecole" }
+times = { one = "× {factor} → {n} molecola", other = "× {factor} → {n} molecole" }
+
+[assembly.pipeline.add]
+title = "+ Aggiungi passaggio"
+array_tip = "Allinea tutto ciò che precede con spaziatura e rotazione fisse"
+ring_tip = "Dispone le molecole su una circonferenza attorno all’asse z (una rosetta)"
+stack_tip = "Impila tutto ciò che precede lungo z. Torsione e scorrimento ne fanno un’elica"
+lattice_tip = "Prende tutto ciò che precede come unità asimmetrica, costruisce la cella elementare dalle costanti di cella e dalle operazioni di simmetria del gruppo spaziale, e la ripete"
+lattice_exists = "C’è già un passaggio cristallo"
+
+[assembly.symop.system]
+triclinic = "Triclino (nessun vincolo)"
+monoclinic = "Monoclino (α = γ = 90°)"
+orthorhombic = "Ortorombico (α = β = γ = 90°)"
+
+[assembly.symop.error]
+empty_operation = "L’operazione è vuota"
+component_count = "Scrivi tre componenti separate da “,” (ce ne sono {count})"
+in_component = "Componente {index}: {error}"
+not_symmetry = "La combinazione di x, y e z non è un’operazione di simmetria (il suo determinante {det} non è ±1)"
+empty_component = "È vuota"
+sign_needed = "“{char}” deve essere preceduto da + o -"
+ends_with_sign = "Termina con un segno"
+repeated_variable = "{variable} compare due volte"
+coefficient = "Le variabili con un coefficiente (come {example}) non sono supportate"
+bad_char = "Carattere non leggibile “{char}”"
+bad_number = "Impossibile leggere il numero “{number}”"
+divide_by_zero = "“{number}” divide per zero"
+in_line = "Riga {line} “{text}”: {error}"
+duplicate = "Riga {line} “{text}”: la stessa operazione è già presente"
+no_operations = "Nessuna operazione di simmetria (serve almeno x,y,z)"
+no_identity = "Includi l’operazione identità x,y,z"
+
+[scan.window]
+title = "Scansione dei parametri"
+no_document = "Nessun documento aperto"
+no_view = "Imposta una scansione nella vista 3D (lunghezza di legame, angolo di legame, angolo diedro) o nella vista assemblaggio (parametri dei passaggi, molecole posizionate a mano)"
+target_assembly = "Oggetto: assemblaggio (parametri dei passaggi, molecola posizionata a mano selezionata)"
+target_model = "Oggetto: modello 3D (lunghezza di legame, angolo di legame o angolo diedro degli atomi selezionati)"
+no_params = "Niente da scansionare. Aggiungi un passaggio nel pannello assemblaggio o seleziona una molecola posizionata a mano"
+choose = "Seleziona un parametro"
+no_model = "Nessun modello 3D (disponibile al termine di generazione e ottimizzazione)"
+unset = "Non impostato"
+use_picked = "Usa atomi selezionati"
+use_picked_tip = "Usa per questo asse gli atomi selezionati nella vista 3D (2 atomi: lunghezza di legame, 3: angolo di legame, 4: angolo diedro)"
+use_picked_disabled_tip = "Nella vista 3D seleziona in ordine da 2 a 4 atomi legati (4 per un angolo diedro)"
+two_d = "Scansione 2D (due parametri)"
+force_field = "Campo di forza"
+summary = "Punti: {total} · atomi: {atoms} · energia single point in ogni punto, senza ottimizzazione ({unit})"
+crystal_note = "I cristalli sono calcolati senza condizioni periodiche al contorno (i campi di forza non supportano sistemi periodici, quindi è l’energia della supercella finita costruita)"
+too_many_atoms = "Troppi atomi ({atoms}). Una scansione accetta al massimo {max} atomi"
+same_axes = "I due assi sono lo stesso parametro"
+start = "Avvia scansione"
+start_disabled_tip = "Scegli i parametri da scansionare"
+axis = "Asse {number}"
+range_start = "Inizio"
+range_end = "Fine"
+points = "Punti"
+points_tip = "Numero di punti, inizio e fine inclusi"
+no_results = "Ancora nessun risultato"
+relative = "Mostra ΔE rispetto al minimo"
+export_csv = "Esporta CSV…"
+minimum = "Minimo: E = {energy} {unit} a {values}"
+plot_help = "Fai clic su un punto (cella) per applicarne i valori dei parametri alla struttura (annullabile). Rotellina per lo zoom, trascina per spostare, doppio clic per ripristinare la vista"
+values_separator = ", "
+
+[scan.progress]
+counts = "{done} / {total} punti · trascorso {elapsed}"
+remaining = " · circa {remaining} rimanenti ({per_point} per punto)"
+cancelled = " · Annullata"
+done = " · Completata"
+drift = "Durante la scansione il campo di forza di OpenBabel è stato usato per un’altra molecola (ad es. un’ottimizzazione in un altro documento), quindi il riferimento di energia può differire tra i punti. Ripeti la scansione al termine degli altri calcoli"
+failed_points = { one = "{n} punto non è stato calcolato (vuoto nel grafico)", other = "{n} punti non sono stati calcolati (vuoti nel grafico)" }
+
+[scan.export]
+cancelled = "Esportazione annullata"
+done = "Esportato in {path}"
+failed = "Impossibile esportare: {error}"
+
+[scan.apply]
+done = "Punto della scansione applicato: {values}"
+failed = "Impossibile applicare: {error}"
+no_model = "Nessun modello 3D"
+model_changed = "Impossibile applicare: il modello 3D è cambiato"
+undo_label = "Applica punto della scansione"
+
+[scan.plot]
+minimum = "Minimo"
+not_computed = "Non calcolato"
+failed = "Impossibile calcolare"
+click_to_apply = "Fai clic per applicarlo alla struttura"
+
+[scan.param]
+ring_radius = "Raggio"
+ring_tilt = "Inclinazione"
+stack_rise = "Distanza"
+stack_twist = "Torsione"
+stack_slip = "Scorrimento"
+array_offset = "Spaziatura {axis}"
+array_rotation = "Rotazione {axis}"
+pose_position = "Posizione {axis}"
+pose_rotation = "Rotazione {axis}"
+step = "Passaggio"
+pose = "Posizionata a mano {number}: {field}"
+bond = "Lunghezza di legame {atoms}"
+angle = "Angolo di legame {atoms}"
+dihedral = "Angolo diedro {atoms}"
+
+[scan.error]
+item_missing = "Elemento scansionato non trovato (l’assemblaggio è cambiato)"
+model_param = "Questo parametro appartiene al modello 3D"
+assembly_param = "Questo parametro appartiene all’assemblaggio"
+too_many_atoms = "Troppi atomi ({atoms}). Una scansione accetta al massimo {max} atomi. Riduci il numero di ripetizioni"
+start_failed = "Impossibile avviare la scansione: {error}"
+empty_assembly = "L’assemblaggio non contiene molecole"
+
+[scan.duration]
+seconds = "{seconds} s"
+minutes = "{minutes} min {seconds} s"
+hours = "{hours} h {minutes} min"
+
+[text_format]
+title = "Formato"
+size_default = "Predefinita"
+size_tip = "Dimensione del testo (predefinita 10 pt)"
+bold = "Grassetto"
+italic = "Corsivo"
+subscript = "Pedice"
+superscript = "Apice"
+symbol_tip = "Carattere Symbol (lettere greche di ChemDraw): p → π, D → Δ, m → μ\nSi applica ai caratteri selezionati, se presenti; altrimenti ai caratteri digitati dopo (Ctrl+G)"
+
+[text_format.target]
+new_text = "Nuovo testo"
+selection = "Caratteri selezionati"
+whole_text = "Tutto il testo"
+selected_texts = { one = "{n} testo selezionato", other = "{n} testi selezionati" }
+
+[text_format.font]
+default = "Carattere predefinito"
+not_installed = "{font} (non installato)"
+search = "Cerca caratteri"
+recent = "Caratteri usati di recente"
+symbol = "Symbol (lettere greche)"
+no_match = "Nessun carattere corrispondente"
+tip = "Carattere (il nome di un carattere non installato viene mantenuto così com’è al salvataggio)"
+
+[interactions]
+hbonds = "Legami a idrogeno"
+pi_stacking = "Impilamento π"
+hbond_tip = "Mostra come linee tratteggiate azzurre le coppie formate da un H legato a N, O o F e un altro N, O o F (l’accettore).\nH···A ≤ 2,5 Å, D···A ≤ 3,5 Å, angolo D–H···A ≥ 120°. All’interno di una molecola sono escluse le coppie separate da non più di 3 legami"
+pi_tip = "Mostra gli anelli aromatici sovrapposti (a 5 o 6 termini, planari, 4n+2 elettroni) come linee tratteggiate gialle tra i baricentri degli anelli.\nParallelo: distanza tra i baricentri ≤ 4,4 Å, angolo tra i piani ≤ 30°, spostamento laterale ≤ 2,0 Å.\nA T: distanza tra i baricentri ≤ 5,5 Å, angolo 60–90°, spostamento ≤ 2,0 Å (secondo Marcou e Rognan 2007 e PLIP).\nGli anelli condensati e quelli uniti da un legame non sono conteggiati"
+hbond_entry = "{donor}–{hydrogen}···{acceptor}: {distance} Å ({angle}°)"
+stack_entry = "Anello {ring_a} – anello {ring_b}: {distance} Å {kind} ({angle}°)"
+or_more = " o più"
+hbond_count = { one = "Legami a idrogeno: {n}{more}{pending}", other = "Legami a idrogeno: {n}{more}{pending}" }
+more_hbonds = { one = "Ancora {n}", other = "Altri {n}" }
+stack_count = { one = "Impilamento π: {n}{more}{pending}", other = "Impilamento π: {n}{more}{pending}" }
+more_stacks = { one = "Ancora {n}", other = "Altri {n}" }
