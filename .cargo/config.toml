@@ -1,7 +1,7 @@
 # Build openbabel-sys against the prebuilt OpenBabel that scripts/fetch-openbabel.sh unpacks,
 # instead of compiling OpenBabel from source (which needs CMake and takes 10–20 minutes).
-# Without that directory the build stops and asks for it; build with --no-default-features to
-# leave OpenBabel out altogether. An OPENBABEL_SYS_PREBUILT_DIR already set in the environment
-# wins over this one (cargo's [env] does not override it unless `force` is set).
+# OpenBabel is required, so without that directory the build stops and asks for it. An
+# OPENBABEL_SYS_PREBUILT_DIR already set in the environment wins over this one (cargo's [env]
+# does not override it unless `force` is set) -- the macOS release sets one per architecture.
 [env]
 OPENBABEL_SYS_PREBUILT_DIR = { value = "third_party/openbabel-prebuilt", relative = true }

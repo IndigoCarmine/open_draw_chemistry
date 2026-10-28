@@ -1,11 +1,9 @@
 //! The SMILES of the selected structures (or of the whole drawing), for the 解析 panel.
 //!
-//! With OpenBabel (the `openbabel` feature) the drawing goes through [`molfile::to_molfile`],
-//! which keeps wedges and hashes and expands abbreviations, and OpenBabel writes a canonical
-//! **isomeric** SMILES: it perceives tetrahedral centres from the 2D coordinates plus wedges,
-//! and double-bond geometry from the coordinates. There is no stereo-less fallback: if
-//! OpenBabel fails the panel shows why, and a build without OpenBabel shows
-//! [`NEEDS_OPENBABEL`] instead of a SMILES.
+//! The drawing goes through [`molfile::to_molfile`], which keeps wedges and hashes and expands
+//! abbreviations, and OpenBabel writes a canonical **isomeric** SMILES: it perceives tetrahedral
+//! centres from the 2D coordinates plus wedges, and double-bond geometry from the coordinates.
+//! There is no stereo-less fallback: if OpenBabel fails the panel shows why.
 
 use std::collections::HashSet;
 
@@ -13,9 +11,6 @@ use chembuider_rs::widget::analysis::analysis_target;
 use chembuider_rs::{BondOrder, Config, Molecule};
 
 use crate::three_d::Error;
-
-/// Shown instead of a SMILES when the app is built without the `openbabel` feature.
-pub const NEEDS_OPENBABEL: &str = "SMILES の生成には OpenBabel が必要です";
 
 /// The structures the SMILES is of: those with a selected atom, or everything drawn. Page
 /// objects (arrows, text, tables) play no part.
@@ -27,8 +22,7 @@ pub fn target(mol: &Molecule, selection: &HashSet<u32>) -> Molecule {
 }
 
 /// The canonical isomeric SMILES of `mol` (already the [`target`]), or a short Japanese reason
-/// why there is none ([`NEEDS_OPENBABEL`] without the `openbabel` feature). May be slow for a
-/// big drawing: call it off the UI thread.
+/// why there is none. May be slow for a big drawing: call it off the UI thread.
 pub fn compute(mol: &Molecule, config: &Config) -> Result<String, String> {
     if mol.atoms.is_empty() {
         return Err("構造がありません".to_owned());
@@ -40,12 +34,10 @@ pub fn compute(mol: &Molecule, config: &Config) -> Result<String, String> {
         Error::UnknownLabels(labels) => {
             format!("SMILES にできないラベルがあります: {}", labels.join("、"))
         }
-        Error::Unavailable => NEEDS_OPENBABEL.to_owned(),
         other => other.to_string(),
     })
 }
 
-#[cfg(feature = "openbabel")]
 fn openbabel_smiles(mol: &Molecule, config: &Config) -> Result<String, Error> {
     let molfile = crate::three_d::molfile::to_molfile(mol, config)?;
     let ob = openbabel::Molecule::parse(&molfile, "mol").map_err(|_| Error::Unreadable)?;
@@ -59,11 +51,6 @@ fn openbabel_smiles(mol: &Molecule, config: &Config) -> Result<String, Error> {
         .ok_or(Error::Unreadable)
 }
 
-#[cfg(not(feature = "openbabel"))]
-fn openbabel_smiles(_mol: &Molecule, _config: &Config) -> Result<String, Error> {
-    Err(Error::Unavailable)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,7 +60,6 @@ mod tests {
         Config::default()
     }
 
-    #[cfg(feature = "openbabel")]
     /// Ethanol, C–C–O.
     fn ethanol(mol: &mut Molecule, dx: f32) -> u32 {
         let a = mol.add_atom("C".into(), [dx, 0.0], 0);
@@ -115,7 +101,6 @@ mod tests {
         m
     }
 
-    #[cfg(feature = "openbabel")]
     #[test]
     fn ethanol_is_cco() {
         let mut m = Molecule::default();
@@ -123,7 +108,6 @@ mod tests {
         assert_eq!(compute(&m, &config()).unwrap(), "CCO");
     }
 
-    #[cfg(feature = "openbabel")]
     #[test]
     fn two_molecules_are_dot_joined() {
         let mut m = Molecule::default();
@@ -135,7 +119,6 @@ mod tests {
         assert_eq!(parts, ["CCO", "N"]);
     }
 
-    #[cfg(feature = "openbabel")]
     #[test]
     fn the_selection_scopes_the_smiles() {
         let mut m = Molecule::default();
@@ -154,10 +137,7 @@ mod tests {
         let b = m.add_atom("C".into(), [1.3, 0.0], 0);
         m.add_bond(a, b, BondOrder::Single);
         let err = compute(&m, &config()).unwrap_err();
-        #[cfg(feature = "openbabel")]
         assert!(err.contains("Xyzzy"), "{err}");
-        #[cfg(not(feature = "openbabel"))]
-        assert_eq!(err, NEEDS_OPENBABEL);
 
         let mut q = Molecule::default();
         let a = q.add_atom("Mo".into(), [0.0, 0.0], 0);
@@ -167,7 +147,6 @@ mod tests {
         assert!(compute(&Molecule::default(), &config()).is_err());
     }
 
-    #[cfg(feature = "openbabel")]
     fn canonical(smiles: &str) -> String {
         let ob = openbabel::Molecule::parse(smiles, "smi").unwrap();
         ob.write("can")
@@ -178,7 +157,6 @@ mod tests {
             .to_owned()
     }
 
-    #[cfg(feature = "openbabel")]
     #[test]
     fn a_wedge_gives_the_drawn_configuration() {
         let r = compute(&butan_2_ol(BondStereo::WedgeUp), &config()).unwrap();
@@ -193,7 +171,6 @@ mod tests {
         assert!(!plain.contains('@'), "{plain}");
     }
 
-    #[cfg(feature = "openbabel")]
     #[test]
     fn double_bond_geometry_is_kept() {
         let e = compute(&but_2_ene(true), &config()).unwrap();
@@ -201,18 +178,5 @@ mod tests {
         assert!(e.contains('/') || e.contains('\\'), "{e}");
         assert_eq!(e, canonical("C/C=C/C"));
         assert_eq!(z, canonical("C/C=C\\C"));
-    }
-
-    #[cfg(not(feature = "openbabel"))]
-    #[test]
-    fn without_openbabel_there_is_no_smiles_only_the_message() {
-        assert_eq!(
-            compute(&butan_2_ol(BondStereo::WedgeUp), &config()),
-            Err(NEEDS_OPENBABEL.to_owned())
-        );
-        assert_eq!(
-            compute(&but_2_ene(true), &config()),
-            Err(NEEDS_OPENBABEL.to_owned())
-        );
     }
 }

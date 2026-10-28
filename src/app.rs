@@ -797,7 +797,7 @@ impl OpenDrawApp {
             show_properties: self.show_properties,
             view: self.view,
             recent: &self.recent,
-            can_generate_3d: three_d::AVAILABLE && job.is_some() && !running,
+            can_generate_3d: job.is_some() && !running,
             can_optimize_3d: has_model && !running,
             can_export_3d: has_model,
             can_create_assembly: editor.is_some(),
@@ -1435,13 +1435,6 @@ mod tests {
         let mut app = app_with_one_untitled();
         app.view = ViewMode::TwoD;
         app.open_path(&path);
-        if !three_d::AVAILABLE {
-            assert_eq!(app.docs.len(), 1);
-            assert!(app.docs[0].path.is_none(), "the untitled document stays");
-            assert!(app.status.contains("OpenBabel が必要"), "{}", app.status);
-            assert!(app.recent.is_empty());
-            return;
-        }
         assert_eq!(
             app.docs.len(),
             1,
@@ -1557,7 +1550,6 @@ mod tests {
     }
 
     /// The 3D menu's generate → (poll) → optimise path, and the panel drawing the result.
-    #[cfg(feature = "openbabel")]
     #[test]
     fn the_3d_menu_generates_and_optimises_in_the_background() {
         let ctx = egui::Context::default();
@@ -1635,8 +1627,8 @@ mod tests {
     }
 
     /// 3D化 on one molecule of the drawing: the view switches to 3D, and the model is of that
-    /// molecule only (or, without OpenBabel, the 3D view says why there is none). Editing the
-    /// other molecule leaves the model current; editing its own makes it stale.
+    /// molecule only. Editing the other molecule leaves the model current; editing its own makes
+    /// it stale.
     #[test]
     fn make_3d_shows_the_molecule_clicked_on_in_the_3d_view() {
         let ctx = egui::Context::default();
@@ -1649,30 +1641,25 @@ mod tests {
         app.run(&ctx, Command::Make3d(scope));
         assert_eq!(app.view, ViewMode::ThreeD);
 
-        if !three_d::AVAILABLE {
-            assert!(app.docs[0].three_d.model().is_none());
-            assert!(app.status.contains("利用できません"), "{}", app.status);
-        } else {
-            assert!(app.docs[0].three_d.is_running());
-            while app.docs[0].three_d.is_running() {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                app.poll_3d(&ctx);
-            }
-            let model = app.docs[0].three_d.model().expect(&app.status);
-            // Methylamine, CH3NH2: the ethanol is not part of it.
-            assert_eq!(model.atoms.len(), 7, "{}", model.formula);
-            assert!(!app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule));
-            let mol = &mut app.docs[0].editor.molecule;
-            let cl = mol.add_atom("Cl".to_owned(), [3.0, 1.0], 0);
-            mol.add_bond(o, cl, chembuider_rs::BondOrder::Single);
-            assert!(
-                !app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule),
-                "the other molecule was edited"
-            );
-            let mol = &mut app.docs[0].editor.molecule;
-            mol.atom_by_id_mut(n).unwrap().element = "O".to_owned();
-            assert!(app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule));
+        assert!(app.docs[0].three_d.is_running());
+        while app.docs[0].three_d.is_running() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            app.poll_3d(&ctx);
         }
+        let model = app.docs[0].three_d.model().expect(&app.status);
+        // Methylamine, CH3NH2: the ethanol is not part of it.
+        assert_eq!(model.atoms.len(), 7, "{}", model.formula);
+        assert!(!app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule));
+        let mol = &mut app.docs[0].editor.molecule;
+        let cl = mol.add_atom("Cl".to_owned(), [3.0, 1.0], 0);
+        mol.add_bond(o, cl, chembuider_rs::BondOrder::Single);
+        assert!(
+            !app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule),
+            "the other molecule was edited"
+        );
+        let mol = &mut app.docs[0].editor.molecule;
+        mol.atom_by_id_mut(n).unwrap().element = "O".to_owned();
+        assert!(app.docs[0].three_d.is_stale(&app.docs[0].editor.molecule));
 
         // A headless frame of the 3D view's two parts: 3D 編集 for the right panel and the
         // viewer (no renderer here, so it shows the summary).
@@ -1685,7 +1672,7 @@ mod tests {
         assert!(commands.is_empty());
     }
 
-    /// A hand-built water model, so the assembly tests run without OpenBabel.
+    /// A hand-built water model, so the assembly tests need no OpenBabel generation.
     fn water_model() -> three_d::Model3d {
         use three_d::{Atom3d, Bond3d};
         let atom = |element: &str, pos| Atom3d {

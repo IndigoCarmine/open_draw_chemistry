@@ -908,7 +908,7 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
     let job = doc.map(|d| &d.three_d);
     let model = job.and_then(|j| j.shown_model());
     let running = job.is_some_and(|j| j.is_running());
-    ui.add_enabled_ui(three_d::AVAILABLE && doc.is_some() && !running, |ui| {
+    ui.add_enabled_ui(doc.is_some() && !running, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("力場").size(11.0).color(ink.muted));
             let current = job.map(|j| j.force_field).unwrap_or_default();
@@ -965,13 +965,8 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
         }
         _ => {}
     }
-    if !three_d::AVAILABLE {
-        ui.label(ink.muted(
-            "この版では 3D 生成を利用できません（OpenBabel を有効にしてビルドすると使えます）",
-        ));
-    }
     let Some(m) = model else {
-        if !running && three_d::AVAILABLE {
+        if !running {
             ui.label(ink.muted(
                 "2D 画面で分子を右クリックして「3D化」、または「2D から再生成」で 3D モデルを作ります",
             ));
@@ -1007,12 +1002,6 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
 
 /// The panel body when there is no model to show: why, and what to do.
 fn summary(ui: &mut egui::Ui, state: Option<&JobState>, stale: bool, can_render: bool) {
-    if !three_d::AVAILABLE {
-        ui.label(muted(
-            "この版では 3D 生成を利用できません\nOpenBabel を有効にしてビルドすると使えます",
-        ));
-        return;
-    }
     match state {
         None | Some(JobState::Idle) => {
             ui.label(muted(

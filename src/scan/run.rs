@@ -66,11 +66,8 @@ pub struct Run {
 impl Run {
     /// Start scanning `axes` (one or two, the parameters of `source` in order) under
     /// `force_field`. Refuses at once — without a thread — a structure of more than
-    /// [`MAX_ATOMS`] atoms, a scan without axes, and a build without OpenBabel.
+    /// [`MAX_ATOMS`] atoms and a scan without axes.
     pub fn start(source: Source, axes: &[Axis], force_field: ForceField) -> Result<Run, String> {
-        if !crate::three_d::AVAILABLE {
-            return Err(unavailable_message().to_owned());
-        }
         let atoms = source.atom_count();
         if atoms > MAX_ATOMS {
             return Err(format!(
@@ -293,11 +290,6 @@ impl Drop for Run {
     }
 }
 
-/// Why a scan cannot run in a build without OpenBabel.
-pub fn unavailable_message() -> &'static str {
-    "MM エネルギーの計算には OpenBabel が必要です（この版は OpenBabel なしでビルドされています）"
-}
-
 fn design_of(source: &Source) -> Option<&crate::assembly::Design> {
     match source {
         Source::Assembly { design, .. } => Some(design),
@@ -486,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn too_large_or_unavailable_scans_are_refused_at_once() {
+    fn too_large_scans_are_refused_at_once() {
         let mut model = chain_model();
         let atom = model.atoms[0].clone();
         model.atoms.resize(MAX_ATOMS + 1, atom);
@@ -494,11 +486,7 @@ mod tests {
         let Err(message) = Run::start(source, &[dihedral_axis(3)], ForceField::Uff) else {
             panic!("a scan of too many atoms started");
         };
-        if crate::three_d::AVAILABLE {
-            assert!(message.contains("原子が多すぎます"), "{message}");
-        } else {
-            assert!(message.contains("OpenBabel"), "{message}");
-        }
+        assert!(message.contains("原子が多すぎます"), "{message}");
     }
 
     #[test]
@@ -511,7 +499,7 @@ mod tests {
 }
 
 /// Real scans through OpenBabel.
-#[cfg(all(test, feature = "openbabel"))]
+#[cfg(test)]
 mod energy_tests {
     use super::*;
     use crate::assembly::model::{Component, Design, Step};

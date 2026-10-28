@@ -34,9 +34,11 @@ moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_r
 # The viewer's vector types, needed to drive its camera and renderer directly.
 lin_alg = { version = "1.4.3", features = ["computer_graphics"] }
 
-# 2D → 3D generation and force-field optimisation (see `src/three_d/`). Behind the `openbabel`
-# feature because it needs a prebuilt OpenBabel (`scripts/fetch-openbabel.sh`) or CMake.
-openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.3", optional = true }
+# 2D → 3D generation, force-field optimisation, SMILES and 3D file reading (see `src/three_d/`).
+# Required: openbabel-sys links the prebuilt OpenBabel that `scripts/fetch-openbabel.sh`
+# downloads (or builds OpenBabel from source with CMake). Every release ships its libraries,
+# plugins and data beside the executable (see .github/workflows/release.yml).
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.4" }
 
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -72,12 +74,6 @@ windows-core = "0.62.2"
 winit = { git = "https://github.com/IndigoCarmine/winit", branch = "wayland-native-dnd" }
 egui-winit = { git = "https://github.com/IndigoCarmine/egui-winit", branch = "main" }
 
-[features]
-default = ["openbabel"]
-# 3D generation through OpenBabel. Without it the app builds anywhere and the 3D panel says that
-# generation is unavailable (the macOS x86_64 release slice, which has no prebuilt OpenBabel).
-openbabel = ["dep:openbabel"]
-
 [build-dependencies]
 winresource = "0.1.34"
 
@@ -111,11 +107,20 @@ extended-description = "Draw chemical structures and reaction schemes; read and 
 section = "science"
 priority = "optional"
 # eframe dlopens its GL/X11/Wayland libraries rather than linking them, so `$auto`
-# only ever detects libc. Without listing them the package installs cleanly and
-# then fails to start on a minimal system.
+# does not detect them. Without listing them the package installs cleanly and
+# then fails to start on a minimal system. (`$auto` does find what the binary and the
+# bundled OpenBabel link: libc, libstdc++, zlib, libxml2.)
 depends = "$auto, libxkbcommon0, libwayland-client0, libegl1, libgl1, libx11-6, libxcursor1, libxi6, libxrandr2"
+# The app and its private OpenBabel come from the tree scripts/stage-linux.sh lays out in
+# target/deb-root (the binary's rpath, $ORIGIN/../lib/open-draw-chemistry, reaches the
+# libraries in /usr/lib/open-draw-chemistry). The release workflow
+# also creates target/deb-root/DEBIAN, which tells dpkg-shlibdeps (behind `$auto`) that the
+# bundled libraries belong to this package rather than lacking a package of their own.
 assets = [
-    ["target/release/open_draw_chemistry", "usr/bin/", "755"],
+    ["target/deb-root/usr/bin/open_draw_chemistry", "usr/bin/", "755"],
+    ["target/deb-root/usr/lib/open-draw-chemistry/*.so.*", "usr/lib/open-draw-chemistry/", "644"],
+    ["target/deb-root/usr/lib/open-draw-chemistry/openbabel/*.so", "usr/lib/open-draw-chemistry/openbabel/", "644"],
+    ["target/deb-root/usr/share/open-draw-chemistry/openbabel/*", "usr/share/open-draw-chemistry/openbabel/", "644"],
     ["installer/linux/open-draw-chemistry.desktop", "usr/share/applications/", "644"],
     ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/open-draw-chemistry.png", "644"],
 ]

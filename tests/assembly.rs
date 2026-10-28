@@ -1,5 +1,5 @@
 //! The assembly builder end to end: a benzene monomer built into a stack of rosettes, written
-//! out as PDB, XYZ and MOL2, and (with OpenBabel) read back with every atom.
+//! out as PDB, XYZ and MOL2, and read back through OpenBabel with every atom.
 
 use std::time::Instant;
 
@@ -10,55 +10,15 @@ use open_draw_chemistry::assembly::{
     AssemblyState, Component, Design, Instance, Step, build, clash, file,
 };
 use open_draw_chemistry::three_d::geom::Clash;
+use open_draw_chemistry::three_d::read::{Format3d, read};
 use open_draw_chemistry::three_d::{Atom3d, Bond3d};
 
-/// Benzene: from the test file through OpenBabel when it is built in, by hand otherwise.
+/// Benzene, from the test file through OpenBabel.
 fn benzene() -> Component {
-    #[cfg(feature = "openbabel")]
-    {
-        use open_draw_chemistry::three_d::read::{Format3d, read};
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/benzene.mol2");
-        let text = std::fs::read_to_string(path).unwrap();
-        let model = read(Format3d::Mol2, &text).unwrap().model.unwrap();
-        Component::from_model("benzene", &model)
-    }
-    #[cfg(not(feature = "openbabel"))]
-    {
-        hand_built_benzene()
-    }
-}
-
-#[cfg_attr(feature = "openbabel", allow(dead_code))]
-fn hand_built_benzene() -> Component {
-    let mut atoms = Vec::new();
-    for (element, r) in [("C", 1.397), ("H", 2.481)] {
-        for k in 0..6 {
-            let a = (60.0 * k as f64).to_radians();
-            atoms.push(Atom3d {
-                element: element.to_owned(),
-                pos: [r * a.cos(), r * a.sin(), 0.0],
-            });
-        }
-    }
-    let mut bonds = Vec::new();
-    for k in 0..6 {
-        bonds.push(Bond3d {
-            begin: k,
-            end: (k + 1) % 6,
-            order: if k % 2 == 0 { 2 } else { 1 },
-        });
-        bonds.push(Bond3d {
-            begin: k,
-            end: k + 6,
-            order: 1,
-        });
-    }
-    Component {
-        name: "benzene".to_owned(),
-        atoms,
-        bonds,
-        orient: None,
-    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/benzene.mol2");
+    let text = std::fs::read_to_string(path).unwrap();
+    let model = read(Format3d::Mol2, &text).unwrap().model.unwrap();
+    Component::from_model("benzene", &model)
 }
 
 fn rosette_stack(rings: u32, layers: u32) -> Design {
@@ -113,25 +73,18 @@ fn a_benzene_rosette_stack_exports_and_reads_back() {
     for format in AssemblyExport::ALL {
         let text = export::export(format, &built, design, "benzene rosette");
         assert!(!text.is_empty());
-        #[cfg(feature = "openbabel")]
-        {
-            let mol = openbabel::Molecule::parse(&text, format.extension())
-                .unwrap_or_else(|_| panic!("OpenBabel could not read the {format:?} export"));
-            assert_eq!(mol.num_atoms() as usize, 720, "{format:?}");
-            if format != AssemblyExport::Xyz {
-                assert_eq!(mol.num_bonds() as usize, 720, "{format:?} keeps the bonds");
-            }
+        let mol = openbabel::Molecule::parse(&text, format.extension())
+            .unwrap_or_else(|_| panic!("OpenBabel could not read the {format:?} export"));
+        assert_eq!(mol.num_atoms() as usize, 720, "{format:?}");
+        if format != AssemblyExport::Xyz {
+            assert_eq!(mol.num_bonds() as usize, 720, "{format:?} keeps the bonds");
         }
     }
 
     // The app's own 3D reader opens the PDB export (as the app does on File ▸ Open).
-    #[cfg(feature = "openbabel")]
-    {
-        use open_draw_chemistry::three_d::read::{Format3d, read};
-        let pdb = export::export(AssemblyExport::Pdb, &built, design, "rosette");
-        let opened = read(Format3d::Pdb, &pdb).unwrap();
-        assert_eq!(opened.model.unwrap().atoms.len(), 720);
-    }
+    let pdb = export::export(AssemblyExport::Pdb, &built, design, "rosette");
+    let opened = read(Format3d::Pdb, &pdb).unwrap();
+    assert_eq!(opened.model.unwrap().atoms.len(), 720);
 
     // And the design survives an .odasm round trip.
     let back = file::from_str(&file::to_string(design)).unwrap();

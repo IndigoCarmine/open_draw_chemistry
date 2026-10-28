@@ -9,8 +9,6 @@
 //!
 //! A file whose coordinates are flat (a 2D molfile) has no 3D model to show: its own layout is
 //! used for the drawing and the model is left to be generated on demand.
-//!
-//! Without the `openbabel` feature every read fails with [`Error::Unavailable`].
 
 use std::fmt;
 use std::path::Path;
@@ -27,7 +25,6 @@ pub const MAX_ATOMS: usize = 999;
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Average bond length of the editor's drawings, in its units.
-#[cfg_attr(not(feature = "openbabel"), allow(dead_code))] // only the OpenBabel reader uses it
 const BOND_LENGTH_2D: f64 = 1.5;
 
 /// A 3D structure format that can be opened.
@@ -104,8 +101,6 @@ pub struct Opened3d {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
-    /// Built without the `openbabel` feature.
-    Unavailable,
     /// The file is larger than [`MAX_FILE_BYTES`].
     FileTooLarge,
     /// The file holds no atoms.
@@ -119,10 +114,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Unavailable => write!(
-                f,
-                "3D 形式の読み込みには OpenBabel が必要です（この版は OpenBabel なしでビルドされています）"
-            ),
             Error::FileTooLarge => write!(
                 f,
                 "ファイルが大きすぎます（{} MB まで）",
@@ -144,9 +135,6 @@ impl std::error::Error for Error {}
 
 /// Read the first structure of `text`, a file in `format`.
 pub fn read(format: Format3d, text: &str) -> Result<Opened3d, Error> {
-    if !super::AVAILABLE {
-        return Err(Error::Unavailable);
-    }
     if text.trim().is_empty() {
         return Err(Error::Empty);
     }
@@ -157,15 +145,7 @@ pub fn read(format: Format3d, text: &str) -> Result<Opened3d, Error> {
         return Err(Error::TooManyAtoms(n));
     }
     let records = record_count(format, text);
-    #[cfg(feature = "openbabel")]
-    {
-        engine::read(format, text, records)
-    }
-    #[cfg(not(feature = "openbabel"))]
-    {
-        let _ = records;
-        Err(Error::Unavailable)
-    }
+    engine::read(format, text, records)
 }
 
 /// The atom count a PDB or XYZ file declares, read cheaply without parsing it.
@@ -204,7 +184,6 @@ fn record_count(format: Format3d, text: &str) -> usize {
 
 /// Place a 2D layout (`[x, y]` with y up, any scale) in the editor's frame: y down, bonds
 /// [`BOND_LENGTH_2D`] long on average, centred on the origin.
-#[cfg_attr(not(feature = "openbabel"), allow(dead_code))] // only the OpenBabel reader uses it
 fn editor_positions(points: &[[f64; 2]], bonds: &[(usize, usize)]) -> Vec<[f32; 2]> {
     let lengths: Vec<f64> = bonds
         .iter()
@@ -230,7 +209,6 @@ fn editor_positions(points: &[[f64; 2]], bonds: &[(usize, usize)]) -> Vec<[f32; 
 
 /// Project 3D points onto their best-fit plane (the two principal axes), as plane
 /// coordinates. The fallback when no proper 2D layout can be made.
-#[cfg_attr(not(feature = "openbabel"), allow(dead_code))] // only the OpenBabel reader uses it
 fn project_to_plane(points: &[[f64; 3]]) -> Vec<[f64; 2]> {
     let n = points.len().max(1) as f64;
     let mut c = [0.0; 3];
@@ -262,7 +240,6 @@ fn project_to_plane(points: &[[f64; 3]]) -> Vec<[f64; 2]> {
 
 /// The unit eigenvector of the largest eigenvalue of the symmetric `m` (by power
 /// iteration), kept orthogonal to `exclude`.
-#[cfg_attr(not(feature = "openbabel"), allow(dead_code))] // only the OpenBabel reader uses it
 fn dominant_axis(m: &[[f64; 3]; 3], start: [f64; 3], exclude: Option<[f64; 3]>) -> [f64; 3] {
     let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let orthogonalise = |v: [f64; 3]| match exclude {
@@ -292,7 +269,6 @@ fn dominant_axis(m: &[[f64; 3]; 3], start: [f64; 3], exclude: Option<[f64; 3]>) 
     v
 }
 
-#[cfg(feature = "openbabel")]
 mod engine {
     use chembuider_rs::molecule::normal_valence;
     use chembuider_rs::{BondOrder, Molecule};
@@ -514,9 +490,6 @@ mod tests {
 
     #[test]
     fn a_huge_file_is_refused_before_parsing() {
-        if !crate::three_d::AVAILABLE {
-            return;
-        }
         let text = format!("{}\n\n", MAX_ATOMS + 1);
         assert_eq!(
             read(Format3d::Xyz, &text),

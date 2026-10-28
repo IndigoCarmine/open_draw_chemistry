@@ -150,10 +150,6 @@ impl Job {
         if self.is_running() {
             return;
         }
-        if !super::AVAILABLE {
-            self.state = JobState::Failed(Error::Unavailable.to_string());
-            return;
-        }
         let source = part::scoped(drawing, scope.as_deref());
         let molfile = super::molfile::to_molfile(&source, config);
         self.source = Some(source);
@@ -215,7 +211,7 @@ impl Job {
 
     /// Whether the energy of an edited geometry is still being worked out.
     pub fn energy_pending(&self) -> bool {
-        self.edit.energy_stale && self.model().is_some() && super::AVAILABLE
+        self.edit.energy_stale && self.model().is_some()
     }
 
     /// Take the background work's result if it has arrived, returning a message for the status
@@ -308,12 +304,7 @@ mod tests {
         let JobState::Failed(message) = &job.state else {
             panic!("expected a failure, got {:?}", job.state);
         };
-        let expected = if crate::three_d::AVAILABLE {
-            Error::Empty
-        } else {
-            Error::Unavailable
-        };
-        assert_eq!(message, &expected.to_string());
+        assert_eq!(message, &Error::Empty.to_string());
         assert!(job.poll().is_none());
     }
 
@@ -351,7 +342,7 @@ mod tests {
             "its own molecule was joined to another"
         );
 
-        // Regenerating keeps to the same part (failing at once without OpenBabel).
+        // Regenerating keeps to the same part.
         job.generate(&drawing, &Config::default());
         assert_eq!(job.scope(), Some(&scope[..]));
     }
@@ -362,7 +353,6 @@ mod tests {
         assert!(!job.is_stale(&Molecule::default()));
     }
 
-    #[cfg(feature = "openbabel")]
     fn finish(job: &mut Job) -> String {
         loop {
             if let Some(message) = job.poll() {
@@ -372,7 +362,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "openbabel")]
     #[test]
     fn a_generated_model_goes_stale_when_the_drawing_changes() {
         let mut drawing = Molecule::default();
@@ -394,7 +383,6 @@ mod tests {
 
     /// Edit → the energy follows; optimise under a restraint → it holds, the model stays on
     /// screen meanwhile, and the optimisation can be undone.
-    #[cfg(feature = "openbabel")]
     #[test]
     fn an_edited_model_is_re_evaluated_and_optimised_under_its_restraints() {
         use crate::three_d::{edit, geom};

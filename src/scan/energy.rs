@@ -12,9 +12,8 @@ use crate::three_d::{Atom3d, Bond3d, ForceField};
 const V2000_MAX: usize = 999;
 
 /// The energy unit of `force_field` as OpenBabel reports it (MMFF94: kcal/mol, UFF and GAFF:
-/// kJ/mol). Without OpenBabel, the same answer from the table.
+/// kJ/mol). Should OpenBabel not report one, the same answer from the table.
 pub fn unit(force_field: ForceField) -> String {
-    #[cfg(feature = "openbabel")]
     if let Some(unit) = openbabel::forcefield_energy_unit(force_field.id()) {
         return unit;
     }
@@ -86,7 +85,6 @@ pub fn molfile(atoms: &[Atom3d], bonds: &[Bond3d]) -> String {
 }
 
 /// Methane, to clear OpenBabel's cached force-field setup (see [`Evaluator::new`]).
-#[cfg(feature = "openbabel")]
 const METHANE: &str = "methane
   OpenDraw          3D
 
@@ -105,46 +103,37 @@ M  END
 
 /// A structure held by OpenBabel for repeated single points.
 pub struct Evaluator {
-    #[cfg(feature = "openbabel")]
     mol: openbabel::Molecule,
     force_field: ForceField,
     atoms: usize,
 }
 
 impl Evaluator {
-    /// Read `molfile` once. Fails without OpenBabel, on an unreadable file, or when the force
+    /// Read `molfile` once. Fails on an unreadable file, or when the force
     /// field cannot be set up for the structure (an atom it has no type for).
     pub fn new(molfile: &str, force_field: ForceField) -> Result<Self, String> {
-        #[cfg(feature = "openbabel")]
-        {
-            let mol = openbabel::Molecule::parse(molfile, "mol")
-                .map_err(|_| crate::three_d::Error::Unreadable.to_string())?;
-            let atoms = mol.num_atoms() as usize;
-            let evaluator = Self {
-                mol,
-                force_field,
-                atoms,
-            };
-            // OpenBabel keeps one setup per force field and reuses it for any molecule with the
-            // same elements, degrees and bond orders — even one typed differently (say the
-            // builder's copy this model came from). Setting the force field up for a methane
-            // first makes the next setup a full one, of this molecule.
-            if let Ok(methane) = openbabel::Molecule::parse(METHANE, "mol") {
-                let _ = methane.energy(force_field.id());
-            }
-            // Sets the force field up for this molecule; the points then reuse it.
-            evaluator
-                .mol
-                .energy(force_field.id())
-                .filter(|e| e.is_finite())
-                .ok_or_else(|| crate::three_d::Error::ForceField(force_field).to_string())?;
-            Ok(evaluator)
+        let mol = openbabel::Molecule::parse(molfile, "mol")
+            .map_err(|_| crate::three_d::Error::Unreadable.to_string())?;
+        let atoms = mol.num_atoms() as usize;
+        let evaluator = Self {
+            mol,
+            force_field,
+            atoms,
+        };
+        // OpenBabel keeps one setup per force field and reuses it for any molecule with the
+        // same elements, degrees and bond orders — even one typed differently (say the
+        // builder's copy this model came from). Setting the force field up for a methane
+        // first makes the next setup a full one, of this molecule.
+        if let Ok(methane) = openbabel::Molecule::parse(METHANE, "mol") {
+            let _ = methane.energy(force_field.id());
         }
-        #[cfg(not(feature = "openbabel"))]
-        {
-            let _ = (molfile, force_field);
-            Err(crate::three_d::Error::Unavailable.to_string())
-        }
+        // Sets the force field up for this molecule; the points then reuse it.
+        evaluator
+            .mol
+            .energy(force_field.id())
+            .filter(|e| e.is_finite())
+            .ok_or_else(|| crate::three_d::Error::ForceField(force_field).to_string())?;
+        Ok(evaluator)
     }
 
     pub fn atoms(&self) -> usize {
@@ -157,25 +146,17 @@ impl Evaluator {
 
     /// The energy with the atoms at `coords` (NaN when it cannot be had).
     pub fn energy(&mut self, coords: &[Vec3]) -> f64 {
-        #[cfg(feature = "openbabel")]
-        {
-            if coords.len() != self.atoms {
-                return f64::NAN;
-            }
-            let flat: Vec<f64> = coords.iter().flatten().copied().collect();
-            if !flat.iter().all(|c| c.is_finite()) || !self.mol.set_coordinates(&flat) {
-                return f64::NAN;
-            }
-            self.mol
-                .energy(self.force_field.id())
-                .filter(|e| e.is_finite())
-                .unwrap_or(f64::NAN)
+        if coords.len() != self.atoms {
+            return f64::NAN;
         }
-        #[cfg(not(feature = "openbabel"))]
-        {
-            let _ = coords;
-            f64::NAN
+        let flat: Vec<f64> = coords.iter().flatten().copied().collect();
+        if !flat.iter().all(|c| c.is_finite()) || !self.mol.set_coordinates(&flat) {
+            return f64::NAN;
         }
+        self.mol
+            .energy(self.force_field.id())
+            .filter(|e| e.is_finite())
+            .unwrap_or(f64::NAN)
     }
 }
 
@@ -258,7 +239,6 @@ mod tests {
 
     /// Replacing the coordinates gives the same energy as reading the moved structure afresh,
     /// and both V2000 and V3000 files are read.
-    #[cfg(feature = "openbabel")]
     #[test]
     fn coordinates_replaced_in_place_give_the_energy_of_a_fresh_read() {
         for copies in [2usize, 400] {

@@ -8,17 +8,13 @@
 //!    the chosen [`ForceField`], giving a [`Model3d`];
 //! 3. [`optimize`] / [`export`] — further minimisation, and writing the model out.
 //!
-//! OpenBabel is behind the `openbabel` cargo feature. Without it everything here still
-//! compiles, [`AVAILABLE`] is `false` and generation fails with [`Error::Unavailable`], so the
-//! UI can say so instead of offering a button that does nothing. [`job`] runs the slow part on
-//! a background thread.
+//! [`job`] runs the slow part on a background thread.
 
 use std::fmt;
 
 use chembuider_rs::{Config, Molecule};
 
 pub mod edit;
-#[cfg(feature = "openbabel")]
 mod engine;
 pub mod geom;
 pub mod interactions;
@@ -26,12 +22,10 @@ pub mod job;
 pub mod molfile;
 pub mod part;
 pub mod read;
+pub mod runtime;
 
 pub use edit::{Constraint, Edit3d};
 pub use job::{Job, JobState, Task};
-
-/// Whether this build can generate 3D models (it was built with the `openbabel` feature).
-pub const AVAILABLE: bool = cfg!(feature = "openbabel");
 
 /// Conjugate-gradient steps spent relaxing a freshly generated model.
 const GENERATE_STEPS: u32 = 500;
@@ -163,8 +157,6 @@ impl Model3d {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
-    /// Built without the `openbabel` feature.
-    Unavailable,
     /// Nothing is drawn.
     Empty,
     /// Atom labels that are neither elements nor abbreviations the editor can expand.
@@ -188,10 +180,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Unavailable => write!(
-                f,
-                "この版では 3D 生成を利用できません（OpenBabel なしでビルドされています）"
-            ),
             Error::Empty => write!(f, "構造が描かれていません"),
             Error::UnknownLabels(labels) => write!(
                 f,
@@ -229,15 +217,7 @@ pub fn generate(
 
 /// [`generate`] from a 2D molfile already made by [`molfile::to_molfile`].
 pub fn generate_from_molfile(molfile: &str, force_field: ForceField) -> Result<Model3d, Error> {
-    #[cfg(feature = "openbabel")]
-    {
-        engine::generate(molfile, force_field, GENERATE_STEPS)
-    }
-    #[cfg(not(feature = "openbabel"))]
-    {
-        let _ = (molfile, force_field, GENERATE_STEPS);
-        Err(Error::Unavailable)
-    }
+    engine::generate(molfile, force_field, GENERATE_STEPS)
 }
 
 /// Minimise `model` further under `force_field`, which may differ from the one it was made with.
@@ -251,40 +231,16 @@ pub fn optimize_with(
     force_field: ForceField,
     constraints: &[Constraint],
 ) -> Result<Model3d, Error> {
-    #[cfg(feature = "openbabel")]
-    {
-        engine::optimize(&model.molfile, force_field, OPTIMIZE_STEPS, constraints)
-    }
-    #[cfg(not(feature = "openbabel"))]
-    {
-        let _ = (model, force_field, constraints, OPTIMIZE_STEPS);
-        Err(Error::Unavailable)
-    }
+    engine::optimize(&model.molfile, force_field, OPTIMIZE_STEPS, constraints)
 }
 
 /// The single-point energy of `model`'s current geometry under `force_field`, in the force
 /// field's unit. For the energy after a hand edit; slow-ish, so off the UI thread.
 pub fn energy(model: &Model3d, force_field: ForceField) -> Result<f64, Error> {
-    #[cfg(feature = "openbabel")]
-    {
-        engine::energy(&model.molfile, force_field)
-    }
-    #[cfg(not(feature = "openbabel"))]
-    {
-        let _ = (model, force_field);
-        Err(Error::Unavailable)
-    }
+    engine::energy(&model.molfile, force_field)
 }
 
 /// `model` as the text of a file in `format`.
 pub fn export(model: &Model3d, format: Export3d) -> Result<String, Error> {
-    #[cfg(feature = "openbabel")]
-    {
-        engine::export(&model.molfile, format)
-    }
-    #[cfg(not(feature = "openbabel"))]
-    {
-        let _ = (model, format);
-        Err(Error::Unavailable)
-    }
+    engine::export(&model.molfile, format)
 }

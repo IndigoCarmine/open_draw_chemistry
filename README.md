@@ -53,9 +53,10 @@ For diagnosis, the server logs what the container asks for when its `LocalServer
 
 ## Getting started
 
-3D generation links [OpenBabel](https://openbabel.org) through
-[openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs). Fetch its prebuilt OpenBabel once
-(and again after bumping openbabel_rs); the script needs `bash` and `gh` or `curl`:
+The app requires [OpenBabel](https://openbabel.org) (3D generation, SMILES, reading 3D files),
+linked through [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs). Fetch its prebuilt
+OpenBabel once (and again after bumping openbabel_rs); the script needs `bash` and `gh` or
+`curl`:
 
 ```bash
 bash scripts/fetch-openbabel.sh   # unpacks into third_party/openbabel-prebuilt/ (not committed)
@@ -67,18 +68,33 @@ openbabel-sys build script copies OpenBabel's DLLs and plugins next to the binar
 (Linux and macOS use an rpath), so `cargo run` and `cargo test` need nothing else. A C++
 compiler is still required for the small binding shim (MSVC Build Tools on Windows).
 
-Prebuilts exist for `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu` and
-`aarch64-apple-darwin`. Anywhere else, either build without 3D generation — the 3D panel then
-says it is unavailable:
+Prebuilts exist for `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`,
+`aarch64-apple-darwin` and `x86_64-apple-darwin`. To build for another target than the host,
+fetch its prebuilt into a directory of its own and point the build at it:
 
 ```bash
-cargo build --no-default-features   # leaves out the default `openbabel` feature
+bash scripts/fetch-openbabel.sh x86_64-apple-darwin   # -> third_party/openbabel-prebuilt-x86_64-apple-darwin/
+OPENBABEL_SYS_PREBUILT_DIR=$PWD/third_party/openbabel-prebuilt-x86_64-apple-darwin \
+  cargo build --release --target x86_64-apple-darwin
 ```
 
-or install CMake and set `OPENBABEL_SYS_PREBUILT_DIR` to an empty value to build OpenBabel
-from source (10–20 minutes the first time). Release builds include OpenBabel on Windows only
-(its DLLs, plugins and `data` directory are installed beside the executable); the macOS and
-Linux packages are built with `--no-default-features` for now.
+On a target without a prebuilt, install CMake and set `OPENBABEL_SYS_PREBUILT_DIR` to an empty
+value to build OpenBabel from source (10–20 minutes the first time). There is no build without
+OpenBabel.
+
+Every release ships OpenBabel with the app:
+
+| Package | Libraries | Plugins | Data |
+| --- | --- | --- | --- |
+| Windows (installer, zip) | `openbabel-3.dll`, `inchi.dll` beside the `.exe` | `*.obf` beside the `.exe` | `data\` beside the `.exe` |
+| Linux (`.deb`, AppImage) | `usr/lib/open-draw-chemistry/` (rpath `$ORIGIN/../lib/open-draw-chemistry`) | `usr/lib/open-draw-chemistry/openbabel/` | `usr/share/open-draw-chemistry/openbabel/` |
+| macOS (`.app`, universal) | `Contents/Frameworks/` (rpath `@executable_path/../Frameworks`) | `Contents/Frameworks/openbabel/` | `Contents/Resources/openbabel/` |
+
+The app points OpenBabel at its plugins and data at startup (`src/three_d/runtime.rs`).
+The Windows packages also carry the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`,
+`vcruntime140_1.dll`) app-local, so they run on a clean Windows without `vc_redist.x64.exe`.
+`open_draw_chemistry --check-openbabel` exercises the installed OpenBabel without opening a
+window; the release workflow runs it on every package.
 
 ## Cutting a release
 
@@ -100,18 +116,20 @@ The Windows installer is unsigned, so SmartScreen will warn on download. Signing
 ## Building installers locally
 
 ```bash
+bash scripts/fetch-openbabel.sh
 cargo build --release
 
-# Windows (needs Inno Setup 6)
+# Windows (needs Inno Setup 6): the app folder (also the portable zip), then the installer
+bash scripts/stage-windows.sh           # -> target\stage\windows\
 iscc installer\windows.iss              # -> dist\
 
-# Linux .deb (needs cargo-deb)
-cargo install cargo-deb && cargo deb
+# Linux .deb (needs cargo-deb and patchelf)
+bash scripts/stage-linux.sh target/deb-root && mkdir -p target/deb-root/DEBIAN
+cargo install cargo-deb && cargo deb --no-build
 
-# macOS .app (needs cargo-bundle)
-cargo install cargo-bundle && cargo bundle --release
-# ...and a .dmg on top of it (needs `brew install create-dmg`);
-# see the `macos` job in .github/workflows/release.yml
+# macOS universal .app (needs cargo-bundle and both architectures' OpenBabel)
+# see the `macos` job in .github/workflows/release.yml (scripts/bundle-macos.sh),
+# and for a .dmg on top of it `brew install create-dmg`
 ```
 
 ## Testing workflows with act

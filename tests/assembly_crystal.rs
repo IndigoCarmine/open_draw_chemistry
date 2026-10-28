@@ -295,15 +295,12 @@ fn a_crystal_exports_as_cif_and_pdb() {
     assert_eq!(&cryst[6..33], "   14.000   16.000   18.000");
     assert_eq!(pdb.lines().filter(|l| l.starts_with("HETATM")).count(), 96);
 
-    #[cfg(feature = "openbabel")]
-    {
-        // OpenBabel reads the CIF's asymmetric unit as it is (it does not fill the cell
-        // unless asked to), so it sees the three atoms.
-        let mol = openbabel::Molecule::parse(&cif, "cif").expect("OpenBabel reads the CIF");
-        assert_eq!(mol.num_atoms(), 3);
-        let mol = openbabel::Molecule::parse(&pdb, "pdb").expect("OpenBabel reads the PDB");
-        assert_eq!(mol.num_atoms(), 96);
-    }
+    // OpenBabel reads the CIF's asymmetric unit as it is (it does not fill the cell
+    // unless asked to), so it sees the three atoms.
+    let mol = openbabel::Molecule::parse(&cif, "cif").expect("OpenBabel reads the CIF");
+    assert_eq!(mol.num_atoms(), 3);
+    let mol = openbabel::Molecule::parse(&pdb, "pdb").expect("OpenBabel reads the PDB");
+    assert_eq!(mol.num_atoms(), 96);
 }
 
 #[test]

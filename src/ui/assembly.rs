@@ -28,7 +28,6 @@ use crate::assembly::symop::{self, SymOp};
 use crate::assembly::{AssemblyExport, AssemblyState, Built, Component, Step};
 use crate::document::Document;
 use crate::theme::{self, dark};
-use crate::three_d;
 
 /// The selected molecule's highlight in the viewer, and its colour in labels.
 const SELECTED_COLOR: (f32, f32, f32) = (0.98, 0.45, 0.22);
@@ -1155,11 +1154,8 @@ fn add_buttons(
         changes.push(Change::AddModel);
     }
     if ui
-        .add_enabled(three_d::AVAILABLE, egui::Button::new("ファイルから追加…"))
+        .button("ファイルから追加…")
         .on_hover_text("MOL2・PDB・XYZ・MOL・SDF の 3D 構造を単量体として加えます")
-        .on_disabled_hover_text(
-            "3D 形式の読み込みには OpenBabel が必要です（この版にはありません）",
-        )
         .clicked()
     {
         out.push(Command::AssemblyAddFile);
