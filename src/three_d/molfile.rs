@@ -4,11 +4,18 @@
 //! [`super::generate`] makes them explicit. Abbreviations ("Ph", "OMe", "CO_2Et") are expanded
 //! into their atoms first, on a copy, with the editor's own label machinery — an abbreviation
 //! written into the file as an element would be read as a dummy atom and give a wrong model.
+//!
+//! A polymer drawn with repeat-unit brackets (`[CH2–CH2]n`) is built as one repeat unit with its
+//! open ends closed by hydrogens (`n = 1`): the bare carbons that only stand for the chain going
+//! on are left out, so OpenBabel fills the crossing bonds' valences with H. A multiple group
+//! (×n) is refused: its atoms would have to be drawn n times.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use chembuider_rs::label_chain::resolve_label;
+use chembuider_rs::molecule::BracketUsage;
+use chembuider_rs::molecule::bracket::open_ends;
 use chembuider_rs::molecule::elements::element_of_label;
 use chembuider_rs::widget::rich_text::RichText;
 use chembuider_rs::{BondOrder, BondStereo, ChemStructEditor, Config, Molecule};
@@ -23,6 +30,39 @@ pub const ANGSTROM_PER_UNIT: f64 = 1.0;
 /// A V2000 count field is three digits wide.
 const MAX_COUNT: usize = 999;
 
+/// What 3D generation builds of a drawing with brackets: for a polymer's repeat unit, the
+/// drawing without the open ends (one unit, its ends closed by hydrogens); `None` when the
+/// brackets change nothing (no brackets, or a mixture's). A multiple group is refused.
+pub fn repeat_unit(mol: &Molecule) -> Result<Option<Molecule>, Error> {
+    if mol.brackets().next().is_none() {
+        return Ok(None);
+    }
+    if mol
+        .brackets()
+        .any(|b| b.usage == BracketUsage::MultipleGroup)
+    {
+        return Err(Error::MultipleGroup);
+    }
+    if !mol.brackets().any(|b| b.usage.is_polymer_unit()) {
+        return Ok(None);
+    }
+    let mut unit = mol.clone();
+    for id in open_ends(mol) {
+        unit.remove_atom(id);
+    }
+    unit.objects.clear();
+    Ok(Some(unit))
+}
+
+/// The status bar note for generating `mol` in 3D when it is a polymer drawn with
+/// repeat-unit brackets: what is built instead.
+pub fn polymer_note(mol: &Molecule) -> Option<&'static str> {
+    match repeat_unit(mol) {
+        Ok(Some(_)) => Some("繰り返し単位 1 つ分（n = 1、鎖の端は H で閉じた構造）で 3D 化します"),
+        _ => None,
+    }
+}
+
 /// `mol` as a V2000 molfile, abbreviations expanded (see the module docs).
 ///
 /// Coordinates are scaled by [`ANGSTROM_PER_UNIT`] with y flipped (the editor's y points down,
@@ -33,7 +73,8 @@ pub fn to_molfile(mol: &Molecule, config: &Config) -> Result<String, Error> {
     if mol.atoms.is_empty() {
         return Err(Error::Empty);
     }
-    let mol = expand_labels(mol, config)?;
+    let unit = repeat_unit(mol)?;
+    let mol = expand_labels(unit.as_ref().unwrap_or(mol), config)?;
     if mol.atoms.len() > MAX_COUNT || mol.bonds.len() > MAX_COUNT {
         return Err(Error::TooLarge);
     }
@@ -207,6 +248,43 @@ mod tests {
         mol.add_bond(c1, c2, BondOrder::Single);
         mol.add_bond(c2, o, BondOrder::Single);
         mol
+    }
+
+    /// Polyethylene's repeat unit as drawn: C–[C–C]n–C, the outer carbons bare.
+    fn polyethylene() -> Molecule {
+        let mut mol = Molecule::default();
+        let ids: Vec<u32> = (0..4)
+            .map(|k| mol.add_atom("C".to_owned(), [k as f32 * 1.3, 0.0], 0))
+            .collect();
+        for w in ids.windows(2) {
+            mol.add_bond(w[0], w[1], BondOrder::Single);
+        }
+        mol.add_bracket(&[ids[1], ids[2]].into(), BracketUsage::Sru);
+        mol
+    }
+
+    #[test]
+    fn a_repeat_unit_is_built_with_its_ends_closed_by_hydrogen() {
+        let mol = polyethylene();
+        let (atoms, bonds) = blocks(&to_molfile(&mol, &Config::default()).unwrap());
+        assert_eq!(
+            (atoms.len(), bonds.len()),
+            (2, 1),
+            "ethane's carbons: one unit, n = 1"
+        );
+        assert!(polymer_note(&mol).is_some());
+        assert!(polymer_note(&ethanol()).is_none());
+    }
+
+    #[test]
+    fn a_multiple_group_is_refused() {
+        let mut mol = ethanol();
+        let first = mol.atoms[0].id;
+        mol.add_bracket(&[first].into(), BracketUsage::MultipleGroup);
+        assert!(matches!(
+            to_molfile(&mol, &Config::default()),
+            Err(Error::MultipleGroup)
+        ));
     }
 
     #[test]

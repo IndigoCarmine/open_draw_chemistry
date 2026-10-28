@@ -446,6 +446,12 @@ impl OpenDrawApp {
             Command::Generate3d => {
                 if let Some(doc) = self.docs.get_mut(self.active) {
                     doc.three_d.generate(&doc.editor.molecule, &self.config);
+                    if let (three_d::JobState::Running(_), Some(note)) = (
+                        &doc.three_d.state,
+                        three_d::molfile::polymer_note(&doc.editor.molecule),
+                    ) {
+                        self.status = note.to_owned();
+                    }
                     self.view = ViewMode::ThreeD;
                 }
             }
@@ -521,6 +527,16 @@ impl OpenDrawApp {
                     self.status = message.to_owned();
                 }
             }
+            Command::Bracket(usage) => {
+                if let Some(doc) = self.active_doc_mut() {
+                    self.status = crate::ui::palette::bracket_selection(&mut doc.editor, usage);
+                }
+            }
+            Command::BracketShape(shape) => {
+                if let Some(doc) = self.active_doc_mut() {
+                    self.status = crate::ui::palette::bracket_shape(&mut doc.editor, shape);
+                }
+            }
             Command::Undo
             | Command::Redo
             | Command::Copy
@@ -571,7 +587,12 @@ impl OpenDrawApp {
             .generate_part(&doc.editor.molecule, scope, &self.config);
         self.status = match &doc.three_d.state {
             three_d::JobState::Failed(message) => message.clone(),
-            three_d::JobState::Running(task) => task.running_label().to_owned(),
+            three_d::JobState::Running(task) => {
+                match three_d::molfile::polymer_note(&doc.editor.molecule) {
+                    Some(note) => format!("{}（{note}）", task.running_label()),
+                    None => task.running_label().to_owned(),
+                }
+            }
             _ => String::new(),
         };
         self.view = ViewMode::ThreeD;

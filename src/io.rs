@@ -130,6 +130,9 @@ pub enum Error {
     ExportFailed(Export),
     /// A 3D structure file could not be read.
     Structure3d(read_3d::Error),
+    /// The format cannot say what the drawing's brackets (a repeat unit, a multiple group)
+    /// mean, so writing the atoms as drawn would give the wrong compound.
+    Brackets(Export),
 }
 
 impl fmt::Display for Error {
@@ -145,6 +148,11 @@ impl fmt::Display for Error {
                 write!(f, "{} を書き出せませんでした", export.description())
             }
             Error::Structure3d(e) => write!(f, "{e}"),
+            Error::Brackets(export) => write!(
+                f,
+                "{} は括弧（繰り返し単位・多重基）を表せないため書き出せません。括弧を外すか、CDX/CDXML で保存してください",
+                export.description()
+            ),
         }
     }
 }
@@ -177,6 +185,7 @@ impl Loaded {
         let arrows = objects.iter().filter(|o| o.as_arrow().is_some()).count();
         let texts = objects.iter().filter(|o| o.as_text().is_some()).count();
         let tables = objects.iter().filter(|o| o.as_table().is_some()).count();
+        let brackets = objects.iter().filter(|o| o.as_bracket().is_some()).count();
         let mut parts = Vec::new();
         if arrows > 0 {
             parts.push(format!("矢印 {arrows} 本"));
@@ -186,6 +195,9 @@ impl Loaded {
         }
         if tables > 0 {
             parts.push(format!("反応表 {tables} 個"));
+        }
+        if brackets > 0 {
+            parts.push(format!("括弧 {brackets} 組"));
         }
         let mut out = String::new();
         if !parts.is_empty() {
@@ -281,6 +293,11 @@ pub fn export(export: Export, mol: &Molecule) -> Result<Vec<u8>, Error> {
     if empty {
         return Err(Error::Empty);
     }
+    // The chemical formats would write the atoms as drawn: a repeat unit's open ends as
+    // methyls, a multiple group once. Wrong chemistry is worse than none.
+    if matches!(export, Export::Mol2 | Export::Smiles) && mol.brackets().next().is_some() {
+        return Err(Error::Brackets(export));
+    }
     match export {
         Export::Mol2 => Ok(to_mol2_string(mol).into_bytes()),
         Export::Smiles => Ok(format!("{}\n", to_smiles(mol)).into_bytes()),
@@ -303,6 +320,32 @@ mod tests {
         mol.add_bond(c1, c2, chembuider_rs::BondOrder::Single);
         mol.add_bond(c2, o, chembuider_rs::BondOrder::Single);
         mol
+    }
+
+    /// SMILES and MOL2 would write a bracketed drawing's atoms as drawn — wrong chemistry —
+    /// so they refuse it; the ChemDraw formats keep the brackets.
+    #[test]
+    fn brackets_are_not_exported_to_smiles_or_mol2() {
+        let mut mol = ethanol();
+        let middle = mol.atoms[1].id;
+        mol.add_bracket(&[middle].into(), chembuider_rs::molecule::BracketUsage::Sru);
+        for export in [Export::Smiles, Export::Mol2] {
+            let err = super::export(export, &mol).unwrap_err();
+            assert!(matches!(err, Error::Brackets(_)), "{export:?}");
+            assert!(err.to_string().contains("括弧"));
+        }
+        for format in [Format::Cdx, Format::Cdxml] {
+            let bytes = encode(format, &mol, None).unwrap();
+            let back = match format {
+                Format::Cdx => chembuider_rs::molecule::cdx::read_cdx(&bytes),
+                Format::Cdxml => {
+                    chembuider_rs::molecule::cdx::read_cdxml(std::str::from_utf8(&bytes).unwrap())
+                }
+            }
+            .unwrap();
+            assert_eq!(back.molecule.brackets().count(), 1, "{format:?}");
+            assert_eq!(back.other_objects, 0, "{format:?}: not a hidden object");
+        }
     }
 
     #[test]
