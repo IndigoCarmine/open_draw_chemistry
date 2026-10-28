@@ -539,34 +539,12 @@ mod energy_tests {
                 points: 13,
             };
             let source = Source::model(&model, None, vec![param]);
-            // Other tests use OpenBabel meanwhile, and its force fields keep state from the last
-            // molecule set up (see `Run::drifted`). A scan they disturbed is redone: one flagged
-            // by the sentinel, or whose −180° and +180° points (the same geometry) disagree —
-            // the sentinel can miss a disturbance that hits a single point.
-            let consistent = |run: &Run| {
-                let e = |i: usize| run.scan.energies[i].unwrap_or(f64::NAN);
-                !run.drifted() && (e(0) - e(12)).abs() < 1e-3
-            };
-            let (run, elapsed) = (0..20)
-                .map(|_| {
-                    let started = Instant::now();
-                    let mut run =
-                        Run::start(source.clone(), std::slice::from_ref(&axis), force_field)
-                            .expect("start");
-                    run.wait();
-                    (run, started.elapsed())
-                })
-                .inspect(|(run, _)| {
-                    if !consistent(run) {
-                        eprintln!(
-                            "{force_field} disturbed (sentinel {}): {:?}",
-                            run.drifted(),
-                            run.scan.energies
-                        );
-                    }
-                })
-                .find(|(run, _)| consistent(run))
-                .expect("an undisturbed scan");
+            let started = Instant::now();
+            let mut run =
+                Run::start(source, std::slice::from_ref(&axis), force_field).expect("start");
+            run.wait();
+            let elapsed = started.elapsed();
+            assert!(!run.drifted(), "{force_field}: drifted");
             assert_eq!(run.error, None);
             assert_eq!(run.scan.done(), 13);
             let e: Vec<f64> = run.scan.energies.iter().map(|e| e.unwrap()).collect();
