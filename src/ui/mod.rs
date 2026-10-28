@@ -18,6 +18,7 @@ pub mod menu;
 pub mod palette;
 pub mod periodic_table;
 pub mod properties;
+pub mod scan;
 pub mod smiles_row;
 pub mod status;
 pub mod tabs;
@@ -141,6 +142,8 @@ pub enum Command {
     Bracket(chembuider_rs::molecule::BracketUsage),
     /// Give the selected brackets this shape.
     BracketShape(chembuider_rs::molecule::BracketShape),
+    /// Open the パラメータスキャン window.
+    OpenScan,
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ pub mod io;
 pub mod iupac;
 pub mod ole;
 pub mod ole_server;
+pub mod scan;
 pub mod smiles;
 pub mod theme;
 pub mod three_d;

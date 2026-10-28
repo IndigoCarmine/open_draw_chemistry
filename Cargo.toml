@@ -25,6 +25,9 @@ rfd = "0.17.2"
 dirs = "6.0.0"
 # Reads and writes fragment files in chembuider-rs's JSON format.
 serde_json = "1.0.154"
+# The parameter scan's energy curve and heatmap (see `src/ui/scan.rs`). 0.38 is the release
+# built against egui 0.37.
+egui_plot = "0.38.0"
 
 # The 3D viewer (wgpu; the egui 0.37 port). MIT. Pinned to a rev for the same reason as above.
 moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs", rev = "0a110d4b7ea0ce57db8688957feff67aa89171d7" }

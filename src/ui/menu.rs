@@ -220,6 +220,14 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
                     }
                 });
             });
+            item(
+                ui,
+                "パラメータスキャン…",
+                "",
+                state.has_document,
+                Command::OpenScan,
+                out,
+            );
             ui.separator();
             let button = egui::Button::new("分子集合体を作成");
             if ui

@@ -688,6 +688,18 @@ pub fn panel(
         viewport.reset_view();
     }
 
+    section(ui, "スキャン");
+    if ui
+        .add_enabled(!state.is_empty(), egui::Button::new("パラメータスキャン…"))
+        .on_hover_text(
+            "手順のパラメータ（間隔・ねじれ・半径・格子定数など）や手動配置の位置を変えながら MM エネルギー（一点計算）を求め、曲線やヒートマップで表示します",
+        )
+        .on_disabled_hover_text("単量体がありません")
+        .clicked()
+    {
+        out.push(Command::OpenScan);
+    }
+
     section(ui, "情報");
     info_section(ui, state, &ink);
     place::clash_info(ui, state, view, &ink);

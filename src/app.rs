@@ -87,6 +87,9 @@ pub struct OpenDrawApp {
     /// Set when the process is the OLE server: the link to its COM objects (see [`ole`]).
     #[serde(skip)]
     ole: Option<crate::ole_server::AppBridge>,
+    /// The パラメータスキャン window.
+    #[serde(skip)]
+    scan_window: ui::scan::ScanWindow,
 }
 
 impl Default for OpenDrawApp {
@@ -113,6 +116,7 @@ impl Default for OpenDrawApp {
             fragment_manager: FragmentManager::default(),
             context_atom: None,
             ole: None,
+            scan_window: Default::default(),
         }
     }
 }
@@ -521,6 +525,7 @@ impl OpenDrawApp {
                 }
                 .to_owned();
             }
+            Command::OpenScan => self.scan_window.open = true,
             Command::InsertReactionTable => {
                 if let Some(doc) = self.active_doc_mut() {
                     let message = crate::ui::palette::insert_reaction_table(&mut doc.editor);
@@ -1125,6 +1130,7 @@ impl eframe::App for OpenDrawApp {
         }
 
         self.poll_3d(&ctx);
+        ui::scan::poll(&ctx, &mut self.docs);
         // A gesture on the assembly (dragging a value) is one undo step, closed on release.
         if !ctx.input(|i| i.pointer.any_down())
             && let Some(doc) = self.docs.get_mut(self.active)
@@ -1276,6 +1282,15 @@ impl eframe::App for OpenDrawApp {
             }
         });
 
+        if let Some(message) = ui::scan::window(
+            &ctx,
+            &mut self.scan_window,
+            self.docs.get_mut(self.active),
+            self.view,
+            &mut commands,
+        ) {
+            self.status = message;
+        }
         for command in commands {
             self.run(&ctx, command);
         }

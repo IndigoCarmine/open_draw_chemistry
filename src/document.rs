@@ -40,6 +40,9 @@ pub struct Document {
     /// (Word, PowerPoint, …) and opened for editing here: saving writes back into that
     /// document rather than to a file (see [`crate::ole_server`]).
     pub embedded: Option<Embedded>,
+    /// The last parameter scan of the assembly or the 3D model (パラメータスキャン), running or
+    /// done.
+    pub scan: Option<crate::scan::Run>,
 }
 
 /// The OLE object a document edits, and the document it is embedded in.
@@ -69,6 +72,7 @@ impl Document {
             imported_3d: None,
             assembly: AssemblyState::default(),
             embedded: None,
+            scan: None,
         }
     }
 
@@ -89,6 +93,7 @@ impl Document {
             imported_3d: None,
             assembly: AssemblyState::default(),
             embedded: None,
+            scan: None,
         }
     }
 
@@ -119,6 +124,7 @@ impl Document {
             imported_3d: Some(format),
             assembly: AssemblyState::default(),
             embedded: None,
+            scan: None,
         }
     }
 
