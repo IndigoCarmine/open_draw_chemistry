@@ -577,15 +577,14 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
             });
     });
 
-    let relaxable = target == Target::Model;
-    let mut relax = win.relax && relaxable;
+    let mut relax = win.relax;
+    let relax_tip = match target {
+        Target::Model => t!("scan.window.relax_tip"),
+        Target::Assembly => t!("scan.window.relax_assembly_tip"),
+    };
     if ui
-        .add_enabled(
-            relaxable,
-            egui::Checkbox::new(&mut relax, t!("scan.window.relax")),
-        )
-        .on_hover_text(t!("scan.window.relax_tip"))
-        .on_disabled_hover_text(t!("scan.window.relax_assembly_tip"))
+        .checkbox(&mut relax, t!("scan.window.relax"))
+        .on_hover_text(relax_tip)
         .changed()
     {
         win.relax = relax;
@@ -760,20 +759,22 @@ fn start(
     relax: bool,
 ) {
     let params: Vec<Param> = axes.iter().map(|a| a.param.clone()).collect();
-    let mut restraints = None;
+    // The restraints set in the 3D view, for a relaxed scan of the model.
+    let mut restraints = Vec::new();
     let source = match target {
         Target::Assembly => Source::assembly(&doc.assembly.design, params),
         Target::Model => {
             let Some((model, edit3d)) = doc.three_d.model_and_edit() else {
                 return;
             };
-            restraints = Some(edit3d.active_constraints(model.atoms.len()));
+            restraints = edit3d.active_constraints(model.atoms.len());
             Source::model(model, edit3d.anchor, params)
         }
     };
-    let started = match restraints {
-        Some(restraints) if relax => Run::start_relaxed(source, axes, ff, Relax::new(restraints)),
-        _ => Run::start(source, axes, ff),
+    let started = if relax {
+        Run::start_relaxed(source, axes, ff, Relax::new(restraints))
+    } else {
+        Run::start(source, axes, ff)
     };
     match started {
         Ok(run) => {
@@ -1812,8 +1813,8 @@ mod tests {
     }
 
     /// A relaxed scan says which points did not converge; relaxing is offered for the 3D model
-    /// only; and clicking a relaxed point puts back its minimised structure, not the model
-    /// with the dihedral merely set.
+    /// and the assembly; and clicking a relaxed point puts back its minimised structure, not
+    /// the model with the dihedral merely set.
     #[test]
     fn a_relaxed_scan_marks_unconverged_points_and_applies_its_minimised_structures() {
         let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
@@ -1848,13 +1849,14 @@ mod tests {
             assert!(text.contains("optimized at each point"), "{text}");
             assert!(text.contains("1 point did not converge"), "{text}");
         }
-        // From the assembly view the box is there but off: a single-point scan.
+        // From the assembly view too: the molecules' shapes relax at each point.
         let text = frame(&mut win, &mut doc, ViewMode::Assembly, false);
         assert!(
             text.contains("Relax the other degrees of freedom"),
             "{text}"
         );
-        assert!(text.contains("no optimization"), "{text}");
+        assert!(text.contains("optimized at each point"), "{text}");
+        assert!(!text.contains("no optimization"), "{text}");
 
         apply_point(&mut doc, 1);
         let (m, _) = doc.three_d.model_and_edit().unwrap();
