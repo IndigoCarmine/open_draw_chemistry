@@ -74,7 +74,7 @@ pub fn set(mol: &Molecule, app_text: &str) -> Result<()> {
 
 /// OLE on this thread, once. winit has usually done it already (for drag and drop), in which
 /// case this only adds a reference; it fails if the thread is a multithreaded apartment.
-fn ensure_ole() -> Result<()> {
+pub(super) fn ensure_ole() -> Result<()> {
     thread_local! {
         static INITIALIZED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
@@ -295,7 +295,7 @@ impl IDataObject_Impl for DataObject_Impl {
 }
 
 /// A movable HGLOBAL holding `bytes`, owned by whoever receives it.
-fn global(bytes: &[u8]) -> Result<HGLOBAL> {
+pub(super) fn global(bytes: &[u8]) -> Result<HGLOBAL> {
     unsafe {
         let handle = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1))?;
         let ptr = GlobalLock(handle) as *mut u8;

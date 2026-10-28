@@ -552,6 +552,8 @@ impl OpenDrawApp {
                     return;
                 };
                 let editor = &mut doc.editor;
+                // A message of the paste's own (an embedded object it cannot read).
+                let mut failure = None;
                 let message = match command {
                     Command::Undo => (!editor.undo()).then_some("元に戻す操作はありません"),
                     Command::Redo => (!editor.redo()).then_some("やり直す操作はありません"),
@@ -560,11 +562,14 @@ impl OpenDrawApp {
                     } else {
                         "コピーするものがありません"
                     }),
-                    Command::Paste => Some(if editor.paste_clipboard() {
-                        "貼り付けました"
-                    } else {
-                        "クリップボードに構造がありません"
-                    }),
+                    Command::Paste => match crate::ole::paste(editor) {
+                        Ok(true) => Some("貼り付けました"),
+                        Ok(false) => Some("クリップボードに構造がありません"),
+                        Err(message) => {
+                            failure = Some(message);
+                            None
+                        }
+                    },
                     Command::FitView => {
                         editor.request_fit();
                         None
@@ -575,8 +580,8 @@ impl OpenDrawApp {
                     }
                     _ => unreachable!("handled above"),
                 };
-                if let Some(message) = message {
-                    self.status = message.to_owned();
+                if let Some(message) = message.map(str::to_owned).or(failure) {
+                    self.status = message;
                 }
             }
         }
@@ -1012,6 +1017,9 @@ fn editor_canvas(
     out: &mut Vec<Command>,
 ) {
     let response = doc.show(ui).response;
+    if doc.take_paste_request() {
+        out.push(Command::Paste);
+    }
     let editor = &mut doc.editor;
     // The pointer is over the menu while it is open, so the atom under it is taken now, the
     // way the editor keeps the bond (see `context_bond`).

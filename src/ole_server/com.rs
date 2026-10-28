@@ -574,7 +574,7 @@ impl EmbeddedObject_Impl {
 }
 
 /// Write an object's storage: class, `\x01CompObj` and `CONTENTS`.
-fn write_object(stg: &IStorage, class: &GUID, cdx: &[u8]) -> Result<()> {
+pub(crate) fn write_object(stg: &IStorage, class: &GUID, cdx: &[u8]) -> Result<()> {
     // SAFETY: a valid storage; streams are created (replacing old ones) and written in full.
     unsafe {
         WriteClassStg(stg, class)?;
@@ -604,7 +604,7 @@ unsafe fn write_stream(stg: &IStorage, name: PCWSTR, data: &[u8]) -> Result<()> 
     Ok(())
 }
 
-unsafe fn read_stream(stg: &IStorage, name: PCWSTR) -> Option<Vec<u8>> {
+pub(crate) unsafe fn read_stream(stg: &IStorage, name: PCWSTR) -> Option<Vec<u8>> {
     // SAFETY: the caller passes a valid storage; reads go into a live buffer.
     unsafe {
         let stream = stg
@@ -728,7 +728,7 @@ fn global_bytes(bytes: &[u8]) -> Result<HGLOBAL> {
 }
 
 /// A new compound file in memory.
-fn memory_storage() -> Result<IStorage> {
+pub(crate) fn memory_storage() -> Result<IStorage> {
     // SAFETY: an HGLOBAL-backed ILockBytes freed with the storage.
     unsafe {
         let bytes = CreateILockBytesOnHGlobal(None, true)?;
