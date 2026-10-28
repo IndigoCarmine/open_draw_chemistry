@@ -36,6 +36,22 @@ pub enum Icon {
     ChevronsRight,
     /// "«": expand a panel collapsed on the right edge.
     ChevronsLeft,
+    /// "⠿": six dots, the handle a card is dragged by.
+    DragHandle,
+    /// Two overlapping squares: duplicate.
+    Duplicate,
+    /// "×": delete or close.
+    Close,
+    /// "…": more actions.
+    More,
+    /// "▾": expand.
+    ChevronDown,
+    /// "▴": collapse.
+    ChevronUp,
+    /// A ring with a dot: switched on.
+    ToggleOn,
+    /// An empty ring: switched off.
+    ToggleOff,
 }
 
 /// Maps the 20 × 20 design space into `rect`.
@@ -61,6 +77,18 @@ impl Canvas<'_> {
         let pts: Vec<Pos2> = pts.iter().map(|&(x, y)| self.p(x, y)).collect();
         self.painter
             .add(Shape::convex_polygon(pts, self.stroke.color, Stroke::NONE));
+    }
+    /// A filled dot of radius `r` about (`cx`, `cy`).
+    fn dot(&self, cx: f32, cy: f32, r: f32) {
+        let scale = self.rect.width() / 20.0;
+        self.painter
+            .circle_filled(self.p(cx, cy), r * scale, self.stroke.color);
+    }
+    /// A circle's outline of radius `r` about (`cx`, `cy`).
+    fn ring(&self, cx: f32, cy: f32, r: f32) {
+        let scale = self.rect.width() / 20.0;
+        self.painter
+            .circle_stroke(self.p(cx, cy), r * scale, self.stroke);
     }
     /// A half circle of radius `r` about (`cx`, `cy`), from the top to the bottom, bulging to
     /// the right when `right`.
@@ -234,7 +262,48 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 c.line(&chevron.map(mirror_x));
             }
         }
+        Icon::DragHandle => {
+            for x in [7.5, 12.5] {
+                for y in [4.5, 10.0, 15.5] {
+                    c.dot(x, y, 1.5);
+                }
+            }
+        }
+        Icon::Duplicate => {
+            c.line(&[
+                (7.0, 7.0),
+                (7.0, 3.0),
+                (17.0, 3.0),
+                (17.0, 13.0),
+                (13.0, 13.0),
+            ]);
+            c.closed(&[(3.0, 7.0), (13.0, 7.0), (13.0, 17.0), (3.0, 17.0)]);
+        }
+        Icon::Close => {
+            c.line(&[(5.0, 5.0), (15.0, 15.0)]);
+            c.line(&[(15.0, 5.0), (5.0, 15.0)]);
+        }
+        Icon::More => {
+            for x in [4.0, 10.0, 16.0] {
+                c.dot(x, 10.0, 1.7);
+            }
+        }
+        Icon::ChevronDown => c.line(&CHEVRON_DOWN),
+        Icon::ChevronUp => c.line(&CHEVRON_DOWN.map(mirror_y)),
+        Icon::ToggleOn => {
+            c.ring(10.0, 10.0, 7.0);
+            c.dot(10.0, 10.0, 3.6);
+        }
+        Icon::ToggleOff => c.ring(10.0, 10.0, 7.0),
     }
+}
+
+/// "▾" as a stroke; "▴" is the same mirrored by [`mirror_y`].
+const CHEVRON_DOWN: [(f32, f32); 3] = [(5.0, 7.5), (10.0, 12.5), (15.0, 7.5)];
+
+/// Mirrors a point of the 20 × 20 design space about its horizontal centre line.
+fn mirror_y((x, y): (f32, f32)) -> (f32, f32) {
+    (x, 20.0 - y)
 }
 
 /// The two strokes of "»"; "«" is the same mirrored by [`mirror_x`].
@@ -386,6 +455,36 @@ pub fn brand(ui: &mut Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_expand_chevron_points_down_and_its_mirror_up() {
+        assert!(CHEVRON_DOWN[1].1 > CHEVRON_DOWN[0].1);
+        let up = CHEVRON_DOWN.map(mirror_y);
+        assert!(up[1].1 < up[0].1);
+        assert_eq!(up.map(mirror_y), CHEVRON_DOWN);
+    }
+
+    /// Every icon paints without panicking.
+    #[test]
+    fn the_panel_icons_paint() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for icon in [
+                Icon::DragHandle,
+                Icon::Duplicate,
+                Icon::Close,
+                Icon::More,
+                Icon::ChevronDown,
+                Icon::ChevronUp,
+                Icon::ToggleOn,
+                Icon::ToggleOff,
+            ] {
+                let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(14.0));
+                paint(ui.painter(), rect, icon, Color32::WHITE);
+            }
+        });
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn chevrons_point_away_from_each_other() {

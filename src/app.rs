@@ -1192,37 +1192,42 @@ impl eframe::App for OpenDrawApp {
                     .default_size(280.0)
                     .size_range(220.0..=420.0)
                     .show(ui, |ui| {
-                        let collapse = ui::properties::properties(ui, |ui| {
-                            if view.is_assembly() {
+                        // The 集合体 panel scrolls between its own tabs and footer.
+                        let collapse = if view.is_assembly() {
+                            ui::properties::properties_unscrolled(ui, |ui| {
                                 ui::assembly::panel(
                                     ui,
                                     Some(doc),
                                     &mut self.assembly_view,
                                     &mut commands,
                                 );
-                            } else if view.is_3d() {
-                                ui::view3d::edit_panel(
-                                    ui,
-                                    Some(doc),
-                                    &mut self.view3d,
-                                    &mut commands,
-                                );
-                            } else {
-                                // The panel reports a click on its copy button; the status bar
-                                // is not told here.
-                                let _ = self.analysis.ui(
-                                    ui,
-                                    &doc.editor.molecule,
-                                    &doc.editor.selected_atoms,
-                                );
-                                ui::smiles_row::show(
-                                    ui,
-                                    &doc.editor.molecule,
-                                    &doc.editor.selected_atoms,
-                                    &self.config,
-                                );
-                            }
-                        });
+                            })
+                        } else {
+                            ui::properties::properties(ui, |ui| {
+                                if view.is_3d() {
+                                    ui::view3d::edit_panel(
+                                        ui,
+                                        Some(doc),
+                                        &mut self.view3d,
+                                        &mut commands,
+                                    );
+                                } else {
+                                    // The panel reports a click on its copy button; the status bar
+                                    // is not told here.
+                                    let _ = self.analysis.ui(
+                                        ui,
+                                        &doc.editor.molecule,
+                                        &doc.editor.selected_atoms,
+                                    );
+                                    ui::smiles_row::show(
+                                        ui,
+                                        &doc.editor.molecule,
+                                        &doc.editor.selected_atoms,
+                                        &self.config,
+                                    );
+                                }
+                            })
+                        };
                         if collapse {
                             commands.push(Command::ToggleProperties);
                         }
