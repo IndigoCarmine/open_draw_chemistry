@@ -1,0 +1,12 @@
+# Open DrawChemistry — 日本語の UI 文字列。キーと書式は en.toml と同じ（説明は en.toml の先頭）。
+
+[common]
+ok = "OK"
+cancel = "キャンセル"
+close = "閉じる"
+apply = "適用"
+coming_soon = "準備中"
+
+[language]
+menu = "言語 (Language)"
+tooltip = "言語 (Language)"

@@ -6,6 +6,7 @@ use egui::vec2;
 
 use super::icons::{self, Frame, Icon};
 use super::{Command, ViewMode};
+use crate::i18n::Lang;
 use crate::io::Export;
 use crate::theme;
 use crate::three_d::Export3d;
@@ -27,6 +28,41 @@ pub struct MenuState<'a> {
     pub can_export_3d: bool,
     /// There is a document whose assembly can be started or shown.
     pub can_create_assembly: bool,
+    /// The UI language, ticked in the language menu.
+    pub language: Lang,
+}
+
+/// The languages to choose from, each by its own name, the current one ticked: the 表示 menu's
+/// submenu and the toolbar's globe button both show this list.
+pub fn language_list(ui: &mut egui::Ui, current: Lang, out: &mut Vec<Command>) {
+    for lang in Lang::ALL {
+        if ui
+            .radio(lang == current, lang.native_name())
+            .on_hover_text(lang.code())
+            .clicked()
+        {
+            out.push(Command::SetLanguage(lang));
+            ui.close();
+        }
+    }
+}
+
+/// The toolbar's globe button, which opens [`language_list`]: an icon rather than a word, so
+/// it can be found whatever language the UI is in.
+pub fn language_button(ui: &mut egui::Ui, current: Lang, out: &mut Vec<Command>) {
+    let tip = format!("{} — {}", t!("language.tooltip"), current.native_name());
+    let response = icons::icon_button(
+        ui,
+        Icon::Globe,
+        vec2(32.0, 32.0),
+        Frame::Flat,
+        false,
+        true,
+        &tip,
+    );
+    egui::Popup::menu(&response)
+        .id(egui::Id::unique("odc_language_popup"))
+        .show(|ui| language_list(ui, current, out));
 }
 
 pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>) {
@@ -129,6 +165,10 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             }
             ui.separator();
             egui::widgets::global_theme_preference_buttons(ui);
+            ui.separator();
+            ui.menu_button(t!("language.menu"), |ui| {
+                language_list(ui, state.language, out);
+            });
         });
 
         ui.menu_button("構造", |ui| {
@@ -304,6 +344,7 @@ pub fn toolbar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>)
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             view_switch(ui, state.view, out);
+            language_button(ui, state.language, out);
         });
     });
 }

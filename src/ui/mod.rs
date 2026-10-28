@@ -108,6 +108,8 @@ pub enum Command {
     InsertIupacName,
     ToggleProperties,
     SetView(ViewMode),
+    /// Show the UI in this language (and remember the choice).
+    SetLanguage(crate::i18n::Lang),
     /// Generate the active document's 3D model from its drawing (again: the same molecule
     /// as the current model when that is part of the drawing).
     Generate3d,

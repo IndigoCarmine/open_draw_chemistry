@@ -1,0 +1,27 @@
+# Open DrawChemistry — English UI strings. English is the reference catalog: every key the
+# app uses must be here, and every other language falls back to it.
+#
+# How to translate (see locales/README.md):
+# - Keep every key; translate only the text on the right of `=`.
+# - `{name}` is a placeholder filled in by the app: keep it (you may move it).
+#   `{{` and `}}` are literal braces.
+# - A table such as `{ one = "{n} atom", other = "{n} atoms" }` holds plural forms by CLDR
+#   category (zero, one, two, few, many, other). Give the forms your language uses; `other`
+#   is required. `{n}` is the count.
+# - Do not translate chemistry notation (element symbols, formulas, SMILES, units), file-format
+#   names, or keyboard shortcuts.
+
+[common]
+ok = "OK"
+cancel = "Cancel"
+close = "Close"
+apply = "Apply"
+# A placeholder shown on a menu item whose feature is not built yet.
+coming_soon = "Coming soon"
+
+[language]
+# The 表示 (View) menu's language submenu and the tooltip of the toolbar's globe button.
+# Translators: keep the English word too, so the menu can be found by someone who cannot read
+# the current language — e.g. "Sprache (Language)".
+menu = "Language"
+tooltip = "Language"

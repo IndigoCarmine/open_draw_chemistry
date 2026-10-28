@@ -1,0 +1,17 @@
+# Open DrawChemistry — Simplified Chinese (zh-Hans) UI strings.
+#
+# Partial: a key missing here (or left empty) is shown in English. To translate, copy keys
+# from en.toml, keeping each key and every {placeholder}; en.toml's header and
+# locales/README.md explain the placeholder and plural syntax. Plural categories for this
+# language are listed in locales/README.md.
+
+[common]
+ok = "确定"
+cancel = "取消"
+close = "关闭"
+apply = "应用"
+coming_soon = "即将推出"
+
+[language]
+menu = "语言 (Language)"
+tooltip = "语言 (Language)"

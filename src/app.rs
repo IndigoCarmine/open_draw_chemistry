@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::assembly::{self, AssemblyExport, Component};
 use crate::document::Document;
 use crate::fragments::{self, FragmentStore};
+use crate::i18n::Lang;
 use crate::io::{self, Export, Format, Kind};
 use crate::theme;
 use crate::three_d::read::Format3d;
@@ -47,6 +48,12 @@ pub struct OpenDrawApp {
     assembly_view: ui::assembly::AssemblyView,
     /// The text format bar (書式): its recently used fonts are remembered.
     text_format: ui::text_format::TextFormatBar,
+    /// The UI language the user picked; `None` (until they pick one) follows the OS locale.
+    #[serde(deserialize_with = "crate::i18n::deserialize_lenient")]
+    language: Option<Lang>,
+    /// The language the fonts were last set up for (see [`crate::i18n::fonts`]).
+    #[serde(skip)]
+    fonts_for: Option<Lang>,
 
     #[serde(skip)]
     docs: Vec<Document>,
@@ -103,10 +110,12 @@ impl Default for OpenDrawApp {
             view3d: Default::default(),
             assembly_view: Default::default(),
             text_format: Default::default(),
+            language: None,
+            fonts_for: None,
             docs: Vec::new(),
             active: 0,
             config: Config::default(),
-            analysis: japanese_analysis(),
+            analysis: AnalysisPanel::default(),
             custom_element: String::new(),
             status: "準備完了".to_owned(),
             untitled: 0,
@@ -135,6 +144,7 @@ impl OpenDrawApp {
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
             .unwrap_or_default();
+        app.apply_language(app.language.unwrap_or_else(Lang::system));
         // User shortcuts from the working directory when present; fragments are the built-in
         // ones plus the user's, from their config directory.
         app.config = Config::load();
@@ -146,6 +156,18 @@ impl OpenDrawApp {
             app.new_document();
         }
         app
+    }
+
+    /// Show the UI in `lang`: the app's strings at once, the fonts from the next frame (see
+    /// [`Self::ui`]) and the structure editor library's own panels.
+    fn apply_language(&mut self, lang: Lang) {
+        crate::i18n::set_language(lang);
+
+        // ─── chembuider-rs language hook ─────────────────────────────────────────────
+        // The one place the library's UI language (its analysis panel, …) is set. The
+        // library does not have a language API yet; its analysis panel only switches between
+        // Japanese and English. When the API lands, pass `lang` (or its code) here instead.
+        self.analysis.ja = lang == Lang::Ja;
     }
 
     fn active_doc(&self) -> Option<&Document> {
@@ -449,6 +471,10 @@ impl OpenDrawApp {
             Command::Quit => self.request_quit(ctx),
             Command::ToggleProperties => self.show_properties = !self.show_properties,
             Command::SetView(view) => self.view = view,
+            Command::SetLanguage(lang) => {
+                self.language = Some(lang);
+                self.apply_language(lang);
+            }
             Command::About => self.show_about = true,
             Command::Generate3d => {
                 if let Some(doc) = self.docs.get_mut(self.active) {
@@ -801,6 +827,7 @@ impl OpenDrawApp {
             can_optimize_3d: has_model && !running,
             can_export_3d: has_model,
             can_create_assembly: editor.is_some(),
+            language: crate::i18n::language(),
         }
     }
 
@@ -1005,12 +1032,6 @@ fn read_component(path: &Path) -> Result<Component, String> {
 }
 
 /// The analysis panel, labelled in Japanese like the rest of the window.
-fn japanese_analysis() -> AnalysisPanel {
-    let mut panel = AnalysisPanel::default();
-    panel.ja = true;
-    panel
-}
-
 /// The canvas of the active document, with a menu on right-click: ChemDraw's bond menu on a
 /// bond, and 3D化 for the molecule clicked on (or the selected ones, or the whole drawing);
 /// and over it, while there is text to format, the 書式 bar.
@@ -1125,6 +1146,11 @@ impl eframe::App for OpenDrawApp {
         let ctx = ui.ctx().clone();
         let mut commands = Vec::new();
 
+        let lang = crate::i18n::language();
+        if self.fonts_for != Some(lang) {
+            crate::i18n::fonts::install(&ctx, lang);
+            self.fonts_for = Some(lang);
+        }
         Self::shortcuts(&ctx, &mut commands);
         ctx.input(|i| {
             for file in &i.raw.dropped_files {

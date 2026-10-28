@@ -1,0 +1,17 @@
+# Open DrawChemistry — Russian (ru) UI strings.
+#
+# Partial: a key missing here (or left empty) is shown in English. To translate, copy keys
+# from en.toml, keeping each key and every {placeholder}; en.toml's header and
+# locales/README.md explain the placeholder and plural syntax. Plural categories for this
+# language are listed in locales/README.md.
+
+[common]
+ok = "ОК"
+cancel = "Отмена"
+close = "Закрыть"
+apply = "Применить"
+coming_soon = "Скоро"
+
+[language]
+menu = "Язык (Language)"
+tooltip = "Язык (Language)"
