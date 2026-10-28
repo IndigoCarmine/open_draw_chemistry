@@ -67,8 +67,14 @@ pub fn points_refusal(points: usize) -> Option<String> {
 }
 
 /// The flat index (in [`grid`] order: the first axis outermost) of the point at `indices` along
-/// axes of `shape` values each.
+/// axes of `shape` values each: one index per axis (fewer or more is a bug, caught in debug
+/// builds).
 pub fn flat_index(shape: &[usize], indices: &[usize]) -> usize {
+    debug_assert_eq!(
+        shape.len(),
+        indices.len(),
+        "one index per axis: {indices:?} along {shape:?}"
+    );
     shape
         .iter()
         .zip(indices)
@@ -355,6 +361,8 @@ impl Scan {
     /// values can be shown and applied. Of the candidates, the lowest finite energy wins, then a
     /// failed point, then one not computed yet (the first of equals).
     pub fn section(&self, shown: &[usize], rest: &[Reduce]) -> Vec<usize> {
+        #[cfg(test)]
+        passes::count(&passes::SECTION);
         let shape = self.shape();
         let cell_shape: Vec<usize> = shown.iter().map(|&k| shape[k]).collect();
         let mut cells: Vec<Option<usize>> = vec![None; cell_shape.iter().product()];
@@ -408,6 +416,8 @@ impl Scan {
 
     /// The lowest finite energy and its point.
     pub fn minimum(&self) -> Option<(usize, f64)> {
+        #[cfg(test)]
+        passes::count(&passes::MINIMUM);
         self.energies
             .iter()
             .enumerate()
@@ -424,14 +434,22 @@ impl Scan {
     }
 
     /// The energy of point `index` as shown: relative to the minimum when `relative`.
-    /// `None` for a point not computed, NaN for one that failed.
+    /// `None` for a point not computed, NaN for one that failed. Finding the minimum is a pass
+    /// over every point: for many points, find it once and use [`Scan::shown_from`].
     pub fn shown(&self, index: usize, relative: bool) -> Option<f64> {
-        let e = (*self.energies.get(index)?)?;
-        if relative {
-            Some(e - self.minimum().map_or(0.0, |m| m.1))
+        let baseline = if relative {
+            self.minimum().map_or(0.0, |m| m.1)
         } else {
-            Some(e)
-        }
+            0.0
+        };
+        self.shown_from(index, baseline)
+    }
+
+    /// The energy of point `index` less `baseline` (the minimum's for ΔE, else 0): as
+    /// [`Scan::shown`], in constant time.
+    pub fn shown_from(&self, index: usize, baseline: f64) -> Option<f64> {
+        let e = (*self.energies.get(index)?)?;
+        Some(e - baseline)
     }
 
     /// The scan as CSV: a header naming each parameter and the energy with their units, then
@@ -474,6 +492,28 @@ impl Scan {
             let _ = writeln!(out);
         }
         out
+    }
+}
+
+/// How many passes over every point (finding the minimum, working out a section) this thread
+/// has made: for tests that a frame makes each at most once, however many cells it draws.
+#[cfg(test)]
+pub(crate) mod passes {
+    use std::cell::Cell;
+    use std::thread::LocalKey;
+
+    thread_local! {
+        pub static MINIMUM: Cell<usize> = const { Cell::new(0) };
+        pub static SECTION: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn count(counter: &'static LocalKey<Cell<usize>>) {
+        counter.with(|c| c.set(c.get() + 1));
+    }
+
+    /// The count so far, and zero it.
+    pub fn take(counter: &'static LocalKey<Cell<usize>>) -> usize {
+        counter.with(|c| c.replace(0))
     }
 }
 
@@ -649,6 +689,27 @@ mod tests {
         }
         let scan = scan_nd(&[6]);
         assert_eq!(scan.index_of(&[4]), 4);
+    }
+
+    /// An index per axis, no fewer: a short one is not taken as the first axes'.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "one index per axis")]
+    fn too_few_indices_are_a_bug() {
+        flat_index(&[2, 3, 4], &[1, 2]);
+    }
+
+    /// The baseline found once gives every point's energy as [`Scan::shown`] does.
+    #[test]
+    fn energies_shown_from_a_baseline_found_once_are_the_same() {
+        let scan = scan_1d(&[Some(5.0), Some(f64::NAN), Some(-2.0), None]);
+        let min = scan.minimum().unwrap().1;
+        for i in 0..scan.total() {
+            for (relative, baseline) in [(true, min), (false, 0.0)] {
+                let (a, b) = (scan.shown(i, relative), scan.shown_from(i, baseline));
+                assert_eq!(a.map(f64::to_bits), b.map(f64::to_bits), "point {i}");
+            }
+        }
     }
 
     /// A relaxed point starts from the point one step back along the last axis it is not at

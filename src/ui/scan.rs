@@ -102,6 +102,8 @@ pub struct ScanWindow {
     message: Option<(String, bool)>,
     /// How a scan of three or more axes is plotted.
     view: ViewForm,
+    /// The section last plotted of such a scan.
+    sections: SectionCache,
 }
 
 /// Which axes of a scan of three or more are plotted, and how each other one is reduced.
@@ -146,6 +148,7 @@ impl ViewForm {
 
 /// What a plot shows: the axes plotted, the point each of their cells shows (see
 /// [`Scan::section`]), and the axes minimised over.
+#[derive(Debug)]
 struct Section {
     axes: Vec<usize>,
     cells: Vec<usize>,
@@ -179,6 +182,59 @@ impl Section {
     /// The cell showing point `index`, if one does.
     fn cell_of(&self, index: usize) -> Option<usize> {
         self.cells.iter().position(|&i| i == index)
+    }
+}
+
+/// The section last plotted ([`Section::of`], a pass over every point) and what it was of: the
+/// run, how many of its points were in, and the view. Worked out again only when one of those
+/// changes, not every frame.
+#[derive(Debug, Default)]
+struct SectionCache {
+    last: Option<((u64, usize, ViewForm), Section)>,
+}
+
+impl SectionCache {
+    /// The section of `run`'s scan that `view` shows.
+    fn get(&mut self, run: &Run, view: &ViewForm) -> &Section {
+        let key = (run.id(), run.scan.done(), view.clone());
+        let last = self.last.take().filter(|(k, _)| *k == key);
+        let (_, section) = self
+            .last
+            .insert(last.unwrap_or_else(|| (key, Section::of(&run.scan, view))));
+        section
+    }
+}
+
+/// A scan's energies as one frame shows them: its lowest point, and the energy every point's
+/// is shown relative to — each a pass over every point, so found once per frame and never per
+/// cell.
+struct Energies<'a> {
+    scan: &'a Scan,
+    relative: bool,
+    minimum: Option<(usize, f64)>,
+    baseline: f64,
+}
+
+impl<'a> Energies<'a> {
+    /// Of `scan`, relative to its minimum (ΔE) when `relative`.
+    fn of(scan: &'a Scan, relative: bool) -> Self {
+        let minimum = scan.minimum();
+        let baseline = if relative {
+            minimum.map_or(0.0, |m| m.1)
+        } else {
+            0.0
+        };
+        Energies {
+            scan,
+            relative,
+            minimum,
+            baseline,
+        }
+    }
+
+    /// The energy of point `index` as shown (see [`Scan::shown`]), in constant time.
+    fn shown(&self, index: usize) -> Option<f64> {
+        self.scan.shown_from(index, self.baseline)
     }
 }
 
@@ -767,7 +823,8 @@ fn results(
             win.message = Some(save_csv(&run.scan));
         }
     });
-    if let Some((index, e)) = run.scan.minimum() {
+    let energies = Energies::of(&run.scan, win.relative);
+    if let Some((index, e)) = energies.minimum {
         let values = format_values(&run.scan, index);
         ui.label(muted(
             ui,
@@ -780,7 +837,14 @@ fn results(
         ));
     }
 
-    let clicked = plot(ui, &run.scan, win.relative, &mut win.colors, &mut win.view);
+    let clicked = plot(
+        ui,
+        run,
+        &energies,
+        &mut win.colors,
+        &mut win.view,
+        &mut win.sections,
+    );
     ui.label(muted(ui, t!("scan.window.plot_help")));
     let index = clicked?;
     let message = apply_point(doc, index);
@@ -998,15 +1062,17 @@ fn unconverged_rings(
     })
 }
 
-/// The plot of `scan`; of three or more axes, as `view` says (chosen above it). Returns the
-/// point clicked, if any.
+/// The plot of `run`'s scan (its `energies`); of three or more axes, as `view` says (chosen
+/// above it). Returns the point clicked, if any.
 fn plot(
     ui: &mut egui::Ui,
-    scan: &Scan,
-    relative: bool,
+    run: &Run,
+    energies: &Energies,
     colors: &mut ColorRange,
     view: &mut ViewForm,
+    sections: &mut SectionCache,
 ) -> Option<usize> {
+    let (scan, relative) = (&run.scan, energies.relative);
     if scan.axes.is_empty() || scan.total() == 0 {
         return None;
     }
@@ -1016,23 +1082,30 @@ fn plot(
         scan.force_field,
         scan.unit
     );
+    let whole;
     let section = if scan.axes.len() <= 2 {
-        Section::whole(scan)
+        whole = Section::whole(scan);
+        &whole
     } else {
         view.fit(&scan.shape());
-        view_controls(ui, scan, view);
-        Section::of(scan, view)
+        view_controls(ui, scan, energies.minimum, view);
+        sections.get(run, view)
     };
     if section.axes.len() == 2 {
-        heatmap(ui, scan, &section, relative, &y_title, colors)
+        heatmap(ui, energies, section, &y_title, colors)
     } else {
-        curve(ui, scan, &section, relative, &y_title)
+        curve(ui, energies, section, &y_title)
     }
 }
 
 /// The choice of the axes plotted (across, and up or none for a curve) and, for each other
-/// one, a slice at one of its values or the lowest energy along it.
-fn view_controls(ui: &mut egui::Ui, scan: &Scan, view: &mut ViewForm) {
+/// one, a slice at one of its values or the lowest energy along it (`minimum`: the scan's).
+fn view_controls(
+    ui: &mut egui::Ui,
+    scan: &Scan,
+    minimum: Option<(usize, f64)>,
+    view: &mut ViewForm,
+) {
     let label = |k: usize| scan.axes[k].label.clone();
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(t!("scan.window.view_heading")).strong());
@@ -1071,7 +1144,7 @@ fn view_controls(ui: &mut egui::Ui, scan: &Scan, view: &mut ViewForm) {
             });
     });
     let shown = view.shown();
-    let at_minimum = scan.minimum().map(|(i, _)| scan.indices_at(i));
+    let at_minimum = minimum.map(|(i, _)| scan.indices_at(i));
     for (k, axis) in scan.axes.iter().enumerate() {
         if shown.contains(&k) {
             continue;
@@ -1127,11 +1200,11 @@ fn accent(ui: &egui::Ui) -> Color32 {
 /// through the points with a gap at each failed one, the lowest point marked.
 fn curve(
     ui: &mut egui::Ui,
-    scan: &Scan,
+    energies: &Energies,
     section: &Section,
-    relative: bool,
     y_title: &str,
 ) -> Option<usize> {
+    let scan = energies.scan;
     let axis = &scan.axes[section.axes[0]];
     let accent = accent(ui);
     let min_color = if ui.visuals().dark_mode {
@@ -1142,7 +1215,7 @@ fn curve(
     // By cell: the point it shows is `section.cells[c]`.
     let points: Vec<(usize, [f64; 2])> = (0..section.cells.len())
         .filter_map(|c| {
-            let e = scan.shown(section.cells[c], relative)?;
+            let e = energies.shown(section.cells[c])?;
             e.is_finite().then(|| (c, [axis.values[c], e]))
         })
         .collect();
@@ -1158,17 +1231,16 @@ fn curve(
         }
         last = Some(i);
     }
-    let minimum = scan.minimum();
-    let min_point = minimum.and_then(|(i, _)| {
+    let min_point = energies.minimum.and_then(|(i, _)| {
         let c = section.cell_of(i)?;
-        let e = scan.shown(i, relative)?;
+        let e = energies.shown(i)?;
         Some([axis.values[c], e])
     });
     let rings = unconverged_rings(
         scan,
         section,
         |c| {
-            let e = scan.shown(section.cells[c], relative)?;
+            let e = energies.shown(section.cells[c])?;
             e.is_finite().then(|| [axis.values[c], e])
         },
         warn_color(ui),
@@ -1244,19 +1316,19 @@ fn curve(
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(c, _)| section.cells[c])
     });
-    finish_interaction(&response.response, scan, section, relative, hovered)
+    finish_interaction(&response.response, energies, section, hovered)
 }
 
 /// A two-parameter scan (or a section of two axes): a heatmap (the first parameter across, the
 /// second up), a colour bar, and the lowest cell marked.
 fn heatmap(
     ui: &mut egui::Ui,
-    scan: &Scan,
+    energies: &Energies,
     section: &Section,
-    relative: bool,
     z_title: &str,
     colors: &mut ColorRange,
 ) -> Option<usize> {
+    let scan = energies.scan;
     let (ax, ay) = (&scan.axes[section.axes[0]], &scan.axes[section.axes[1]]);
     let (nx, ny) = (ax.values.len(), ay.values.len());
     let (x0, dx, x_rev) = cells(&ax.values);
@@ -1272,7 +1344,7 @@ fn heatmap(
     let mut values = Vec::with_capacity(nx * ny);
     for r in 0..ny {
         for c in 0..nx {
-            values.push(scan.shown(to_point(c, r), relative).unwrap_or(PENDING));
+            values.push(energies.shown(to_point(c, r)).unwrap_or(PENDING));
         }
     }
     let finite = || values.iter().copied().filter(|v| v.is_finite());
@@ -1306,8 +1378,8 @@ fn heatmap(
     if !colors.auto {
         (colors.lo, colors.hi) = (lo, hi);
     }
-    let min_cell = scan
-        .minimum()
+    let min_cell = energies
+        .minimum
         .and_then(|(index, _)| section.cell_of(index))
         .map(place);
     let marker = if ui.visuals().dark_mode {
@@ -1368,7 +1440,7 @@ fn heatmap(
             ((0.0..nx as f64).contains(&c) && (0.0..ny as f64).contains(&r))
                 .then(|| to_point(c as usize, r as usize))
         });
-        clicked = finish_interaction(&response.response, scan, section, relative, hovered);
+        clicked = finish_interaction(&response.response, energies, section, hovered);
         colour_bar(ui, lo, hi, z_title, bar_width);
     });
     clicked
@@ -1378,13 +1450,13 @@ fn heatmap(
 /// and the point clicked.
 fn finish_interaction(
     response: &egui::Response,
-    scan: &Scan,
+    energies: &Energies,
     section: &Section,
-    relative: bool,
     hovered: Option<usize>,
 ) -> Option<usize> {
+    let (scan, relative) = (energies.scan, energies.relative);
     let index = hovered?;
-    let energy = match scan.shown(index, relative) {
+    let energy = match energies.shown(index) {
         None => t!("scan.plot.not_computed").to_owned(),
         Some(e) if e.is_nan() => t!("scan.plot.failed").to_owned(),
         Some(e) => format!(
@@ -1970,6 +2042,95 @@ mod tests {
         view.up = Some(1);
         view.fit(&[3, 4, 5, 2]);
         assert_eq!(view.shown(), [0, 1], "another scan: reset");
+    }
+
+    /// However many cells a plot draws (a 200 × 200 map, of two axes or of three, one of them
+    /// a single value; a section of three axes of 34 values), a frame finds the minimum — the
+    /// ΔE baseline — once, never per cell, and works the section out only when it changes.
+    #[test]
+    fn a_frame_passes_over_the_points_once_however_many_cells_it_draws() {
+        use crate::scan::passes::{self, MINIMUM, SECTION};
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        let model = chain_model();
+        doc.three_d = three_d::Job::with_model(model.clone(), &doc.editor.molecule);
+        let params = [
+            Param::Bond([0, 1]),
+            Param::Bond([2, 3]),
+            Param::Dihedral([0, 1, 2, 3]),
+        ];
+        let values = |n: usize| (0..n).map(|k| 1.0 + 0.01 * k as f64).collect::<Vec<_>>();
+        for sizes in [&[200, 200][..], &[200, 200, 1], &[34, 34, 34]] {
+            let axes = params
+                .iter()
+                .zip(sizes)
+                .map(|(p, &n)| (p.clone(), values(n)))
+                .collect();
+            // A pending point and a failed one among them.
+            let scan = scan_of(axes, |v| {
+                let e = (v[0] - 1.5).powi(2) + (v[1] - 1.2).powi(2);
+                (v[0] != 1.0 || v[1] != 1.0).then_some(if v[1] == 1.01 { f64::NAN } else { e })
+            });
+            doc.scan = Some(Run::finished(
+                scan,
+                Source::model(&model, None, params[..sizes.len()].to_vec()),
+            ));
+            let mut win = ScanWindow {
+                open: true,
+                ..Default::default()
+            };
+            for relative in [true, false] {
+                win.set_relative(relative);
+                passes::take(&MINIMUM);
+                passes::take(&SECTION);
+                // Two frames.
+                let text = frame(&mut win, &mut doc, ViewMode::ThreeD, false);
+                assert!(text.contains("Minimum"), "{sizes:?}: {text}");
+                assert_eq!(passes::take(&MINIMUM), 2, "{sizes:?}: once a frame");
+                let first = usize::from(sizes.len() > 2 && relative);
+                assert_eq!(passes::take(&SECTION), first, "{sizes:?}: kept");
+            }
+            if sizes.len() > 2 {
+                // Another view: a curve along the first axis, the others minimised over.
+                win.view.up = None;
+                frame(&mut win, &mut doc, ViewMode::ThreeD, false);
+                assert_eq!(passes::take(&MINIMUM), 2, "{sizes:?}: once a frame");
+                assert_eq!(passes::take(&SECTION), 1, "{sizes:?}: once for the view");
+            }
+        }
+    }
+
+    /// The section kept is worked out again for more points in, another view or another run.
+    #[test]
+    fn a_kept_section_follows_the_scan_and_the_view() {
+        use crate::scan::passes::{self, SECTION};
+        let model = chain_model();
+        let (mut scan, params) = scan_3d(|v| Some(v[0] + v[1] + v[2] / 100.0));
+        // Point 5 = (1.4, 1.5, 0°), not in yet.
+        scan.energies[5] = None;
+        let mut run = Run::finished(scan, Source::model(&model, None, params.clone()));
+        let mut view = ViewForm::default();
+        view.fit(&run.scan.shape());
+        let mut cache = SectionCache::default();
+        passes::take(&SECTION);
+        let before = cache.get(&run, &view).cells.clone();
+        assert_eq!(cache.get(&run, &view).cells, before);
+        assert_eq!(passes::take(&SECTION), 1, "the same scan and view: kept");
+
+        run.scan.energies[5] = Some(-10.0);
+        let after = cache.get(&run, &view).cells.clone();
+        assert_eq!(passes::take(&SECTION), 1, "a point in");
+        assert_ne!(after, before);
+        assert_eq!(after[1], 5, "the new lowest of its cell");
+
+        view.reduce[2] = Reduce::Slice(3);
+        let sliced = cache.get(&run, &view).cells.clone();
+        assert_eq!(passes::take(&SECTION), 1, "another view");
+        assert_eq!(sliced, Section::of(&run.scan, &view).cells);
+        passes::take(&SECTION);
+
+        let other = Run::finished(run.scan.clone(), Source::model(&model, None, params));
+        cache.get(&other, &view);
+        assert_eq!(passes::take(&SECTION), 1, "another run");
     }
 
     #[test]

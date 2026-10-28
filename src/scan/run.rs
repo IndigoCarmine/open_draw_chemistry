@@ -3,7 +3,7 @@
 //! can cancel between points.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -102,8 +102,12 @@ impl Relax {
     }
 }
 
+/// Each run's [`Run::id`], counted from the start of the process.
+static RUNS: AtomicU64 = AtomicU64::new(0);
+
 /// A scan: its grid, the energies so far, and the thread computing the rest.
 pub struct Run {
+    id: u64,
     pub scan: Scan,
     /// What was scanned, kept so a point can be applied to the design or the model.
     pub source: Arc<Source>,
@@ -305,6 +309,7 @@ impl Run {
                 let _ = send.send(Message::Finished);
             });
         let mut run = Run {
+            id: RUNS.fetch_add(1, Ordering::Relaxed),
             structures: vec![None; scan.total()],
             scan,
             source,
@@ -330,6 +335,7 @@ impl Run {
     pub fn finished(scan: Scan, source: Source) -> Run {
         let now = Instant::now();
         Run {
+            id: RUNS.fetch_add(1, Ordering::Relaxed),
             structures: vec![None; scan.total()],
             scan,
             source: Arc::new(source),
@@ -357,6 +363,12 @@ impl Run {
         let mut run = Self::finished(scan, source);
         run.structures = structures;
         run
+    }
+
+    /// Which run this is: no other in the process has the same. With [`Scan::done`] it says
+    /// whether the energies have changed (a point's energy is only ever set once).
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// Point `index`'s minimised structure, in a relaxed scan once the point is in.
