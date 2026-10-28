@@ -87,21 +87,22 @@ pub enum BuildError {
         component: String,
         error: OrientError,
     },
-    /// A lattice step cannot be built (the reason, in Japanese).
+    /// A lattice step cannot be built (the reason, in the UI language).
     Lattice(String),
 }
 
 impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BuildError::TooLarge(n) => write!(
-                f,
-                "原子が多すぎます（{n} 個。組み上げられるのは {MAX_ATOMS} 個までです）。繰り返し数を減らしてください"
-            ),
-            BuildError::Orient { component, error } => {
-                write!(f, "単量体「{component}」: {error}")
+            BuildError::TooLarge(n) => {
+                f.write_str(&t!("assembly.error.too_large", count = n, max = MAX_ATOMS))
             }
-            BuildError::Lattice(e) => write!(f, "結晶: {e}"),
+            BuildError::Orient { component, error } => f.write_str(&t!(
+                "assembly.error.monomer",
+                name = component,
+                error = error
+            )),
+            BuildError::Lattice(e) => f.write_str(&t!("assembly.error.lattice", error = e)),
         }
     }
 }
@@ -271,6 +272,7 @@ mod tests {
 
     #[test]
     fn too_many_atoms_and_bad_orientations_are_refused_in_japanese() {
+        let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
         let mut design = Design {
             components: vec![methanol_like()],
             steps: vec![Step::new_stack(); 6],

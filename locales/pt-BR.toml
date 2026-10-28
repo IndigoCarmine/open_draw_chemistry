@@ -1,0 +1,14 @@
+# Open DrawChemistry — Brazilian Portuguese (pt-BR) UI strings.
+#
+# Partial: a key missing here (or left empty) is shown in English. To translate, copy keys
+# from en.toml, keeping each key and every {placeholder}; en.toml's header and
+# locales/README.md explain the placeholder and plural syntax. Plural categories for this
+# language are listed in locales/README.md.
+
+[common]
+cancel = "Cancelar"
+coming_soon = "Em breve"
+
+[language]
+menu = "Idioma (Language)"
+tooltip = "Idioma (Language)"

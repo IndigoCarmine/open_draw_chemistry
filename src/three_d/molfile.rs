@@ -56,9 +56,9 @@ pub fn polymer_note(mol: &Molecule) -> Option<&'static str> {
         return None;
     }
     if built.brackets().any(|b| b.usage.is_polymer_unit()) {
-        Some("繰り返し単位 1 つ分（n = 1、末端基を含む構造）で 3D 化します")
+        Some(t!("three_d.molfile.note_polymer_unit"))
     } else if built.brackets().count() < mol.brackets().count() {
-        Some("括弧の繰り返しを描き出した構造で 3D 化します")
+        Some(t!("three_d.molfile.note_written_out"))
     } else {
         None
     }
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(formula(&text), "C8H18O3", "CH3(CH2CH2O)3CH3");
         assert_eq!(
             polymer_note(&mol),
-            Some("括弧の繰り返しを描き出した構造で 3D 化します")
+            Some(t!("three_d.molfile.note_written_out"))
         );
     }
 
@@ -315,7 +315,10 @@ mod tests {
         let text = to_molfile(&mol, &Config::default()).unwrap();
         assert_eq!(elements(&text), ["C", "C", "C", "C", "O"]);
         assert_eq!(formula(&text), "C4H10O", "the panel's n = 1 formula");
-        assert!(polymer_note(&mol).unwrap().contains("n = 1"));
+        assert_eq!(
+            polymer_note(&mol),
+            Some(t!("three_d.molfile.note_polymer_unit"))
+        );
         assert!(polymer_note(&ethanol()).is_none());
     }
 

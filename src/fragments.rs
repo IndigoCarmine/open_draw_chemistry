@@ -27,9 +27,9 @@ pub enum Source {
 impl Source {
     pub fn label(self) -> &'static str {
         match self {
-            Source::Builtin => "組み込み",
-            Source::User => "ユーザー",
-            Source::UserOverride => "ユーザー（組み込みを置換）",
+            Source::Builtin => t!("fragments.source.builtin"),
+            Source::User => t!("fragments.source.user"),
+            Source::UserOverride => t!("fragments.source.user_override"),
         }
     }
 
@@ -92,7 +92,7 @@ impl FragmentStore {
 
     fn require_dir(&self) -> Result<&Path, String> {
         self.dir()
-            .ok_or_else(|| "ユーザー設定フォルダーが見つかりません".to_owned())
+            .ok_or_else(|| t!("fragments.error.no_config_dir").to_owned())
     }
 
     /// Every valid fragment file in the directory, sorted by file name. A file that does not
@@ -172,10 +172,7 @@ impl FragmentStore {
         match self.user_fragments().into_iter().find(|d| {
             d.name != name && Some(d.name.as_str()) != except && d.name.eq_ignore_ascii_case(name)
         }) {
-            Some(other) => Err(format!(
-                "大文字・小文字だけが異なる断片「{}」が既にあります",
-                other.name
-            )),
+            Some(other) => Err(t!("fragments.error.case_clash", name = other.name)),
             None => Ok(()),
         }
     }
@@ -185,14 +182,14 @@ impl FragmentStore {
     pub fn save(&self, def: &FragmentDef) -> Result<PathBuf, String> {
         check_name(&def.name)?;
         def.validate()
-            .map_err(|e| format!("断片の構造が正しくありません（{e}）"))?;
+            .map_err(|e| t!("fragments.error.invalid_structure", error = e))?;
         self.check_case_clash(&def.name, None)?;
         let path = match self.file_of(&def.name) {
             Some(path) => path,
             None => {
                 let dir = self.require_dir()?;
                 std::fs::create_dir_all(dir)
-                    .map_err(|e| format!("フォルダーを作成できませんでした: {e}"))?;
+                    .map_err(|e| t!("fragments.error.create_folder", error = e))?;
                 dir.join(format!("{}.json", def.name))
             }
         };
@@ -204,8 +201,8 @@ impl FragmentStore {
     pub fn delete(&self, name: &str) -> Result<(), String> {
         let path = self
             .file_of(name)
-            .ok_or_else(|| format!("ユーザー断片「{name}」が見つかりません"))?;
-        std::fs::remove_file(path).map_err(|e| format!("削除できませんでした: {e}"))
+            .ok_or_else(|| t!("fragments.error.not_found", name = name))?;
+        std::fs::remove_file(path).map_err(|e| t!("fragments.error.delete", error = e))
     }
 
     /// Rename the user fragment `old` to `new`, renaming its file to `<new>.json`.
@@ -219,9 +216,9 @@ impl FragmentStore {
             .user_files()
             .into_iter()
             .find(|f| f.def.name == old)
-            .ok_or_else(|| format!("ユーザー断片「{old}」が見つかりません"))?;
+            .ok_or_else(|| t!("fragments.error.not_found", name = old))?;
         if self.file_of(new).is_some() {
-            return Err(format!("ユーザー断片「{new}」は既にあります"));
+            return Err(t!("fragments.error.exists", name = new));
         }
         self.check_case_clash(new, Some(old))?;
         let target = file
@@ -233,31 +230,30 @@ impl FragmentStore {
         // handles it, but the "already exists" check must not refuse it.
         let same_file = old.eq_ignore_ascii_case(new);
         if target.exists() && !same_file {
-            return Err(format!(
-                "ファイル {} が既にあります",
-                target.file_name().unwrap_or_default().to_string_lossy()
+            return Err(t!(
+                "fragments.error.file_exists",
+                file = target.file_name().unwrap_or_default().to_string_lossy()
             ));
         }
         let mut def = file.def;
         def.name = new.to_owned();
         // Rewrite in place first, then move: a failed move leaves one valid file, never none.
         write_def(&file.path, &def)?;
-        std::fs::rename(&file.path, &target).map_err(|e| format!("名前を変更できませんでした: {e}"))
+        std::fs::rename(&file.path, &target).map_err(|e| t!("fragments.error.rename", error = e))
     }
 }
 
 fn write_def(path: &Path, def: &FragmentDef) -> Result<(), String> {
     let json = serde_json::to_string_pretty(def).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| format!("保存できませんでした: {e}"))
+    std::fs::write(path, json).map_err(|e| t!("fragments.error.save", error = e))
 }
 
 /// [`Fragment::validate_name`], with the library's (English) reason under a Japanese message.
 pub fn check_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
-        return Err("断片名を入力してください".to_owned());
+        return Err(t!("fragments.error.empty_name").to_owned());
     }
-    Fragment::validate_name(name)
-        .map_err(|e| format!("断片名に使えない名前です（ファイル名にできない文字や予約名: {e}）"))
+    Fragment::validate_name(name).map_err(|e| t!("fragments.error.invalid_name", error = e))
 }
 
 /// The editor's selection as a fragment named `name`, by the rules of
@@ -272,7 +268,7 @@ pub fn selection_fragment(editor: &ChemStructEditor, name: &str) -> Result<Fragm
     check_name(name)?;
     let mut ids: Vec<u32> = editor.selected_atoms.iter().copied().collect();
     if ids.is_empty() {
-        return Err("先に選択ツールで断片にする原子を選択してください".to_owned());
+        return Err(t!("fragments.error.no_selection").to_owned());
     }
     ids.sort_unstable();
     let attach_id = match editor.hotspot_atom {
@@ -284,7 +280,7 @@ pub fn selection_fragment(editor: &ChemStructEditor, name: &str) -> Result<Fragm
         editor
             .molecule
             .atom_by_id(id)
-            .ok_or_else(|| "選択された原子が見つかりません".to_owned())
+            .ok_or_else(|| t!("fragments.error.atom_missing").to_owned())
     };
     let base = atom(attach_id)?.pos;
     let atoms = ids
@@ -320,7 +316,7 @@ pub fn selection_fragment(editor: &ChemStructEditor, name: &str) -> Result<Fragm
 
 /// Show `dir` in the OS file manager, creating it first.
 pub fn open_in_file_manager(dir: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("フォルダーを作成できませんでした: {e}"))?;
+    std::fs::create_dir_all(dir).map_err(|e| t!("fragments.error.create_folder", error = e))?;
     let program = if cfg!(windows) {
         "explorer"
     } else if cfg!(target_os = "macos") {
@@ -332,7 +328,7 @@ pub fn open_in_file_manager(dir: &Path) -> Result<(), String> {
         .arg(dir)
         .spawn()
         .map(drop)
-        .map_err(|e| format!("フォルダーを開けませんでした: {e}"))
+        .map_err(|e| t!("fragments.error.open_folder", error = e))
 }
 
 #[cfg(test)]

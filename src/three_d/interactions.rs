@@ -144,8 +144,8 @@ pub enum StackKind {
 impl StackKind {
     pub fn label(self) -> &'static str {
         match self {
-            StackKind::Parallel => "平行",
-            StackKind::TShaped => "T 字",
+            StackKind::Parallel => t!("three_d.interactions.stack_parallel"),
+            StackKind::TShaped => t!("three_d.interactions.stack_t_shaped"),
         }
     }
 }

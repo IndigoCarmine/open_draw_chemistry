@@ -180,24 +180,23 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Empty => write!(f, "構造が描かれていません"),
-            Error::UnknownLabels(labels) => write!(
-                f,
-                "3D に変換できないラベルがあります: {}",
-                labels.join("、")
-            ),
-            Error::QuadrupleBond => write!(f, "四重結合は 3D 生成に対応していません"),
-            Error::MultipleGroup => write!(
-                f,
-                "描き出せない多重基の括弧（繰り返し数が数字でない、括弧を横切る結合が 3 本以上など）は 3D 化できません。ラベルを繰り返し数（2、3 など）にするか、括弧を外してください"
-            ),
-            Error::TooLarge => write!(f, "構造が大きすぎます（原子・結合は各 999 個まで）"),
-            Error::Unreadable => write!(f, "OpenBabel が構造を読み込めませんでした"),
-            Error::GenerationFailed => write!(f, "3D 座標を生成できませんでした"),
-            Error::ForceField(ff) => write!(f, "力場 {ff} をこの構造に適用できませんでした"),
-            Error::ExportFailed(export) => {
-                write!(f, "{} として書き出せませんでした", export.description())
+            Error::Empty => f.write_str(t!("three_d.error.empty")),
+            Error::UnknownLabels(labels) => f.write_str(&t!(
+                "three_d.error.unknown_labels",
+                labels = labels.join(t!("three_d.error.list_separator"))
+            )),
+            Error::QuadrupleBond => f.write_str(t!("three_d.error.quadruple_bond")),
+            Error::MultipleGroup => f.write_str(t!("three_d.error.multiple_group")),
+            Error::TooLarge => f.write_str(t!("three_d.error.too_large")),
+            Error::Unreadable => f.write_str(t!("three_d.error.unreadable")),
+            Error::GenerationFailed => f.write_str(t!("three_d.error.generation_failed")),
+            Error::ForceField(ff) => {
+                f.write_str(&t!("three_d.error.force_field", force_field = ff))
             }
+            Error::ExportFailed(export) => f.write_str(&t!(
+                "three_d.error.export_failed",
+                format = export.description()
+            )),
         }
     }
 }

@@ -29,6 +29,14 @@ serde_json = "1.0.154"
 # built against egui 0.37.
 egui_plot = "0.38.0"
 
+# UI translations (see `src/i18n/`): the catalogs in `locales/` are TOML, the OS locale picks
+# the first language, and the system font fallback is told the language so Han characters are
+# drawn in a Japanese, Simplified or Traditional Chinese font as fits. All three are already in
+# eframe's dependency tree.
+toml = { version = "1.1.8", default-features = false, features = ["std", "parse", "serde"] }
+sys-locale = "0.3.2"
+egui_system_font_provider = "0.37.0"
+
 # The 3D viewer (wgpu; the egui 0.37 port). MIT. Pinned to a rev for the same reason as above.
 moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs", rev = "0a110d4b7ea0ce57db8688957feff67aa89171d7" }
 # The viewer's vector types, needed to drive its camera and renderer directly.

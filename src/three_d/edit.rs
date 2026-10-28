@@ -97,10 +97,10 @@ impl Constraint {
 
     pub fn kind_label(&self) -> &'static str {
         match self {
-            Constraint::Fix(_) => "固定",
-            Constraint::Distance(..) => "距離",
-            Constraint::Angle(..) => "角度",
-            Constraint::Torsion(..) => "二面角",
+            Constraint::Fix(_) => t!("three_d.edit.constraint_fix"),
+            Constraint::Distance(..) => t!("three_d.edit.constraint_distance"),
+            Constraint::Angle(..) => t!("three_d.edit.constraint_angle"),
+            Constraint::Torsion(..) => t!("three_d.edit.constraint_torsion"),
         }
     }
 }
@@ -110,7 +110,7 @@ impl Constraint {
 pub fn conflict(constraints: &[Constraint]) -> Option<&'static str> {
     let has = |f: fn(&Constraint) -> bool| constraints.iter().any(f);
     (has(|c| matches!(c, Constraint::Angle(..))) && has(|c| matches!(c, Constraint::Torsion(..))))
-        .then_some("角度と二面角の制約を同時に使うと、OpenBabel は二面角の制約を無視します")
+        .then(|| t!("three_d.edit.constraint_conflict"))
 }
 
 /// One history entry: the geometry (and energy) before or after an edit.
@@ -353,10 +353,10 @@ impl Target {
     /// The step's name, for the history.
     pub fn label(self) -> &'static str {
         match self {
-            Target::BondLength(_) => "結合長の変更",
-            Target::Distance(_) => "距離の変更",
-            Target::Angle(_) => "結合角の変更",
-            Target::Dihedral(_) => "二面角の変更",
+            Target::BondLength(_) => t!("three_d.edit.undo_bond_length"),
+            Target::Distance(_) => t!("three_d.edit.undo_distance"),
+            Target::Angle(_) => t!("three_d.edit.undo_bond_angle"),
+            Target::Dihedral(_) => t!("three_d.edit.undo_dihedral"),
             Target::None | Target::Unbonded => "",
         }
     }
@@ -394,7 +394,7 @@ pub fn set_value(model: &mut Model3d, edit: &mut Edit3d, value: f64) -> bool {
             if edit.lock_on_set {
                 edit.constrain(&picked, value);
             }
-            edit.report = Some((clash_note(model, "設定しました"), false));
+            edit.report = Some((clash_note(model, t!("three_d.edit.value_set")), false));
             true
         }
         Err(e) => {
@@ -411,9 +411,12 @@ pub fn rotate_picked(model: &mut Model3d, edit: &mut Edit3d, degrees: f64) -> bo
     };
     match geom::rotate_bond(&coords(model), &graph(model), b, c, degrees, edit.anchor) {
         Ok(next) => {
-            edit.apply(model, next, "結合の回転");
+            edit.apply(model, next, t!("three_d.edit.undo_rotate"));
             edit.report = Some((
-                clash_note(model, &format!("{degrees:+.0}° 回転しました")),
+                clash_note(
+                    model,
+                    &t!("three_d.edit.rotated", degrees = format!("{degrees:+.0}")),
+                ),
                 false,
             ));
             true
@@ -434,9 +437,12 @@ pub fn solve(model: &mut Model3d, edit: &mut Edit3d, a: usize, b: usize, goal: g
         Ok(s) if (s.achieved - s.start).abs() < 1e-6 => {
             // Nothing moved: not worth a history step.
             let text = if s.reach.1 - s.reach.0 < 1e-3 {
-                "結合の回転ではこの距離は変わりません".to_owned()
+                t!("three_d.edit.distance_fixed").to_owned()
             } else {
-                format!("すでに {:.2} Å です", s.achieved)
+                t!(
+                    "three_d.edit.distance_already",
+                    distance = format!("{:.2}", s.achieved)
+                )
             };
             edit.report = Some((text, s.unreachable));
             false
@@ -445,16 +451,24 @@ pub fn solve(model: &mut Model3d, edit: &mut Edit3d, a: usize, b: usize, goal: g
             let achieved = s.achieved;
             let (near, far) = s.reach;
             let unreachable = s.unreachable;
-            edit.apply(model, s.coords, "距離の変更");
+            edit.apply(model, s.coords, t!("three_d.edit.undo_distance"));
             if let (geom::Goal::Distance(value), false) = (goal, unreachable)
                 && edit.lock_on_set
             {
                 edit.constrain(&[a, b], value);
             }
             let text = if unreachable {
-                format!("届きませんでした：{achieved:.2} Å（回転で届く範囲 {near:.2}〜{far:.2} Å）")
+                t!(
+                    "three_d.edit.distance_unreachable",
+                    achieved = format!("{achieved:.2}"),
+                    near = format!("{near:.2}"),
+                    far = format!("{far:.2}")
+                )
             } else {
-                format!("{achieved:.2} Å にしました")
+                t!(
+                    "three_d.edit.distance_set",
+                    distance = format!("{achieved:.2}")
+                )
             };
             edit.report = Some((clash_note(model, &text), unreachable));
             true
@@ -472,12 +486,13 @@ fn clash_note(model: &Model3d, text: &str) -> String {
     let found = geom::clashes(&coords(model), &elements, &graph(model));
     match found.first() {
         None => text.to_owned(),
-        Some(worst) => format!(
-            "{text}（原子の衝突 {} 件：{}···{} {:.2} Å）",
+        Some(worst) => tn!(
+            "three_d.edit.clash_note",
             found.len(),
-            atom_label(model, worst.a),
-            atom_label(model, worst.b),
-            worst.distance
+            text = text,
+            a = atom_label(model, worst.a),
+            b = atom_label(model, worst.b),
+            distance = format!("{:.2}", worst.distance)
         ),
     }
 }
@@ -837,7 +852,7 @@ mod tests {
             edit.constraints,
             vec![Constraint::Torsion([2, 0, 1, 3], 75.0)]
         );
-        assert_eq!(edit.undo_label(), Some("二面角の変更"));
+        assert_eq!(edit.undo_label(), Some(t!("three_d.edit.undo_dihedral")));
 
         // The C–C bond can be turned; a C–H bond is terminal.
         edit.picked = vec![0, 1];

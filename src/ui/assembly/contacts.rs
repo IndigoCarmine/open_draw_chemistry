@@ -108,9 +108,12 @@ pub(super) fn toggles(ui: &mut egui::Ui, show: &mut ShowInteractions) {
     contacts::toggles(ui, show);
     ui.add_enabled(
         show.any(),
-        egui::Checkbox::new(&mut show.intramolecular, "分子内も含める"),
+        egui::Checkbox::new(
+            &mut show.intramolecular,
+            t!("assembly.contacts.intramolecular"),
+        ),
     )
-    .on_hover_text("同じ分子の中の水素結合・π スタッキングも表示します（オフなら分子間だけ）");
+    .on_hover_text(t!("assembly.contacts.intramolecular_tip"));
 }
 
 /// The contacts in the 情報 section; clicking one selects the molecule it starts from.
@@ -126,20 +129,34 @@ pub(super) fn info(
     }
     let Ok(built) = state.built() else { return };
     let Some((found, current)) = view.contacts.get(ui.ctx(), state.id(), &built, show) else {
-        ui.label(ink.muted("水素結合・π スタッキング：確認中…"));
+        ui.label(ink.muted(t!("assembly.contacts.checking")));
         return;
     };
     let label = |a: usize| {
         let m = built.molecule_of_atom[a];
-        format!(
-            "分子 {} {}{}",
-            m + 1,
-            built.atoms[a].element,
-            a - built.molecule_start[m] + 1
+        t!(
+            "assembly.contacts.atom",
+            n = m + 1,
+            atom = format!(
+                "{}{}",
+                built.atoms[a].element,
+                a - built.molecule_start[m] + 1
+            )
         )
     };
-    let pending = if current { "" } else { "（更新中…）" };
-    let clicked = contacts::list(ui, &found, show, pending, "クリックでその分子を選択", label);
+    let pending = if current {
+        ""
+    } else {
+        t!("assembly.contacts.updating")
+    };
+    let clicked = contacts::list(
+        ui,
+        &found,
+        show,
+        pending,
+        t!("assembly.contacts.click_tip"),
+        label,
+    );
     let atom = match clicked {
         Some(contacts::Clicked::HBond(k)) => found.hbonds.get(k).map(|hb| hb.hydrogen),
         Some(contacts::Clicked::Stack(k)) => found

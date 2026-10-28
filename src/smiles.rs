@@ -27,18 +27,21 @@ pub fn target(mol: &Molecule, selection: &HashSet<u32>) -> Molecule {
     target
 }
 
-/// The canonical isomeric SMILES of `mol` (already the [`target`]), or a short Japanese reason
+/// The canonical isomeric SMILES of `mol` (already the [`target`]), or a short reason
 /// why there is none. May be slow for a big drawing: call it off the UI thread.
 pub fn compute(mol: &Molecule, config: &Config) -> Result<String, String> {
     if mol.atoms.is_empty() {
-        return Err("構造がありません".to_owned());
+        return Err(t!("smiles.error.empty").to_owned());
     }
     if mol.bonds.iter().any(|b| b.order == BondOrder::Quadruple) {
-        return Err("四重結合は SMILES に対応していません".to_owned());
+        return Err(t!("smiles.error.quadruple_bond").to_owned());
     }
     openbabel_smiles(mol, config).map_err(|e| match e {
         Error::UnknownLabels(labels) => {
-            format!("SMILES にできないラベルがあります: {}", labels.join("、"))
+            t!(
+                "smiles.error.unknown_labels",
+                labels = labels.join(t!("smiles.error.label_separator"))
+            )
         }
         other => other.to_string(),
     })
@@ -186,7 +189,7 @@ mod tests {
         let a = q.add_atom("Mo".into(), [0.0, 0.0], 0);
         let b = q.add_atom("Mo".into(), [1.3, 0.0], 0);
         q.add_bond(a, b, BondOrder::Quadruple);
-        assert!(compute(&q, &config()).unwrap_err().contains("四重結合"));
+        assert!(compute(&q, &config()).unwrap_err().contains("Quadruple"));
         assert!(compute(&Molecule::default(), &config()).is_err());
     }
 

@@ -4,6 +4,10 @@
 //! unit-testable. The structure editor itself is chembuider-rs's widget; this crate arranges
 //! it into a window and handles documents and files.
 
+// First, so its `t!` and `tn!` macros are in scope in every module after it.
+#[macro_use]
+pub mod i18n;
+
 pub mod app;
 pub mod assembly;
 pub mod document;

@@ -194,7 +194,7 @@ fn step_card(
             let (handle_rect, handle) = ui.allocate_exact_size(vec2(12.0, 30.0), Sense::drag());
             let handle = handle
                 .on_hover_cursor(egui::CursorIcon::Grab)
-                .on_hover_text("ドラッグで並べ替え");
+                .on_hover_text(t!("assembly.pipeline.drag_tip"));
             let color = if handle.hovered() || handle.dragged() {
                 look.ink
             } else {
@@ -223,32 +223,40 @@ fn step_card(
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 1.0;
                     let (chevron, tip) = if expanded {
-                        (Icon::ChevronUp, "パラメータを閉じる")
+                        (Icon::ChevronUp, t!("assembly.pipeline.collapse"))
                     } else {
-                        (Icon::ChevronDown, "パラメータを開く")
+                        (Icon::ChevronDown, t!("assembly.pipeline.expand"))
                     };
                     if style::tool(ui, look, chevron, tip, true, false, false).clicked() {
                         outcome.toggle_expanded = true;
                     }
-                    if style::tool(ui, look, Icon::Close, "この手順を削除", true, true, false)
-                        .clicked()
+                    if style::tool(
+                        ui,
+                        look,
+                        Icon::Close,
+                        t!("assembly.pipeline.remove"),
+                        true,
+                        true,
+                        false,
+                    )
+                    .clicked()
                     {
                         changes.push(Change::RemoveStep(i));
                     }
                     let lattice = matches!(step, Step::Lattice(_));
                     let tip = if lattice {
-                        "結晶の手順は 1 つだけです"
+                        t!("assembly.pipeline.lattice_single")
                     } else {
-                        "この手順を複製（すぐ後ろに入れます）"
+                        t!("assembly.pipeline.duplicate")
                     };
                     if style::tool(ui, look, Icon::Duplicate, tip, !lattice, false, false).clicked()
                     {
                         changes.push(Change::DuplicateStep(i));
                     }
                     let (toggle, tip) = if enabled {
-                        (Icon::ToggleOn, "使っています（クリックで飛ばす）")
+                        (Icon::ToggleOn, t!("assembly.pipeline.enabled_tip"))
                     } else {
-                        (Icon::ToggleOff, "飛ばしています（クリックで使う）")
+                        (Icon::ToggleOff, t!("assembly.pipeline.disabled_tip"))
                     };
                     if style::tool(ui, look, toggle, tip, true, false, enabled).clicked() {
                         changes.push(Change::ToggleStep(i));
@@ -299,9 +307,14 @@ pub(super) fn summary(step: &Step) -> String {
             euler_deg,
             ..
         }) => {
-            let mut s = format!("{n}個 · {}", offset_text(offset));
+            let mut s = format!(
+                "{} · {}",
+                tn!("assembly.pipeline.summary.copies", *n),
+                offset_text(offset)
+            );
             if euler_deg.iter().any(|&a| a != 0.0) {
-                s.push_str(" · 回転");
+                s.push_str(" · ");
+                s.push_str(t!("assembly.pipeline.summary.rotated"));
             }
             s
         }
@@ -311,7 +324,10 @@ pub(super) fn summary(step: &Step) -> String {
             tilt_deg,
             ..
         }) => {
-            let mut s = format!("{n}個 · r {radius:.2}Å");
+            let mut s = format!(
+                "{} · r {radius:.2}Å",
+                tn!("assembly.pipeline.summary.copies", *n)
+            );
             if *tilt_deg != 0.0 {
                 s.push_str(&format!(" · {tilt_deg:.1}°"));
             }
@@ -324,15 +340,24 @@ pub(super) fn summary(step: &Step) -> String {
             slip,
             ..
         }) => {
-            let mut s = format!("{n}個 · Δz {rise:.2}Å · {twist_deg:.1}°");
+            let mut s = format!(
+                "{} · Δz {rise:.2}Å · {twist_deg:.1}°",
+                tn!("assembly.pipeline.summary.copies", *n)
+            );
             if *slip != 0.0 {
-                s.push_str(&format!(" · ずれ {slip:.2}Å"));
+                s.push_str(" · ");
+                s.push_str(&t!(
+                    "assembly.pipeline.summary.slip",
+                    value = format!("{slip:.2}")
+                ));
             }
             s
         }
         Step::Lattice(l) => {
-            let group = symop::matching_preset(&l.symops)
-                .map_or_else(|| format!("{} 操作", l.symops.len()), |p| p.name.to_owned());
+            let group = symop::matching_preset(&l.symops).map_or_else(
+                || tn!("assembly.pipeline.summary.operations", l.symops.len()),
+                |p| p.name.to_owned(),
+            );
             let [a, b, c] = l.reps.map(|r| r.max(1));
             format!("{group} · {a}×{b}×{c}")
         }
@@ -347,7 +372,7 @@ fn offset_text(offset: &[f64; 3]) -> String {
         .filter(|&(_, v)| v != 0.0)
         .collect();
     match along.as_slice() {
-        [] => "間隔 0Å".to_owned(),
+        [] => t!("assembly.pipeline.summary.no_spacing").to_owned(),
         [(axis, v)] => format!("{axis} {v:.2}Å"),
         _ => format!("({:.1}, {:.1}, {:.1})Å", offset[0], offset[1], offset[2]),
     }
@@ -357,16 +382,26 @@ fn offset_text(offset: &[f64; 3]) -> String {
 /// from `before` molecules to `after`.
 pub(super) fn count_text(step: &Step, before: usize, after: usize) -> String {
     if !step.enabled() {
-        return format!("飛ばす → {after} 分子");
+        return tn!("assembly.pipeline.count.skipped", after);
     }
     match step {
-        Step::Lattice(l) if l.check().is_err() => format!("作れません → {after} 分子"),
+        Step::Lattice(l) if l.check().is_err() => {
+            tn!("assembly.pipeline.count.cannot_build", after)
+        }
         // A crystal drops copies on special positions: its factor need not be whole.
         Step::Lattice(_) if before == 0 || !after.is_multiple_of(before) => {
-            format!("→ {after} 分子")
+            tn!("assembly.pipeline.count.result", after)
         }
-        Step::Lattice(_) => format!("× {} → {after} 分子", after / before),
-        _ => format!("× {} → {after} 分子", step.copies()),
+        Step::Lattice(_) => tn!(
+            "assembly.pipeline.count.times",
+            after,
+            factor = after / before
+        ),
+        _ => tn!(
+            "assembly.pipeline.count.times",
+            after,
+            factor = step.copies()
+        ),
     }
 }
 
@@ -426,33 +461,37 @@ pub(super) fn add_box(ui: &mut Ui, look: &Look, state: &AssemblyState, changes: 
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("＋ 手順を追加").size(12.5).color(look.muted));
+                ui.label(
+                    RichText::new(t!("assembly.pipeline.add.title"))
+                        .size(12.5)
+                        .color(look.muted),
+                );
             });
             ui.add_space(2.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
                 let chips: [Chip; 4] = [
                     (
-                        "配列",
-                        "それまでの全体を一定の間隔と回転で並べます",
+                        Step::new_array().label(),
+                        t!("assembly.pipeline.add.array_tip"),
                         true,
                         Step::new_array,
                     ),
                     (
-                        "環状",
-                        "分子を z 軸まわりの円に並べます（ロゼット）",
+                        Step::new_ring().label(),
+                        t!("assembly.pipeline.add.ring_tip"),
                         true,
                         Step::new_ring,
                     ),
                     (
-                        "積層・らせん",
-                        "それまでの全体を z 方向に積み重ねます。ねじれとずれでらせんになります",
+                        Step::new_stack().label(),
+                        t!("assembly.pipeline.add.stack_tip"),
                         true,
                         Step::new_stack,
                     ),
                     (
-                        "結晶",
-                        "それまでの全体を非対称単位として、格子定数と空間群の対称操作で単位胞を作り、繰り返します",
+                        Step::new_lattice().label(),
+                        t!("assembly.pipeline.add.lattice_tip"),
                         !has_lattice,
                         Step::new_lattice,
                     ),
@@ -464,7 +503,7 @@ pub(super) fn add_box(ui: &mut Ui, look: &Look, state: &AssemblyState, changes: 
                     if ui
                         .add_enabled(enabled, chip)
                         .on_hover_text(tip)
-                        .on_disabled_hover_text("結晶の手順はすでにあります")
+                        .on_disabled_hover_text(t!("assembly.pipeline.add.lattice_exists"))
                         .clicked()
                     {
                         changes.push(Change::AddStep(make()));

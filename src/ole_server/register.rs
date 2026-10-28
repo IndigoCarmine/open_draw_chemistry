@@ -277,7 +277,7 @@ pub fn register(hive: &Hive, exe: &Path, args: &str) -> windows::core::Result<Re
 
     let (key, new) = create(hive.write_root, &hive.write(&class))?;
     note(&class, new);
-    set_str(&key, "", super::USER_TYPE)?;
+    set_str(&key, "", super::user_type())?;
     let sub = |name: &str, value: &str| -> windows::core::Result<()> {
         let (k, _) = create(hive.write_root, &hive.write(&format!(r"{class}\{name}")))?;
         set_str(&k, "", value)
@@ -296,15 +296,15 @@ pub fn register(hive: &Hive, exe: &Path, args: &str) -> windows::core::Result<Re
     // OLEMISC_CANTLINKINSIDE: no links into the drawing.
     sub("MiscStatus", "16")?;
     // MF_STRING (0), OLEVERBATTRIB_ONCONTAINERMENU (2).
-    sub(r"Verb\0", "編集(&E),0,2")?;
-    sub(r"Verb\1", "開く(&O),0,2")?;
-    sub(r"AuxUserType\2", super::USER_TYPE_SHORT)?;
+    sub(r"Verb\0", &format!("{},0,2", t!("ole.server.verb_edit")))?;
+    sub(r"Verb\1", &format!("{},0,2", t!("ole.server.verb_open")))?;
+    sub(r"AuxUserType\2", super::user_type_short())?;
     sub(r"AuxUserType\3", crate::APP_NAME)?;
 
     for (prog_id, versioned) in [(PROG_ID, true), (PROG_ID_CURRENT, false)] {
         let (k, new) = create(hive.write_root, &hive.write(prog_id))?;
         note(prog_id, new);
-        set_str(&k, "", super::USER_TYPE)?;
+        set_str(&k, "", super::user_type())?;
         let (c, _) = create(hive.write_root, &hive.write(&format!(r"{prog_id}\CLSID")))?;
         set_str(&c, "", &ours)?;
         if versioned {
@@ -516,7 +516,7 @@ mod tests {
         assert!(s.exists(&format!(r"{class}\Insertable")));
         assert_eq!(
             s.value(&format!(r"{class}\Verb\0"), "").as_deref(),
-            Some("編集(&E),0,2")
+            Some("&Edit,0,2")
         );
 
         // Registering twice is harmless and still unregisters fully.

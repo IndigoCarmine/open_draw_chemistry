@@ -1,0 +1,1330 @@
+# Open DrawChemistry — English UI strings. English is the reference catalog: every key the
+# app uses must be here, and every other language falls back to it.
+#
+# How to translate (see locales/README.md):
+# - Keep every key; translate only the text on the right of `=`.
+# - `{name}` is a placeholder filled in by the app: keep it (you may move it).
+#   `{{` and `}}` are literal braces.
+# - A table such as `{ one = "{n} atom", other = "{n} atoms" }` holds plural forms by CLDR
+#   category (zero, one, two, few, many, other). Give the forms your language uses; `other`
+#   is required. `{n}` is the count.
+# - Do not translate chemistry notation (element symbols, formulas, SMILES, units), file-format
+#   names, or keyboard shortcuts.
+
+[common]
+cancel = "Cancel"
+# A placeholder shown on a menu item whose feature is not built yet.
+coming_soon = "Coming soon"
+
+[language]
+# The 表示 (View) menu's language submenu and the tooltip of the toolbar's globe button.
+# Translators: keep the English word too, so the menu can be found by someone who cannot read
+# the current language — e.g. "Sprache (Language)".
+menu = "Language"
+tooltip = "Language"
+
+[app.status]
+# Status bar messages. {path} is a file path, {error} the reason it failed.
+open_failed = "Could not open {path}: {error}"
+# {name} is the opened document's title (usually its file name).
+opened = "Opened {name}"
+# {summary} describes what was read from the file (e.g. what was skipped).
+opened_summary = "Opened {name} ({summary})"
+# Appended to "Opened {name}" when a 3D file holds several structures; {n} is how many.
+opened_first_record = { one = " (only the first of {n} structure)", other = " (only the first of {n} structures)" }
+# Appended to "Opened {name}" when the file has flat coordinates. Quotes the 3D menu item.
+opened_flat = ". The coordinates are flat, so create the 3D model with “Generate 3D from 2D”"
+# Appended to "Opened {name}" when the 2D drawing was made from 3D coordinates.
+opened_projected = ". The 2D layout is a projection of the 3D coordinates (clean up to tidy it)"
+# Appended last when a 3D file was opened: it can only be saved as a ChemDraw file.
+opened_save_note = ". To save, use “Save as…” to CDX/CDXML"
+saved = "Saved {name}"
+save_failed = "Could not save: {error}"
+export_failed = "Could not export: {error}"
+exported = "Exported to {path}"
+no_3d_model_to_export = "There is no 3D model to export"
+# {name} is the IUPAC name of the drawn structure.
+iupac_copied = "Copied IUPAC name: {name}"
+iupac_inserted = "Inserted IUPAC name: {name}"
+assembly_undone = "Undid the assembly edit"
+assembly_redone = "Redid the assembly edit"
+nothing_to_undo = "Nothing to undo"
+nothing_to_redo = "Nothing to redo"
+nothing_to_copy = "Nothing to copy"
+pasted = "Pasted"
+no_structure_on_clipboard = "There is no structure on the clipboard"
+# {label} is the running 3D job's message, {note} a remark on how polymers are built.
+running_with_note = "{label} ({note})"
+assembly_shown = "Switched to the assembly view"
+no_model_for_monomer = "There is no 3D model to use as a monomer. First create one with “Generate 3D from 2D” in the 3D menu"
+# {name} is the monomer's name; {n} its number of atoms.
+assembly_created = { one = "Created an assembly with “{name}” ({n} atom) as its monomer. Add steps (ring, stack, array) in the right panel", other = "Created an assembly with “{name}” ({n} atoms) as its monomer. Add steps (ring, stack, array) in the right panel" }
+monomer_added = { one = "Added monomer “{name}” ({n} atom)", other = "Added monomer “{name}” ({n} atoms)" }
+load_failed = "Could not read {path}: {error}"
+no_assembly_to_export = "There is no assembly to export"
+write_failed = "Could not export: {error}"
+# {molecules} and {atoms} are counts of the exported assembly.
+assembly_exported = "Exported to {path} (molecules: {molecules}, atoms: {atoms})"
+assembly_saved = "Saved the assembly to {path}"
+assembly_save_failed = "Could not save the assembly: {error}"
+assembly_opened = "Opened assembly {path}"
+no_document = "No document is open"
+# {name} is the fragment's name; {n} its number of atoms.
+fragment_added = { one = "Added fragment “{name}” ({n} atom)", other = "Added fragment “{name}” ({n} atoms)" }
+fragment_deleted = "Deleted fragment “{name}”"
+# {from} and {to} are fragment names.
+fragment_renamed = "Renamed “{from}” to “{to}”"
+settings_folder_missing = "The user settings folder could not be found"
+# Error when a 3D file used as a monomer has only flat (2D) coordinates.
+flat_coordinates = "The coordinates are flat, so they cannot be used as a 3D structure"
+
+[app.canvas]
+# Shown in the canvas's right-click menu when not on a bond.
+bond_hint = "Right-click a bond to change its type"
+# Right-click menu item: make a 3D model of the molecule and show it in the 3D view.
+make_3d = "Make 3D"
+drawing_empty = "The drawing is empty"
+make_3d_selection_tip = "Build a 3D model of the molecules holding the selected atoms and show it in the 3D view"
+make_3d_molecule_tip = "Build a 3D model of this molecule and show it in the 3D view"
+make_3d_drawing_tip = "Build a 3D model of the whole drawing and show it in the 3D view"
+
+[app.welcome]
+# Buttons on the start screen shown when every document is closed.
+new = "New document"
+open = "Open file…"
+drop_hint = "You can also drop CDX / CDXML or 3D structure files (MOL2, PDB, XYZ, MOL, SDF) here to open them"
+
+[dialog.filter]
+# File type filters in the open/save dialogs.
+all_supported = "All supported formats"
+structure_3d = "3D structures (MOL2, PDB, XYZ, MOL, SDF)"
+assembly = "Assembly (Open DrawChemistry)"
+
+[dialog.unsaved]
+tab_title = "Save changes?"
+# {name} is the document's title.
+tab_message = "“{name}” has unsaved changes."
+quit_title = "Save before quitting?"
+quit_message = { one = "{n} document has unsaved changes.", other = "{n} documents have unsaved changes." }
+# Button: save, then close.
+save = "Save"
+# Button: close without saving.
+discard = "Don't save"
+
+[dialog.about]
+# Title of the About window (Help menu).
+title = "About"
+
+[ole.embed]
+load_failed = "Could not read the embedded object: {error}"
+# {app} is the container application, such as Word or PowerPoint.
+editing = "Editing an object embedded in {app}. Save or close the tab to update the {app} document"
+committed = "Updated the {app} document"
+
+[document]
+# Tab title of a new document; {number} counts them (1, 2, 3, …).
+untitled = "Untitled {number}"
+# Tab title of an object embedded in another application; {app} is e.g. Word.
+embedded = "Embedded in {app}"
+# Same, with {name}, the container's document name.
+embedded_named = "Embedded in {app} — {name}"
+
+[view]
+# The assembly view, in the 2D / 3D / Assembly switch (keep short).
+assembly = "Assembly"
+
+[status_bar]
+# Label before the current drawing tool's name.
+tool = "Tool: "
+# Label before the current element symbol.
+element = "Element: "
+counts = "Atoms {atoms} · Bonds {bonds}"
+# Shown when there is no other message.
+ready = "Ready"
+
+[tabs]
+# Tooltip of the "+" button after the tabs.
+new_document = "New document"
+# Tooltip of a tab's close button.
+close = "Close"
+close_unsaved = "Close (unsaved changes)"
+
+[menu.file]
+title = "File"
+new = "New"
+open = "Open…"
+open_recent = "Open recent"
+save = "Save"
+save_as = "Save as…"
+export = "Export"
+close = "Close"
+quit = "Quit"
+
+[menu.edit]
+title = "Edit"
+undo = "Undo"
+redo = "Redo"
+copy = "Copy"
+paste = "Paste"
+
+[menu.view]
+title = "View"
+fit = "Fit to window"
+# Checkbox: show the panel on the right of the window.
+right_panel = "Right panel"
+
+[menu.structure]
+title = "Structure"
+cleanup = "Clean up"
+stop_cleanup = "Stop cleanup"
+copy_iupac = "Copy IUPAC name"
+insert_iupac = "Insert IUPAC name as text"
+# Puts the selection in polymer brackets as a structural repeating unit.
+bracket_sru = "Enclose in brackets (repeating unit)"
+# Submenu: bracket type and shape.
+bracket_kind = "Bracket type and shape"
+
+[menu.reaction]
+title = "Reaction"
+add_arrow = "Add reaction arrow"
+add_equilibrium_arrow = "Add equilibrium arrow"
+# Text tool for the reaction conditions written over/under an arrow.
+conditions_text = "Reaction conditions text"
+insert_table = "Insert reaction table"
+
+[menu.three_d]
+generate = "Generate 3D from 2D"
+# Geometry optimization of the 3D model.
+optimize = "Optimize structure"
+export = "Export 3D"
+parameter_scan = "Parameter scan…"
+create_assembly = "Create molecular assembly"
+create_assembly_tip = "Use the current 3D model as a monomer to build assemblies such as rings, stacks and helices (switches to the assembly view)"
+
+[menu.tools]
+title = "Tools"
+periodic_table = "Periodic table"
+manage_fragments = "Manage fragments"
+
+[menu.help]
+title = "Help"
+about = "About"
+
+[toolbar]
+# Toolbar tooltips; the shortcut is added after them.
+new = "New"
+open = "Open"
+save = "Save"
+undo = "Undo"
+redo = "Redo"
+# Toolbar text buttons (keep short).
+fit = "Fit to window"
+cleanup = "Clean up"
+stop_cleanup = "Stop cleanup"
+
+[fragments.source]
+# Where a listed fragment comes from (shown after its atom count)
+builtin = "Built-in"
+user = "User"
+user_override = "User (replaces built-in)"
+
+[fragments.error]
+no_config_dir = "The user settings folder could not be found"
+# {name}: the other fragment's name
+case_clash = "A fragment \"{name}\" that differs only in upper/lower case already exists"
+# {error}: the reason, from the library
+invalid_structure = "The fragment's structure is invalid ({error})"
+create_folder = "Could not create the folder: {error}"
+not_found = "User fragment \"{name}\" not found"
+exists = "User fragment \"{name}\" already exists"
+# {file}: a file name
+file_exists = "The file {file} already exists"
+rename = "Could not rename: {error}"
+delete = "Could not delete: {error}"
+save = "Could not save: {error}"
+empty_name = "Enter a fragment name"
+invalid_name = "This name cannot be used for a fragment (characters not allowed in file names, or a reserved name: {error})"
+no_selection = "First select the atoms for the fragment with the selection tool"
+atom_missing = "A selected atom could not be found"
+open_folder = "Could not open the folder: {error}"
+
+[fragments.manager]
+# Window title
+title = "Manage fragments"
+usage = "How to use: select an atom, type a fragment name as its label and press X to expand it. User fragments take precedence over built-in fragments of the same name."
+add_heading = "Add from selection"
+# Label of the new fragment's name field
+name = "Name"
+# Placeholder in the name field; CO2tBu is a fragment name, keep it
+name_hint = "e.g. CO2tBu"
+# Button: save over an existing fragment of the same name
+overwrite = "Overwrite"
+# Button: add the new fragment
+add = "Add"
+no_document = "No document is open"
+select_atoms = "Select the atoms for the fragment with the selection tool (it attaches at the hotspot atom, or else at the first atom drawn)"
+selected_atoms = { one = "{n} atom selected (it attaches at the hotspot atom, or else at the first atom drawn)", other = "{n} atoms selected (it attaches at the hotspot atom, or else at the first atom drawn)" }
+# {name}: fragment name
+replaces_builtin = "This fragment will replace the built-in \"{name}\""
+overwrites_user = "User fragment \"{name}\" will be overwritten"
+# Label of the search field
+search = "Search"
+search_hint = "Fragment name"
+open_folder = "Open folder"
+no_match = "No matching fragments"
+# Button confirming a rename (short)
+rename_apply = "Rename"
+# Number of atoms of a fragment, in its row
+atom_count = { one = "{n} atom", other = "{n} atoms" }
+# Button confirming the deletion
+confirm_delete = "Delete"
+delete_question = "Delete it?"
+# Button starting the deletion (confirmed afterwards)
+delete = "Delete"
+# Button starting a rename
+rename = "Rename"
+
+[io.export]
+# File-dialog filter name
+png = "PNG image"
+
+[io.error]
+unknown_format = "Unsupported file format"
+# {format}: a file format name such as "ChemDraw (CDX)"
+unreadable = "Could not read the file as {format}"
+empty = "No structure is drawn"
+export_failed = "Could not export {format}"
+brackets = "{format} cannot represent brackets (repeat units, multiple groups), so the drawing cannot be exported. Remove the brackets, or save as CDX/CDXML"
+
+[io.summary]
+# Status bar after opening a file. {items}: a list such as "2 arrows and 1 text"
+editable = "{items} can be edited"
+arrows = { one = "{n} arrow", other = "{n} arrows" }
+# Text objects on the page
+texts = { one = "{n} text", other = "{n} texts" }
+tables = { one = "{n} reaction table", other = "{n} reaction tables" }
+brackets = { one = "{n} bracket", other = "{n} brackets" }
+# Between list items except the last two (note the trailing space)
+list_separator = ", "
+# Between the last two list items (note the spaces)
+list_last_separator = " and "
+# Between the two sentences of the summary (note the trailing space)
+sentence_separator = ". "
+kept = { one = "{n} hidden object will be kept when saving", other = "{n} hidden objects will be kept when saving" }
+
+[smiles.row]
+# {n}: the largest number of atoms
+too_large = { one = "The structure is too large (up to {n} atom)", other = "The structure is too large (up to {n} atoms)" }
+computing = "Computing…"
+copy_tip = "Copy SMILES"
+# {smiles}: the copied SMILES
+copied = "Copied: {smiles}"
+# Shown instead of the SMILES. {reason}: why there is none
+unsupported = "— (not supported: {reason})"
+
+[smiles.error]
+empty = "There is no structure"
+quadruple_bond = "Quadruple bonds are not supported in SMILES"
+# {labels}: the labels, joined by label_separator
+unknown_labels = "Some labels cannot be written as SMILES: {labels}"
+# Between labels in unknown_labels (note the trailing space)
+label_separator = ", "
+
+[properties]
+# Tooltip of the button collapsing the right panel
+collapse = "Collapse panel"
+# Tooltip of the collapsed panel. {title}: the panel title
+expand = "Open the {title} panel"
+
+[properties.title]
+# Panel titles; also shown vertically, one letter per line, in the collapsed strip
+analysis = "Analysis"
+edit_3d = "3D editing"
+assembly = "Assembly"
+
+[iupac.error]
+empty = "There is no structure to name"
+# {reason}: why, from the naming library
+unsupported = "IUPAC names for this structure are not supported yet ({reason})"
+
+[ole.clipboard]
+# Status bar after copying, on Windows
+copied_for_office = "Copied (pastes into Word and PowerPoint as a ChemDraw object, and into ChemDraw as a structure)"
+# Status bar after copying, on other systems
+copied = "Copied"
+
+[ole.paste]
+cdx_unreadable = "Could not read the ChemDraw data on the clipboard"
+# {class}: a COM class id such as {00020830-0000-0000-C000-000000000046}
+wrong_class = "The embedded object on the clipboard is not a ChemDraw structure, so it cannot be pasted (class {class})"
+no_contents = "The ChemDraw object on the clipboard has no structure data (CONTENTS), so it cannot be pasted"
+unreadable = "Could not read the embedded object on the clipboard"
+
+[ole.server]
+# Object type listed in Office's Insert Object dialog
+user_type = "Open DrawChemistry Structure"
+# Short object type, in Office's object menu
+user_type_short = "Structure"
+# Verb in Office's object context menu; & marks the access key
+verb_edit = "&Edit"
+verb_open = "&Open"
+
+[periodic_table]
+# Hover text of a periodic-table cell. {symbol}: element symbol, {name}: element name,
+# {z}: atomic number, {weight}: atomic weight, {category}: element family. Keep the line breaks.
+tooltip = "{symbol}  {name}\nAtomic number {z}\nAtomic weight {weight}\n{category}"
+# The element name in the UI language followed by its English name, in other languages than English.
+name_with_english = "{name} ({english})"
+
+# Element families (colour legend of the periodic table).
+[periodic_table.category]
+nonmetal = "Nonmetal"
+noble_gas = "Noble gas"
+alkali = "Alkali metal"
+alkaline_earth = "Alkaline earth metal"
+transition = "Transition metal"
+post_transition = "Post-transition metal"
+metalloid = "Metalloid"
+halogen = "Halogen"
+lanthanide = "Lanthanide"
+actinide = "Actinide"
+
+# Element names (IUPAC). Keys are the element symbols in lower case.
+[periodic_table.element]
+h = "Hydrogen"
+he = "Helium"
+li = "Lithium"
+be = "Beryllium"
+b = "Boron"
+c = "Carbon"
+n = "Nitrogen"
+o = "Oxygen"
+f = "Fluorine"
+ne = "Neon"
+na = "Sodium"
+mg = "Magnesium"
+al = "Aluminium"
+si = "Silicon"
+p = "Phosphorus"
+s = "Sulfur"
+cl = "Chlorine"
+ar = "Argon"
+k = "Potassium"
+ca = "Calcium"
+sc = "Scandium"
+ti = "Titanium"
+v = "Vanadium"
+cr = "Chromium"
+mn = "Manganese"
+fe = "Iron"
+co = "Cobalt"
+ni = "Nickel"
+cu = "Copper"
+zn = "Zinc"
+ga = "Gallium"
+ge = "Germanium"
+as = "Arsenic"
+se = "Selenium"
+br = "Bromine"
+kr = "Krypton"
+rb = "Rubidium"
+sr = "Strontium"
+y = "Yttrium"
+zr = "Zirconium"
+nb = "Niobium"
+mo = "Molybdenum"
+tc = "Technetium"
+ru = "Ruthenium"
+rh = "Rhodium"
+pd = "Palladium"
+ag = "Silver"
+cd = "Cadmium"
+in = "Indium"
+sn = "Tin"
+sb = "Antimony"
+te = "Tellurium"
+i = "Iodine"
+xe = "Xenon"
+cs = "Caesium"
+ba = "Barium"
+la = "Lanthanum"
+ce = "Cerium"
+pr = "Praseodymium"
+nd = "Neodymium"
+pm = "Promethium"
+sm = "Samarium"
+eu = "Europium"
+gd = "Gadolinium"
+tb = "Terbium"
+dy = "Dysprosium"
+ho = "Holmium"
+er = "Erbium"
+tm = "Thulium"
+yb = "Ytterbium"
+lu = "Lutetium"
+hf = "Hafnium"
+ta = "Tantalum"
+w = "Tungsten"
+re = "Rhenium"
+os = "Osmium"
+ir = "Iridium"
+pt = "Platinum"
+au = "Gold"
+hg = "Mercury"
+tl = "Thallium"
+pb = "Lead"
+bi = "Bismuth"
+po = "Polonium"
+at = "Astatine"
+rn = "Radon"
+fr = "Francium"
+ra = "Radium"
+ac = "Actinium"
+th = "Thorium"
+pa = "Protactinium"
+u = "Uranium"
+np = "Neptunium"
+pu = "Plutonium"
+am = "Americium"
+cm = "Curium"
+bk = "Berkelium"
+cf = "Californium"
+es = "Einsteinium"
+fm = "Fermium"
+md = "Mendelevium"
+no = "Nobelium"
+lr = "Lawrencium"
+rf = "Rutherfordium"
+db = "Dubnium"
+sg = "Seaborgium"
+bh = "Bohrium"
+hs = "Hassium"
+mt = "Meitnerium"
+ds = "Darmstadtium"
+rg = "Roentgenium"
+cn = "Copernicium"
+nh = "Nihonium"
+fl = "Flerovium"
+mc = "Moscovium"
+lv = "Livermorium"
+ts = "Tennessine"
+og = "Oganesson"
+
+# Names of the drawing palette's buttons (tooltips; also the current tool in the status bar).
+[palette.tool]
+select = "Select"
+eraser = "Eraser"
+single_bond = "Single bond"
+double_bond = "Double bond"
+triple_bond = "Triple bond"
+wedge_bond = "Wedge bond"
+# Stereo bond drawn as a hashed (dashed) wedge.
+hashed_wedge = "Hashed wedge"
+wavy_bond = "Wavy bond"
+# Tool that draws a carbon chain.
+chain = "Chain"
+benzene = "Benzene ring"
+cyclopentane = "Cyclopentane"
+cyclohexane = "Cyclohexane"
+# Tool that places text on the drawing.
+text = "Text"
+reaction_arrow = "Reaction arrow"
+equilibrium_arrow = "Equilibrium arrow"
+bracket = "Bracket"
+insert_reaction_table = "Insert reaction table"
+# Bond tool with a bond style that has no palette button.
+bond = "Bond"
+# Tooltip of a tool not available yet. {name}: the tool's name.
+planned = "{name} (coming soon)"
+
+# Section headings of the palette.
+[palette.heading]
+draw = "Draw"
+elements = "Elements"
+
+[palette.reaction_table]
+inserted = "Inserted a reaction table. Double-click a cell to enter equivalents, masses and so on (Enter confirms the field)"
+nothing_to_tabulate = "No structures for a reaction table. Draw the structures and a reaction arrow first"
+
+[palette.bracket]
+# Heading above the bracket usages in the bracket menu.
+enclose_heading = "Enclose selected atoms in brackets"
+# Heading above the bracket shapes in the bracket menu.
+shape_heading = "Shape of selected brackets"
+# {name}: a bracket usage such as "Repeat unit (n)".
+usage_changed = "Changed the selected brackets to \"{name}\""
+usage_unchanged = "The selected brackets are already \"{name}\""
+select_atoms = "Select the atoms to enclose in brackets (drag a box with the select tool)"
+added_sru = "Added repeat-unit brackets. Double-click the label n to edit it"
+added_multiple_group = "Added multiple-group brackets. Double-click the repeat count (2) to edit it"
+# {name}: a bracket usage such as "Copolymer (co)".
+added = "Added \"{name}\" brackets"
+# Appended to the message above when a polymer repeat unit has other than two bonds crossing its brackets.
+crossing_note = { one = " ({n} bond crosses the brackets; a repeat unit usually has one on each side)", other = " ({n} bonds cross the brackets; a repeat unit usually has one on each side)" }
+select_brackets = "Select the brackets whose shape to change"
+# {shape}: a bracket shape such as "Parentheses ( )".
+shape_changed = "Changed the brackets to {shape}"
+shape_unchanged = "The brackets are already {shape}"
+
+# What the brackets around a group of atoms mean (bracket menu items). The text in
+# parentheses is the standard abbreviation, keep it.
+[palette.bracket.usage]
+sru = "Repeat unit (n)"
+multiple_group = "Multiple group (×n)"
+copolymer = "Copolymer (co)"
+alternating = "Alternating copolymer (alt)"
+random = "Random copolymer (ran)"
+block = "Block copolymer (blk)"
+generic = "Polymer (generic, gen)"
+mixture = "Mixture (mix)"
+# Any other bracket usage.
+unknown = "Bracket"
+
+# Bracket shapes (bracket menu items).
+[palette.bracket.shape]
+square = "Square brackets [ ]"
+round = "Parentheses ( )"
+curly = "Braces { }"
+
+# The button that opens the periodic table, and the symbol field below the table.
+[palette.periodic_table]
+button = "Periodic table…"
+enter_symbol = "Element symbol"
+# Button that applies the typed element symbol. Short.
+set_symbol = "Set"
+
+[three_d.view]
+# Overlay on the 3D viewer while a 3D model is generated or optimized.
+working = "Working…"
+# Heading of the right panel in the 3D view.
+title = "3D editing"
+# Section headings in the 3D view's right panel.
+section_display = "Display"
+section_model = "Model"
+section_edit = "Edit"
+section_export = "Export"
+# How the 3D model is drawn: small spheres joined by sticks, cheap to render.
+style_light = "Spheres (light)"
+style_wireframe = "Wireframe"
+# Toggle button: show a number label on each atom.
+atom_numbers = "Atom numbers"
+atom_numbers_tip = "Show a number on every atom"
+reset_view = "Reset view"
+# Tooltip of "Reset view": double-clicking an empty spot of the viewer does the same.
+reset_view_tip = "Or double-click an empty spot"
+# Tooltip of an export button; {format} is a file format name such as "MDL Molfile".
+export_tip = "Export as {format}"
+export_no_model = "No 3D model to export"
+# {error} is the renderer's error message.
+render_failed = "The 3D view failed: {error}"
+# Short tag next to an atom fixed in place (anchor), and the label of that atom in the panel.
+fixed = "Fixed"
+# Status after undo/redo; {label} names the step, e.g. "Change bond length".
+redone = "Redone: {label}"
+undone = "Undone: {label}"
+no_history = "No 3D edit history"
+busy_optimizing = "Can't edit while optimizing"
+# D, H and A are the donor, hydrogen and acceptor atoms of the hydrogen bond.
+hbond_hint = "Click a hydrogen bond to select D, H and A (shows the angle)"
+# Small button; the arrow is part of the label.
+undo = "↶ Undo"
+undo_none = "Nothing to undo"
+# {label} names the step, e.g. "Change bond length".
+undo_tip = "Undo: {label} (Ctrl+Z)"
+# Small button; the arrow is part of the label.
+redo = "↷ Redo"
+redo_none = "Nothing to redo"
+# {label} names the step, e.g. "Change bond length".
+redo_tip = "Redo: {label} (Ctrl+Y)"
+pick_hint = "Click atoms to select them (up to 4) · click a bond to select both ends · right-click an atom to fix it"
+# Label before the list of selected atoms.
+selection = "Selection"
+# Small button: clear the selection or the fixed atom.
+clear = "Clear"
+anchor_tip = "Edits move the side without this atom"
+# Names of the measured value over the selected atoms.
+bond_length = "Bond length"
+distance = "Distance"
+bond_angle = "Bond angle"
+angle = "Angle"
+dihedral = "Dihedral"
+measure_only = "(Not a bonded chain, so measured only)"
+# Button: set the measured value to the number typed in the box.
+set = "Set"
+enter_number = "Enter a number"
+# Preset bond angle and dihedral buttons (keep short).
+preset_linear = "Linear 180°"
+preset_cis = "Cis 0°"
+preset_gauche_plus = "Gauche 60°"
+preset_gauche_minus = "Gauche −60°"
+preset_anti = "Anti 180°"
+# Label before the "Farthest apart" / "Closest together" buttons for two selected atoms.
+turn_between = "Turn the single bonds between them:"
+farthest = "Farthest apart"
+closest = "Closest together"
+# Label before the bond rotation step buttons (−15°, −5°, +5°, +15°).
+rotate = "Rotate"
+wheel_hint = "Or turn with the mouse wheel (Shift 1°, Ctrl 15°)"
+# {reason} says why the bond cannot be rotated.
+cannot_rotate = "Rotate: {reason}"
+# Checkbox: values set by hand are kept as constraints when the structure is optimized.
+lock_on_set = "Keep set values when optimizing"
+lock_on_set_tip = "Each value you set adds a constraint for it"
+constrain_current = "Constrain current value"
+constrain_current_tip = "Keep the selected atoms' current value as a constraint when optimizing (fixes the atom if only one is selected)"
+# Button; {atom} is an atom name such as "C3".
+fix_atom = "Keep {atom} fixed when optimizing"
+# Collapsible heading; {count} is the number of constraints.
+constraints_header = "Optimization constraints ({count})"
+use_constraints = "Use constraints when optimizing"
+remove_constraint = "Remove this constraint"
+# {target} and {now} are numbers, {unit} is Å, ° or empty.
+constraint_status = "Target {target}{unit} · now {now}{unit}"
+no_clashes = "No atom clashes"
+# {a} and {b} are atom names such as "C3", {distance} a number in Å.
+clashes = { one = "{n} atom clash (closest {a}···{b} {distance} Å) — structure optimization can resolve it", other = "{n} atom clashes (closest {a}···{b} {distance} Å) — structure optimization can resolve them" }
+force_field = "Force field"
+# Button: build the 3D model again from the 2D drawing.
+regenerate = "Regenerate from 2D"
+regenerate_tip = "Rebuild the 3D model from the 2D structure"
+# Button: minimize the 3D structure's energy with the force field.
+optimize = "Optimize structure"
+optimize_tip = "Optimize the structure with the force field"
+optimize_constrained_tip = { one = "Optimize keeping {n} constraint", other = "Optimize keeping {n} constraints" }
+# "Make 3D" is the 2D view's context menu item that builds a 3D model.
+no_model_hint = "Right-click a molecule in the 2D view and choose “Make 3D”, or use “Regenerate from 2D”, to make a 3D model"
+idle_hint = "Right-click a molecule in the 2D view and choose “Make 3D”, or use “Regenerate from 2D” in the right panel,\nto generate a 3D model from the 2D structure"
+# {energy} is a number, {unit} the energy unit (kcal/mol or kJ/mol).
+energy_recalculating = "E = {energy} {unit} (recalculating)"
+# {formula} is a molecular formula, {hydrogens} the number of hydrogen atoms.
+about = { one = "{formula} · {n} atom ({hydrogens} H)", other = "{formula} · {n} atoms ({hydrogens} H)" }
+# Appended to the model summary when only some molecules of the drawing were made 3D.
+about_part = " · some molecules of the drawing"
+stale = "The 2D drawing has changed"
+stale_tip = "Use “Regenerate from 2D” to match the 3D model to the redrawn structure"
+retry_hint = "Check the structure and try again with “Regenerate from 2D”"
+# Row labels in the model summary.
+formula = "Formula"
+atom_count = "Atoms"
+# {atoms} is the number of atoms, {hydrogens} how many of them are hydrogens.
+atom_count_value = "{atoms} ({hydrogens} H)"
+energy = "Energy"
+stale_long = "The 2D structure has changed. Update it with “Regenerate from 2D”"
+no_wgpu = "The 3D view needs the wgpu renderer (not available here)"
+
+[three_d.edit]
+# Kinds of optimization constraint, shown before the atoms they apply to.
+constraint_fix = "Fixed"
+constraint_distance = "Distance"
+constraint_angle = "Angle"
+constraint_torsion = "Dihedral"
+constraint_conflict = "With both angle and dihedral constraints, OpenBabel ignores the dihedral constraints"
+# Names of edit steps in the undo history.
+undo_bond_length = "Change bond length"
+undo_distance = "Change distance"
+undo_bond_angle = "Change bond angle"
+undo_dihedral = "Change dihedral"
+undo_rotate = "Rotate bond"
+# Status after setting a value.
+value_set = "Set"
+# {degrees} is a signed number such as +15.
+rotated = "Rotated by {degrees}°"
+distance_fixed = "Turning bonds doesn't change this distance"
+# {distance} is a number in Å.
+distance_already = "Already {distance} Å"
+# {achieved}, {near} and {far} are numbers in Å.
+distance_unreachable = "Couldn't reach it: {achieved} Å (reachable by turning bonds: {near}–{far} Å)"
+distance_set = "Set to {distance} Å"
+# {text} is the previous status message; {a} and {b} are atom names, {distance} a number in Å.
+clash_note = { one = "{text} ({n} atom clash: {a}···{b} {distance} Å)", other = "{text} ({n} atom clashes: {a}···{b} {distance} Å)" }
+
+[three_d.interactions]
+# Kinds of π-stacking between two rings.
+stack_parallel = "Parallel"
+stack_t_shaped = "T-shaped"
+
+[three_d.job]
+generating = "Generating the 3D model…"
+optimizing = "Optimizing the structure…"
+# {error} is the system's error message.
+start_failed = "Couldn't start: {error}"
+# {formula} is a molecular formula.
+generated = { one = "Generated the 3D model ({formula}, {n} atom)", other = "Generated the 3D model ({formula}, {n} atoms)" }
+# {energy} is a number, {unit} the energy unit.
+optimized = "Optimized the structure (E = {energy} {unit})"
+# Name of the step in the undo history.
+undo_optimize = "Structure optimization"
+
+[three_d.molfile]
+# Status bar notes when making a drawing with brackets 3D.
+note_polymer_unit = "Making one repeat unit 3D (n = 1, with the end groups)"
+note_written_out = "Making 3D with the bracket repeats written out"
+
+[three_d.error]
+empty = "No structure is drawn"
+# {labels} is a list of atom labels.
+unknown_labels = "Some labels can't be converted to 3D: {labels}"
+# Separator between items of a list.
+list_separator = ", "
+quadruple_bond = "Quadruple bonds aren't supported in 3D generation"
+multiple_group = "Multiple-group brackets that can't be written out (a repeat count that isn't a number, three or more bonds crossing the bracket, …) can't be made 3D. Set the label to a repeat count (2, 3, …) or remove the brackets"
+too_large = "The structure is too large (up to 999 atoms and 999 bonds)"
+unreadable = "OpenBabel couldn't read the structure"
+generation_failed = "Couldn't generate 3D coordinates"
+# {force_field} is a force field name such as MMFF94.
+force_field = "Couldn't apply the {force_field} force field to this structure"
+# {format} is a file format name such as "MDL Molfile".
+export_failed = "Couldn't export as {format}"
+texture = "Couldn't prepare the texture for the 3D view"
+edit_not_bonded = "The selected atoms aren't bonded"
+edit_in_ring = "Bonds in a ring can't be changed"
+edit_anchor_blocks = "The fixed atom leaves no side free to move"
+edit_not_connected = "The two atoms aren't in the same molecule"
+edit_no_rotatable_bond = "No rotatable single bond between the two atoms"
+edit_bad_target = "The target value is out of range"
+edit_degenerate = "The atoms overlap, so the direction is undefined"
+# Reasons a bond can't be rotated.
+rotate_not_a_bond = "Not a bond"
+rotate_multiple = "Multiple and aromatic bonds can't be rotated"
+rotate_ring = "Bonds in a ring can't be rotated"
+rotate_terminal = "Turning a terminal bond doesn't change the shape"
+# {max} is a size in MB.
+read_file_too_large = "The file is too large (up to {max} MB)"
+read_empty = "The file has no atoms"
+# {count} is the number of atoms in the file, {max} the limit.
+read_too_many_atoms = "Too many atoms ({count}; up to {max} can be read)"
+# {format} is a file format name such as "MDL Molfile".
+read_unreadable = "Couldn't read as {format}"
+
+[assembly.view]
+# Panel heading of the assembly view (a molecular assembly built from monomers)
+title = "Assembly"
+no_document = "No document is open"
+# Panel tab: building the assembly (monomers, steps, placement)
+tab_build = "Build"
+# Panel tab: how the assembly is shown, info, export
+tab_display = "Display"
+# Section captions in the panel
+section_monomers = "Monomers"
+section_placement = "Placement"
+section_appearance = "Appearance"
+section_interactions = "Interactions"
+section_info = "Info"
+section_export = "Export"
+# Label before the drawing-style combo box (ball and stick, …)
+style = "Style"
+# Label before the atom colouring choices
+color = "Color"
+# Atom colouring: by element
+color_element = "Element"
+color_molecule = "By molecule"
+color_component = "By monomer"
+reset_view = "Reset view"
+reset_view_tip = "Or double-click empty space"
+# Where the n-th of three picked atoms goes when orienting a monomer; fills {role} in orient_prompt
+role_origin = "origin"
+role_x_axis = "+x axis"
+role_xy_plane = "xy plane"
+no_monomers = "No monomers.\nIn the 3D view, make a 3D model and choose \"Create molecular assembly\" from the \"3D\" menu,\nor add monomers with \"Add current 3D model\" or \"Add from file\" in the right panel"
+no_renderer = "The 3D view needs the wgpu renderer (not available here)"
+# {name}: monomer name; {role}: origin / +x axis / xy plane; {step}: 1 to 3
+orient_prompt = "Orienting \"{name}\": click the atom to put on the {role} ({step}/3)"
+# Button that cancels picking orientation atoms (short)
+orient_stop = "Stop"
+orient_stop_tip = "Or press Esc"
+undone = "Undone"
+redone = "Redone"
+nothing_to_undo = "Nothing to undo"
+nothing_to_redo = "Nothing to redo"
+# {error}: the renderer's error message
+render_failed = "3D view failed: {error}"
+# {name}: monomer name; {a}, {b}, {c}: atom numbers
+oriented = "Oriented \"{name}\" by atoms {a}, {b}, {c}"
+# How a molecule was placed, shown in {how} of hover_molecule
+placed_manually = "manual"
+placed_by_steps = "steps"
+# Tooltip over an atom: {n} molecule number, {name} monomer, {how} manual/steps, {atom} e.g. "C12"
+hover_molecule = "Molecule {n} ({name}, {how}) · {atom}"
+# Opens the parameter scan window
+scan = "Parameter scan…"
+scan_tip = "Computes the MM energy (single point) while varying step parameters (spacing, twist, radius, cell constants, …) or the positions of hand-placed molecules, and shows it as a curve or heat map"
+# Unit after a bold count in the panel footer (the count is shown separately)
+unit_molecules = { one = "molecule", other = "molecules" }
+unit_atoms = { one = "atom", other = "atoms" }
+unit_bonds = { one = "bond", other = "bonds" }
+redo_tip = "Redo the undone edit (Ctrl+Y)"
+undo_tip = "Undo the assembly edit (Ctrl+Z)"
+# {name}: monomer name; {n}: its atom count
+monomer_added = { one = "Added monomer \"{name}\" ({n} atom)", other = "Added monomer \"{name}\" ({n} atoms)" }
+no_monomers_short = "No monomers. Add a 3D model or load one from a file"
+name_tip = "The monomer's name. Its first 3 letters or digits become the residue name in PDB and MOL2 (Enter to confirm)"
+atoms_rename_tip = { one = "{n} atom (double-click to rename)", other = "{n} atoms (double-click to rename)" }
+# Small badge on the monomer that the steps copy (short)
+base = "Base"
+base_tip = "The monomer the steps copy"
+monomer_actions = "Monomer actions"
+orient = "Orient by 3 atoms"
+orient_tip = "Click three atoms in turn in the viewer. The first goes to the origin, the second onto the +x axis, the third into the xy plane (y < 0 side).\nIn a ring step the first atom sits on the circle and the molecule extends along +x (outward)"
+clear_orient = "Clear orientation"
+clear_orient_tip = "Stop orienting and use the coordinates as read"
+rename = "Rename"
+set_base = "Make base monomer"
+set_base_tip = "Make this the monomer the steps copy"
+remove = "Delete"
+remove_tip = "Delete this monomer"
+orienting = "Orienting: click atoms in the viewer"
+# {a}, {b}, {c}: atom numbers
+orientation = "Orientation: atoms {a}, {b}, {c}"
+add_model = "Add current 3D model"
+add_model_tip = "Adds this document's 3D model as a monomer"
+add_model_none = "There is no 3D model. First use \"Generate 3D from 2D\""
+add_file = "Add from file…"
+add_file_tip = "Adds a 3D structure from MOL2, PDB, XYZ, MOL or SDF as a monomer"
+show_cell = "Show unit cell"
+show_cell_tip = "Outlines the unit cell at the origin"
+needs_crystal = "Available when there is a crystal step"
+# Label before three counts (a, b, c) of periodic images
+images = "Periodic images"
+images_tip = "How many copies of the whole built crystal (the box after repeats) to show along a, b and c.\n1 shows none. Display only; not included in exports. Clicking a periodic image selects the original molecule"
+# Info row label: unit-cell volume
+info_cell = "Unit cell"
+info_cell_tip = "Volume of the unit cell"
+info_z_tip = "Number of molecules in one unit cell (asymmetric unit × symmetry operations, minus those that coincide on special positions)"
+# {z}: Z value; {n}: molecules in the asymmetric unit
+info_z_asymmetric = { one = "{z} (asymmetric unit {n} molecule)", other = "{z} (asymmetric unit {n} molecules)" }
+info_density = "Density"
+info_density_tip = "Mass of the unit cell's contents ÷ unit-cell volume"
+info_density_unknown = "— (some elements have no atomic weight)"
+# {n}: molecule number; {name}: monomer; {first}–{last}: its atom numbers
+selected = "Selected: molecule {n} ({name}, atoms {first}–{last})"
+select_hint = "Click an atom to select its molecule"
+
+[assembly.export]
+# Tooltip of an export button; {format}: the format's description
+to_format = "Export to {format}"
+to_format_crystal = "Export to {format} (cell constants, symmetry operations, fractional coordinates of the asymmetric unit)"
+nothing = "There is no assembly to export"
+needs_crystal = "CIF needs a crystal step (add \"Crystal\" to the steps)"
+save = "Save assembly…"
+save_tip = "Saves the monomers and steps to an .odasm file (opening it gives the same assembly)"
+open = "Open assembly…"
+open_tip = "Opens an .odasm file and replaces this document's assembly with it (can be undone)"
+
+[assembly.contacts]
+intramolecular = "Include intramolecular"
+intramolecular_tip = "Also shows hydrogen bonds and π-stacking within the same molecule (off: only between molecules)"
+checking = "Hydrogen bonds and π-stacking: checking…"
+# An atom in the contact list: {n} molecule number, {atom} e.g. "O3"
+atom = "Molecule {n} {atom}"
+# Appended right after the contact counts while they are being recomputed (keep the leading space)
+updating = " (updating…)"
+click_tip = "Click to select that molecule"
+
+[assembly.model]
+# Names of the assembly's steps
+step_ring = "Ring"
+step_stack = "Stack / helix"
+step_array = "Array"
+step_lattice = "Crystal"
+
+[assembly.model.ring]
+# Parameter labels are in a narrow column (about 8 characters)
+count = "Count"
+count_tip = "Number of molecules in the ring. The i-th is placed turned by 360°/count × i about the z axis"
+radius = "Radius"
+radius_tip = "Radius of the circle the molecule's origin (the first orientation atom) sits on. Too small and they overlap; too large and hydrogen bonds cannot reach"
+tilt = "Tilt"
+tilt_tip = "Angle the molecule is tilted about the y axis before being put on the circle. At 0 the molecule lies in the ring's plane (the xy plane)"
+
+[assembly.model.stack]
+# Parameter label (narrow): number of layers
+layers = "Layers"
+layers_tip = "Number of layers (disks) to stack"
+# Parameter label (narrow): distance between layers
+rise = "Rise"
+rise_tip = "Spacing between layers along z. About 3.4–3.5 Å for π-stacking"
+twist = "Twist"
+twist_tip = "Angle each layer is turned about the z axis. Positive is counterclockwise seen from +z.\nTo join periodically, make layers × twist a multiple of 360°/ring count"
+slip = "Slip"
+slip_tip = "Sideways offset between neighbouring layers. If not 0, the layers follow a circle of radius (slip/2) / sin(twist/2) about the helix axis (the z axis). With zero twist they slip straight along x"
+helix_radius = "Helix radius"
+helix_radius_tip = "Follows from the slip and twist"
+no_helix_straight = "— (twist 0: straight slip)"
+no_helix_no_slip = "— (no slip)"
+
+[assembly.model.array]
+count = "Count"
+count_tip = "How many to place (the first stays where it is)"
+# Parameter label (narrow): offset between copies
+offset = "Spacing"
+offset_tip = "Moves the i-th by i × spacing"
+rotation = "Rotation"
+rotation_tip = "Turns the i-th by i × angle about the origin before moving it (about x, then y, then z)"
+
+[assembly.model.lattice]
+space_group = "Space group"
+space_group_tip = "Choosing one replaces the symmetry operations below with that space group's general positions"
+# Shown in the space-group box when the operations match no preset
+custom_ops = "(custom operations)"
+length_tip = "Edge length of the unit cell. a lies along the x axis, b in the xy plane"
+alpha_tip = "Angle between b and c"
+beta_tip = "Angle between a and c"
+gamma_tip = "Angle between a and b"
+# Parameter label (narrow): how many unit cells along a, b, c
+repeats = "Repeats"
+repeats_tip = "How many unit cells to place along a, b and c"
+symops = "Symmetry operations"
+symops_tip = "One per line in x,y,z form (e.g. -x,y+1/2,-z+1/2). Lines of a CIF's _space_group_symop can be pasted as they are. Always include x,y,z"
+# {ops}: number of operations; {cells}: number of unit cells
+summary = "{ops} operations × {cells} cells (molecules that coincide on special positions are merged)"
+
+[assembly.error]
+orient_out_of_range = "An orientation atom number is beyond the monomer's atom count"
+orient_repeated = "Choose three different atoms for the orientation"
+orient_collinear = "The three orientation atoms lie on a line, so they fix no orientation"
+# {op}: a symmetry operation such as -x,y+1/2,-z
+op_misfits_cell = "Symmetry operation \"{op}\" does not fit these cell constants (molecules would be distorted). Use lengths and angles matching the space group's crystal system"
+# {name}: a, b or c
+cell_length = "Cell constant {name} must be a positive length"
+# {name}: α, β or γ
+cell_angle = "Angle {name} must be greater than 0° and less than 180°"
+cell_angles = "These three angles make no parallelepiped (each must be less than the sum of the other two, and all three less than 360° in total)"
+cell_volume = "The unit cell's volume is 0. Check the angles"
+# {detail}: the parser's message
+file_invalid = "Cannot read this as an assembly file ({detail})"
+# {version}: the file's format version; {supported}: the newest this app reads
+file_newer = "This file was saved by a newer version of the app (format {version}; this version reads up to {supported})"
+file_no_version = "version is missing"
+# {count}: atoms the build would have; {max}: the limit
+too_large = "Too many atoms ({count}; at most {max} can be built). Reduce the repeat counts"
+# {name}: monomer name; {error}: why
+monomer = "Monomer \"{name}\": {error}"
+# {error}: why the crystal step cannot be built
+lattice = "Crystal: {error}"
+
+[assembly.place]
+# Shown at the bottom of the 3D view while a hand-placed molecule is selected.
+hint_manual = "Alt+drag to rotate, Shift+drag to move (Esc to deselect)"
+# Shown at the bottom of the 3D view while a molecule placed by the steps is selected. "Placement" is the panel section, "Place by hand" its button (assembly.place.detach).
+hint_step = "This molecule is placed by the steps. To move it, use \"Place by hand\" in the \"Placement\" section of the right panel"
+empty = "Add a monomer to place molecules here one at a time"
+# Tooltip of the monomer picker next to the Add button. "Monomers" is a panel section, "Add from file…" its button.
+component_tip = "The monomer to place. Add a guest molecule with \"Add from file…\" under \"Monomers\" first, then pick it here"
+# Button: places one molecule of the chosen monomer.
+add = "Add"
+add_tip = "Places one molecule of the chosen monomer that you can move by hand.\nIt goes next to the selected molecule (or at the centre of the view if none is selected), where it overlaps nothing"
+no_manual = "No molecules placed by hand"
+# A row of the list of hand-placed molecules. {index}: its number in the list, {name}: the monomer, {molecule}: its number among all molecules.
+manual_item = "{index}. {name} (molecule {molecule})"
+click_to_select = "Click to select"
+# Molecules removed from the steps' result (deleted or turned into hand-placed ones).
+excluded = { one = "{n} molecule taken out of the steps", other = "{n} molecules taken out of the steps" }
+# Small button: puts the molecules taken out of the steps back.
+restore = "Return to steps"
+restore_tip = "Puts every molecule taken out of the steps by deleting or placing by hand back where the steps place it\n(molecules you placed by hand stay as they are)"
+# Heading of the selected molecule. {index}: its number among the hand-placed molecules.
+manual_title = "Molecule {molecule} (placed by hand {index})"
+drag_hint = "In the viewer, Alt+drag rotates about the centroid and Shift+drag moves parallel to the screen"
+# Heading of the selected molecule that the steps place.
+step_title = "Molecule {molecule} (placed by steps)"
+step_note = "A molecule placed by the steps is set by the steps' parameters"
+# Button: turns a molecule placed by the steps into a hand-placed one.
+detach = "Place by hand"
+detach_tip = "Takes this molecule out of the steps and makes it a hand-placed molecule at the same position.\nYou can then move it on its own (Undo reverts this)"
+# Button: copies the selected molecule.
+duplicate = "Duplicate"
+duplicate_tip = "Places a molecule in the same orientation next to this one, where it overlaps nothing"
+remove_manual_tip = "Deletes this molecule"
+remove_step_tip = "Takes this molecule out of the steps (\"Return to steps\" brings it back)"
+# Button: deletes the selected molecule.
+remove = "Delete"
+select_hint = "Click an atom in the viewer to select its molecule"
+# Label of the x/y/z fields of a hand-placed molecule's position.
+position = "Position"
+position_tip = "Coordinates of the molecule's centroid"
+# Label of the x/y/z fields of a hand-placed molecule's rotation.
+rotation = "Rotation"
+rotation_tip = "Rotation about the centroid, about the x, then y, then z axis (extrinsic XYZ Euler angles)"
+
+[assembly.place.report]
+# Status after adding. {name}: the monomer, {molecule}: the new molecule's number.
+added = "Placed \"{name}\" as molecule {molecule}"
+# {source}: the copied molecule's number, {molecule}: the copy's number.
+duplicated = "Duplicated molecule {source} as molecule {molecule}"
+removed = "Deleted molecule {molecule}"
+# {source}: the molecule's number before, {molecule}: its number as a hand-placed molecule.
+detached = "Molecule {source} is now placed by hand (molecule {molecule}). Move it with Alt/Shift+drag or the fields"
+restored = "Returned the molecules taken out of the steps"
+
+[assembly.place.clash]
+checking = "Contacts between molecules: checking…"
+# Appended to the contact lines while the check is being redone (note the leading space).
+updating = " (updating…)"
+# {pending}: assembly.place.clash.updating or nothing.
+none = "Contacts between molecules: none{pending}"
+# Appended to the pair count when the list was cut short (note the leading space).
+at_least = " or more"
+# {more}: assembly.place.clash.at_least or nothing, {pending}: assembly.place.clash.updating or nothing.
+count = { one = "Atoms too close between molecules: {n} pair{more}{pending}", other = "Atoms too close between molecules: {n} pairs{more}{pending}" }
+tip = "Pairs of atoms of different molecules closer than 0.75 × the sum of their van der Waals radii (0.55 × for hydrogen bonds), closest first"
+# One atom in a clash line, e.g. "Molecule 3 C12". {element}: element symbol, {index}: the atom's number in its molecule.
+atom = "Molecule {molecule} {element}{index}"
+# Appended when the clash is with a periodic image of the molecule (note the leading space).
+periodic_image = " (periodic image)"
+# A clash line. {a}, {b}: assembly.place.clash.atom, {image}: assembly.place.clash.periodic_image or nothing, {distance}: e.g. 2.31.
+pair = "{a} – {b}{image}: {distance} Å"
+pick_tip = "Click to select the first molecule"
+# Below the clash list: how many pairs were not listed.
+more = { one = "{n} more pair", other = "{n} more pairs" }
+
+[assembly.pipeline]
+drag_tip = "Drag to reorder"
+collapse = "Hide parameters"
+expand = "Show parameters"
+remove = "Delete this step"
+lattice_single = "There can be only one crystal step"
+duplicate = "Duplicate this step (inserted right after it)"
+# Tooltip of a step's on/off switch while the step is used.
+enabled_tip = "In use (click to skip)"
+# Tooltip of a step's on/off switch while the step is skipped.
+disabled_tip = "Skipped (click to use)"
+
+[assembly.pipeline.summary]
+# Very short (a step card's one-line summary): how many copies the step makes.
+copies = { one = "{n} copy", other = "{n} copies" }
+# Very short: the array step also rotates each copy.
+rotated = "rotated"
+# Very short: a stack step's sideways slip. {value}: e.g. 1.50.
+slip = "slip {value}Å"
+# Very short: the crystal step's number of symmetry operations (when it matches no named space group).
+operations = { one = "{n} operation", other = "{n} operations" }
+# Very short: an array step with no spacing.
+no_spacing = "spacing 0Å"
+
+[assembly.pipeline.count]
+# After a step card: the step is skipped; {n} molecules so far.
+skipped = { one = "Skipped → {n} molecule", other = "Skipped → {n} molecules" }
+# After a step card: the crystal step's settings are invalid.
+cannot_build = { one = "Can't build → {n} molecule", other = "Can't build → {n} molecules" }
+# After a step card: molecules so far (when there is no whole factor).
+result = { one = "→ {n} molecule", other = "→ {n} molecules" }
+# After a step card: {factor} is how many times the step multiplies the molecules.
+times = { one = "× {factor} → {n} molecule", other = "× {factor} → {n} molecules" }
+
+[assembly.pipeline.add]
+# Heading of the box with one button per kind of step.
+title = "+ Add step"
+array_tip = "Lines up everything so far at a fixed spacing and rotation"
+ring_tip = "Arranges the molecules on a circle around the z axis (a rosette)"
+stack_tip = "Stacks everything so far along z. Twist and slip make it a helix"
+lattice_tip = "Takes everything so far as the asymmetric unit, builds the unit cell from the cell constants and the space group's symmetry operations, and repeats it"
+lattice_exists = "There already is a crystal step"
+
+[assembly.symop.system]
+# Crystal systems of the space-group presets, with the cell each needs.
+triclinic = "Triclinic (no constraints)"
+monoclinic = "Monoclinic (α = γ = 90°)"
+orthorhombic = "Orthorhombic (α = β = γ = 90°)"
+
+[assembly.symop.error]
+# Errors for symmetry operations typed as text, like "-x,y+1/2,-z".
+empty_operation = "The operation is empty"
+# {count}: how many comma-separated parts there are.
+component_count = "Write three components separated by \",\" (there are {count})"
+# {index}: 1, 2 or 3; {error}: one of the component errors below.
+in_component = "Component {index}: {error}"
+# {det}: the determinant of the rotation part.
+not_symmetry = "The combination of x, y and z is not a symmetry operation (its determinant {det} is not ±1)"
+empty_component = "It is empty"
+# {char}: the character that needs a sign before it.
+sign_needed = "\"{char}\" needs a + or - before it"
+ends_with_sign = "It ends with a sign"
+# {variable}: x, y or z.
+repeated_variable = "{variable} appears twice"
+# {example}: e.g. 2x.
+coefficient = "Variables with a coefficient (such as {example}) are not supported"
+bad_char = "Unreadable character \"{char}\""
+bad_number = "Cannot read the number \"{number}\""
+divide_by_zero = "\"{number}\" divides by zero"
+# {line}: line number, {text}: the line's text, {error}: one of the errors above.
+in_line = "Line {line} \"{text}\": {error}"
+duplicate = "Line {line} \"{text}\": the same operation is already there"
+no_operations = "There are no symmetry operations (at least x,y,z is needed)"
+no_identity = "Include the identity operation x,y,z"
+
+[scan.window]
+# Title of the parameter scan window.
+title = "Parameter scan"
+no_document = "No document is open"
+no_view = "Set up a scan in the 3D view (bond length, bond angle, dihedral) or the assembly view (step parameters, hand-placed molecules)"
+target_assembly = "Target: assembly (step parameters, selected hand-placed molecule)"
+target_model = "Target: 3D model (bond length, bond angle or dihedral of the selected atoms)"
+no_params = "Nothing to scan. Add a step in the assembly panel, or select a hand-placed molecule"
+# Placeholder of the parameter drop-down before one is chosen.
+choose = "Select a parameter"
+no_model = "No 3D model (available once generation and optimization have finished)"
+# An axis whose atoms are not chosen yet.
+unset = "Not set"
+# Small button: take the atoms selected in the 3D view as this axis's parameter.
+use_picked = "Use selected atoms"
+use_picked_tip = "Use the atoms selected in the 3D view for this axis (2 atoms: bond length, 3: bond angle, 4: dihedral)"
+use_picked_disabled_tip = "In the 3D view, select 2 to 4 bonded atoms in order (4 for a dihedral)"
+two_d = "2D scan (two parameters)"
+force_field = "Force field"
+# {total}: number of grid points; {atoms}: number of atoms; {unit}: energy unit such as kcal/mol.
+summary = "Points: {total} · atoms: {atoms} · single-point energy at each point, no optimization ({unit})"
+crystal_note = "Crystals are computed without periodic boundaries (the force fields do not support periodic systems, so this is the energy of the finite supercell that was built)"
+# {atoms}: atoms in the structure; {max}: the most a scan accepts.
+too_many_atoms = "Too many atoms ({atoms}). A scan takes at most {max} atoms"
+same_axes = "Both axes are the same parameter"
+start = "Start scan"
+start_disabled_tip = "Choose the parameters to scan"
+# Heading of one scanned axis; {number} is 1 or 2.
+axis = "Axis {number}"
+# Label before the first value of an axis's range.
+range_start = "Start"
+# Label before the last value of an axis's range.
+range_end = "End"
+# Label before the number of values along an axis.
+points = "Points"
+points_tip = "Number of points, start and end included"
+no_results = "No results yet"
+relative = "Show ΔE from the minimum"
+export_csv = "Export CSV…"
+# {values}: the parameter values of the lowest point; {energy}: the energy; {unit}: its unit.
+minimum = "Minimum: E = {energy} {unit} at {values}"
+plot_help = "Click a point (cell) to apply its parameter values to the structure (undoable). Scroll to zoom, drag to pan, double-click to reset the view"
+# Joins "parameter = value" items in a list (note the space after the comma).
+values_separator = ", "
+
+[scan.progress]
+# Progress bar text; {elapsed} is a duration such as "12.3 s".
+counts = "{done} / {total} points · elapsed {elapsed}"
+# Appended to the progress text (keep the leading " · ").
+remaining = " · about {remaining} left ({per_point} per point)"
+# Appended to the progress text (keep the leading " · ").
+cancelled = " · Cancelled"
+# Appended to the progress text (keep the leading " · ").
+done = " · Done"
+drift = "While scanning, OpenBabel's force field was used for another molecule (such as an optimization in another document), so the energy reference may differ between points. Scan again once the other calculations have finished"
+failed_points = { one = "{n} point could not be computed (left blank in the plot)", other = "{n} points could not be computed (left blank in the plot)" }
+
+[scan.export]
+cancelled = "Export cancelled"
+# {path}: the file written.
+done = "Exported to {path}"
+failed = "Could not export: {error}"
+
+[scan.apply]
+# {values}: the parameter values applied, e.g. "rise = 3.500 Å, twist = 30.0°".
+done = "Applied scan point: {values}"
+failed = "Could not apply: {error}"
+no_model = "No 3D model"
+model_changed = "Cannot apply: the 3D model has changed"
+# Name of the undo step.
+undo_label = "Apply scan point"
+
+[scan.plot]
+# Short label next to the lowest point of the plot.
+minimum = "Minimum"
+# Tooltip of a point not computed yet.
+not_computed = "Not computed"
+# Tooltip of a point whose energy could not be computed.
+failed = "Could not be computed"
+click_to_apply = "Click to apply to the structure"
+
+[scan.param]
+# Ring step parameter.
+ring_radius = "Radius"
+# Ring step parameter (an angle).
+ring_tilt = "Tilt"
+# Stack step parameter: the distance between layers.
+stack_rise = "Rise"
+# Stack step parameter (an angle).
+stack_twist = "Twist"
+# Stack step parameter: the lateral shift between layers.
+stack_slip = "Slip"
+# Array step parameter; {axis} is x, y or z.
+array_offset = "Offset {axis}"
+# Array step parameter; {axis} is x, y or z.
+array_rotation = "Rotation {axis}"
+# Hand-placed molecule parameter; {axis} is x, y or z.
+pose_position = "Position {axis}"
+# Hand-placed molecule parameter; {axis} is x, y or z.
+pose_rotation = "Rotation {axis}"
+# Generic name of an assembly building step.
+step = "Step"
+# {number}: the hand-placed molecule's number; {field}: e.g. "Position x".
+pose = "Hand-placed {number}: {field}"
+# {atoms}: the atoms, e.g. "C1–C2".
+bond = "Bond length {atoms}"
+angle = "Bond angle {atoms}"
+dihedral = "Dihedral {atoms}"
+
+[scan.error]
+item_missing = "The scanned item was not found (the assembly has changed)"
+model_param = "This parameter belongs to the 3D model"
+assembly_param = "This parameter belongs to the assembly"
+too_many_atoms = "Too many atoms ({atoms}). A scan takes at most {max} atoms. Reduce the number of repeats"
+start_failed = "Could not start the scan: {error}"
+empty_assembly = "The assembly has no molecules"
+
+[scan.duration]
+# {seconds}: e.g. "12.3".
+seconds = "{seconds} s"
+# {seconds}: two digits, e.g. "05".
+minutes = "{minutes} min {seconds} s"
+# {minutes}: two digits, e.g. "01".
+hours = "{hours} h {minutes} min"
+
+[text_format]
+# Title of the floating text format bar.
+title = "Format"
+# Font size choice meaning "no size set" (the default 10 pt).
+size_default = "Default"
+size_tip = "Text size (default 10 pt)"
+bold = "Bold"
+italic = "Italic"
+subscript = "Subscript"
+superscript = "Superscript"
+symbol_tip = "Symbol font (ChemDraw's Greek letters): p → π, D → Δ, m → μ\nApplies to the selected characters if any, otherwise to the characters typed next (Ctrl+G)"
+
+[text_format.target]
+# What the format bar applies to: texts created next.
+new_text = "New text"
+# What the format bar applies to: the selected characters of the open text box.
+selection = "Selected characters"
+# What the format bar applies to: the whole text of the open text box.
+whole_text = "Whole text"
+selected_texts = { one = "{n} selected text", other = "{n} selected texts" }
+
+[text_format.font]
+default = "Default font"
+# {font}: a font name.
+not_installed = "{font} (not installed)"
+search = "Search fonts"
+recent = "Recently used fonts"
+# The Symbol font's entry in the font list.
+symbol = "Symbol (Greek letters)"
+no_match = "No matching fonts"
+tip = "Font (a font name that is not installed is kept as is when saving)"
+
+[interactions]
+hbonds = "Hydrogen bonds"
+pi_stacking = "π-stacking"
+hbond_tip = "Shows pairs of an H on N, O or F and another N, O or F (the acceptor) as light-blue dotted lines.\nH···A ≤ 2.5 Å, D···A ≤ 3.5 Å, angle D–H···A ≥ 120°. Within one molecule, pairs up to 3 bonds apart are left out"
+pi_tip = "Shows overlapping aromatic rings (5- or 6-membered, planar, 4n+2 electrons) as yellow dotted lines between the ring centroids.\nParallel: centroid distance ≤ 4.4 Å, angle between planes ≤ 30°, lateral offset ≤ 2.0 Å.\nT-shaped: centroid distance ≤ 5.5 Å, angle 60–90°, offset ≤ 2.0 Å (after Marcou & Rognan 2007 and PLIP).\nFused rings and rings joined by a bond are not counted"
+# One hydrogen bond in the list: atom labels, the H···A distance and the D–H···A angle.
+hbond_entry = "{donor}–{hydrogen}···{acceptor}: {distance} Å ({angle}°)"
+# One π-stack in the list: each ring named by an atom; {kind} is the stacking kind (parallel/T-shaped).
+stack_entry = "Ring {ring_a} – ring {ring_b}: {distance} Å {kind} ({angle}°)"
+# Appended to a count that was capped (keep the leading space).
+or_more = " or more"
+# {more}: " or more" or empty; {pending}: a note that an update is running, or empty.
+hbond_count = { one = "Hydrogen bonds: {n}{more}{pending}", other = "Hydrogen bonds: {n}{more}{pending}" }
+# Count of hydrogen bonds not listed.
+more_hbonds = { one = "{n} more", other = "{n} more" }
+# {more}: " or more" or empty; {pending}: a note that an update is running, or empty.
+stack_count = { one = "π-stacking: {n}{more}{pending}", other = "π-stacking: {n}{more}{pending}" }
+# Count of π-stacks not listed.
+more_stacks = { one = "{n} more", other = "{n} more" }

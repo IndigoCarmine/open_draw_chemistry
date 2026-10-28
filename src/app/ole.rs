@@ -77,7 +77,7 @@ impl OpenDrawApp {
             let loaded = match cdx.as_deref().map(|c| io::decode(Format::Cdx, c)) {
                 Some(Ok(loaded)) => Some(loaded),
                 Some(Err(e)) => {
-                    self.status = format!("埋め込みオブジェクトを読み込めませんでした: {e}");
+                    self.status = t!("ole.embed.load_failed", error = e);
                     None
                 }
                 None => None,
@@ -94,11 +94,7 @@ impl OpenDrawApp {
                 self.docs.push(doc);
                 self.active = self.docs.len() - 1;
             }
-            self.status = format!(
-                "{} の埋め込みオブジェクトを編集しています。保存するかタブを閉じると {} の文書に反映されます",
-                host.short_app(),
-                host.short_app()
-            );
+            self.status = t!("ole.embed.editing", app = host.short_app());
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -117,11 +113,11 @@ impl OpenDrawApp {
                 if let Some(bridge) = &self.ole {
                     bridge.send(ToServer::Update { id, cdx });
                 }
-                self.status = format!("{} の文書に反映しました", container.unwrap_or_default());
+                self.status = t!("ole.embed.committed", app = container.unwrap_or_default());
                 true
             }
             Err(e) => {
-                self.status = format!("保存できませんでした: {e}");
+                self.status = t!("app.status.save_failed", error = e);
                 false
             }
         }
@@ -233,7 +229,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.poll_ole(&ctx);
         assert_eq!(app.docs.len(), 1);
-        assert_eq!(app.docs[0].title(), "Word の埋め込み — 文書 1");
+        assert_eq!(app.docs[0].title(), "Embedded in Word — 文書 1");
         assert_eq!(app.docs[0].editor.molecule.atoms.len(), 1);
 
         // Opening it again only brings it to the front.

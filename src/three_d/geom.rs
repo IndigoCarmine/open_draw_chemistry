@@ -260,13 +260,13 @@ pub enum EditError {
 impl fmt::Display for EditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            EditError::NotBonded => "選んだ原子が結合でつながっていません",
-            EditError::InRing => "環の中の結合は変更できません",
-            EditError::AnchorBlocks => "固定した原子があるため動かせる側がありません",
-            EditError::NotConnected => "2 つの原子が同じ分子の中にありません",
-            EditError::NoRotatableBond => "2 原子の間に回転できる単結合がありません",
-            EditError::BadTarget => "目標値が範囲外です",
-            EditError::Degenerate => "原子が重なっていて方向が決まりません",
+            EditError::NotBonded => t!("three_d.error.edit_not_bonded"),
+            EditError::InRing => t!("three_d.error.edit_in_ring"),
+            EditError::AnchorBlocks => t!("three_d.error.edit_anchor_blocks"),
+            EditError::NotConnected => t!("three_d.error.edit_not_connected"),
+            EditError::NoRotatableBond => t!("three_d.error.edit_no_rotatable_bond"),
+            EditError::BadTarget => t!("three_d.error.edit_bad_target"),
+            EditError::Degenerate => t!("three_d.error.edit_degenerate"),
         })
     }
 }
@@ -331,10 +331,10 @@ pub enum RotateReject {
 impl fmt::Display for RotateReject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            RotateReject::NotABond => "結合ではありません",
-            RotateReject::Multiple => "多重結合・芳香族結合は回転できません",
-            RotateReject::Ring => "環の中の結合は回転できません",
-            RotateReject::Terminal => "末端の結合は回しても形が変わりません",
+            RotateReject::NotABond => t!("three_d.error.rotate_not_a_bond"),
+            RotateReject::Multiple => t!("three_d.error.rotate_multiple"),
+            RotateReject::Ring => t!("three_d.error.rotate_ring"),
+            RotateReject::Terminal => t!("three_d.error.rotate_terminal"),
         })
     }
 }

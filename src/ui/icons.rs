@@ -52,6 +52,8 @@ pub enum Icon {
     ToggleOn,
     /// An empty ring: switched off.
     ToggleOff,
+    /// A globe (meridians and parallels): the UI language.
+    Globe,
 }
 
 /// Maps the 20 × 20 design space into `rect`.
@@ -295,6 +297,22 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             c.dot(10.0, 10.0, 3.6);
         }
         Icon::ToggleOff => c.ring(10.0, 10.0, 7.0),
+        Icon::Globe => {
+            c.ring(10.0, 10.0, 7.5);
+            // The central meridian, and an ellipse for the meridians either side of it.
+            c.line(&[(10.0, 2.5), (10.0, 17.5)]);
+            let ellipse: Vec<(f32, f32)> = (0..=24)
+                .map(|i| {
+                    let a = std::f32::consts::TAU * i as f32 / 24.0;
+                    (10.0 + 3.6 * a.cos(), 10.0 + 7.5 * a.sin())
+                })
+                .collect();
+            c.closed(&ellipse);
+            // The equator and two parallels.
+            c.line(&[(2.5, 10.0), (17.5, 10.0)]);
+            c.line(&[(3.9, 6.0), (16.1, 6.0)]);
+            c.line(&[(3.9, 14.0), (16.1, 14.0)]);
+        }
     }
 }
 
@@ -478,6 +496,7 @@ mod tests {
                 Icon::ChevronUp,
                 Icon::ToggleOn,
                 Icon::ToggleOff,
+                Icon::Globe,
             ] {
                 let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(14.0));
                 paint(ui.painter(), rect, icon, Color32::WHITE);

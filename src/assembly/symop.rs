@@ -75,29 +75,32 @@ impl SymOp {
             })
             .collect();
         if text.is_empty() {
-            return Err("空の操作です".to_owned());
+            return Err(t!("assembly.symop.error.empty_operation").to_owned());
         }
         let parts: Vec<&str> = text.split(',').collect();
         if parts.len() != 3 {
-            return Err(format!(
-                "成分は「,」で区切った 3 つにしてください（{} 個あります）",
-                parts.len()
+            return Err(t!(
+                "assembly.symop.error.component_count",
+                count = parts.len()
             ));
         }
         let mut rot = [[0; 3]; 3];
         let mut trans = [0.0; 3];
         for (i, part) in parts.iter().enumerate() {
-            let (row, t) =
-                parse_component(part).map_err(|e| format!("{} 番目の成分: {e}", i + 1))?;
+            let (row, t) = parse_component(part).map_err(|e| {
+                t!(
+                    "assembly.symop.error.in_component",
+                    index = i + 1,
+                    error = e
+                )
+            })?;
             rot[i] = row;
             trans[i] = wrap_unit(t);
         }
         let op = SymOp { rot, trans };
         let det = math::det(&op.rot_f64());
         if (det.abs() - 1.0).abs() > 1e-9 {
-            return Err(format!(
-                "x・y・z の組み合わせが対称操作になっていません（行列式 {det} が ±1 ではありません）"
-            ));
+            return Err(t!("assembly.symop.error.not_symmetry", det = det));
         }
         Ok(op)
     }
@@ -112,7 +115,7 @@ fn wrap_unit(t: f64) -> f64 {
 /// One component: the coefficients of x, y, z and the constant.
 fn parse_component(s: &str) -> Result<([i32; 3], f64), String> {
     if s.is_empty() {
-        return Err("空です".to_owned());
+        return Err(t!("assembly.symop.error.empty_component").to_owned());
     }
     let chars: Vec<char> = s.chars().collect();
     let mut row = [0; 3];
@@ -130,17 +133,17 @@ fn parse_component(s: &str) -> Result<([i32; 3], f64), String> {
                 -1
             }
             _ if first => 1,
-            c => return Err(format!("「{c}」の前に + か - が必要です")),
+            c => return Err(t!("assembly.symop.error.sign_needed", char = c)),
         };
         first = false;
         let Some(&c) = chars.get(i) else {
-            return Err("符号で終わっています".to_owned());
+            return Err(t!("assembly.symop.error.ends_with_sign").to_owned());
         };
         match c {
             'x' | 'y' | 'z' => {
                 let axis = (c as u8 - b'x') as usize;
                 if row[axis] != 0 {
-                    return Err(format!("{c} が 2 回出てきます"));
+                    return Err(t!("assembly.symop.error.repeated_variable", variable = c));
                 }
                 row[axis] = sign;
                 i += 1;
@@ -157,13 +160,14 @@ fn parse_component(s: &str) -> Result<([i32; 3], f64), String> {
                 if let Some(&next) = chars.get(i)
                     && matches!(next, 'x' | 'y' | 'z' | '*')
                 {
-                    return Err(format!(
-                        "係数付きの変数（{number}{next} など）には対応していません"
+                    return Err(t!(
+                        "assembly.symop.error.coefficient",
+                        example = format!("{number}{next}")
                     ));
                 }
                 constant += f64::from(sign) * value;
             }
-            c => return Err(format!("読めない文字「{c}」があります")),
+            c => return Err(t!("assembly.symop.error.bad_char", char = c)),
         }
     }
     Ok((row, constant))
@@ -171,13 +175,13 @@ fn parse_component(s: &str) -> Result<([i32; 3], f64), String> {
 
 /// A decimal (`0.5`) or a fraction (`1/2`).
 fn parse_number(s: &str) -> Result<f64, String> {
-    let bad = || format!("数「{s}」が読めません");
+    let bad = || t!("assembly.symop.error.bad_number", number = s);
     let value = match s.split_once('/') {
         Some((n, d)) => {
             let n: f64 = n.parse().map_err(|_| bad())?;
             let d: f64 = d.parse().map_err(|_| bad())?;
             if d == 0.0 {
-                return Err(format!("「{s}」は 0 で割っています"));
+                return Err(t!("assembly.symop.error.divide_by_zero", number = s));
             }
             n / d
         }
@@ -275,20 +279,28 @@ pub fn parse_list(text: &str) -> Result<Vec<SymOp>, String> {
             line = rest.trim();
         }
         let line = line.trim_matches(|c| c == '\'' || c == '"').trim();
-        let op = SymOp::parse(line).map_err(|e| format!("{} 行目「{line}」: {e}", n + 1))?;
+        let op = SymOp::parse(line).map_err(|e| {
+            t!(
+                "assembly.symop.error.in_line",
+                line = n + 1,
+                text = line,
+                error = e
+            )
+        })?;
         if ops.contains(&op) {
-            return Err(format!(
-                "{} 行目「{line}」: 同じ操作がすでにあります",
-                n + 1
+            return Err(t!(
+                "assembly.symop.error.duplicate",
+                line = n + 1,
+                text = line
             ));
         }
         ops.push(op);
     }
     if ops.is_empty() {
-        return Err("対称操作がありません（少なくとも x,y,z が必要です）".to_owned());
+        return Err(t!("assembly.symop.error.no_operations").to_owned());
     }
     if !ops.iter().any(SymOp::is_identity) {
-        return Err("恒等操作 x,y,z を含めてください".to_owned());
+        return Err(t!("assembly.symop.error.no_identity").to_owned());
     }
     Ok(ops)
 }
@@ -301,6 +313,43 @@ pub fn format_list(ops: &[SymOp]) -> String {
         .join("\n")
 }
 
+/// The crystal system of a preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrystalSystem {
+    Triclinic,
+    Monoclinic,
+    Orthorhombic,
+}
+
+impl CrystalSystem {
+    /// The system and the cell it needs, as the panel shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            CrystalSystem::Triclinic => t!("assembly.symop.system.triclinic"),
+            CrystalSystem::Monoclinic => t!("assembly.symop.system.monoclinic"),
+            CrystalSystem::Orthorhombic => t!("assembly.symop.system.orthorhombic"),
+        }
+    }
+}
+
+impl fmt::Display for CrystalSystem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+impl From<CrystalSystem> for String {
+    fn from(system: CrystalSystem) -> String {
+        system.label().to_owned()
+    }
+}
+
+impl From<CrystalSystem> for egui::WidgetText {
+    fn from(system: CrystalSystem) -> egui::WidgetText {
+        system.label().into()
+    }
+}
+
 /// A space group offered in the panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Preset {
@@ -308,8 +357,8 @@ pub struct Preset {
     pub name: &'static str,
     /// The full Hermann–Mauguin symbol (with the setting), written to CIF.
     pub hm: &'static str,
-    /// The crystal system, and the cell it needs, as a reminder in the panel.
-    pub system: &'static str,
+    /// The crystal system, whose label (with the cell it needs) is a reminder in the panel.
+    pub system: CrystalSystem,
     /// The general position, as in the International Tables (centring included).
     pub ops: &'static [&'static str],
 }
@@ -331,31 +380,31 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         name: "P1",
         hm: "P 1",
-        system: "三斜晶（制約なし）",
+        system: CrystalSystem::Triclinic,
         ops: &["x,y,z"],
     },
     Preset {
         name: "P-1",
         hm: "P -1",
-        system: "三斜晶（制約なし）",
+        system: CrystalSystem::Triclinic,
         ops: &["x,y,z", "-x,-y,-z"],
     },
     Preset {
         name: "P2₁",
         hm: "P 1 21 1",
-        system: "単斜晶（α = γ = 90°）",
+        system: CrystalSystem::Monoclinic,
         ops: &["x,y,z", "-x,y+1/2,-z"],
     },
     Preset {
         name: "P2₁/c",
         hm: "P 1 21/c 1",
-        system: "単斜晶（α = γ = 90°）",
+        system: CrystalSystem::Monoclinic,
         ops: &["x,y,z", "-x,y+1/2,-z+1/2", "-x,-y,-z", "x,-y+1/2,z+1/2"],
     },
     Preset {
         name: "P2₁/n",
         hm: "P 1 21/n 1",
-        system: "単斜晶（α = γ = 90°）",
+        system: CrystalSystem::Monoclinic,
         ops: &[
             "x,y,z",
             "-x+1/2,y+1/2,-z+1/2",
@@ -366,7 +415,7 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         name: "C2/c",
         hm: "C 1 2/c 1",
-        system: "単斜晶（α = γ = 90°）",
+        system: CrystalSystem::Monoclinic,
         ops: &[
             "x,y,z",
             "-x,y,-z+1/2",
@@ -381,19 +430,19 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         name: "Cc",
         hm: "C 1 c 1",
-        system: "単斜晶（α = γ = 90°）",
+        system: CrystalSystem::Monoclinic,
         ops: &["x,y,z", "x,-y,z+1/2", "x+1/2,y+1/2,z", "x+1/2,-y+1/2,z+1/2"],
     },
     Preset {
         name: "C2",
         hm: "C 1 2 1",
-        system: "単斜晶（α = γ = 90°）",
+        system: CrystalSystem::Monoclinic,
         ops: &["x,y,z", "-x,y,-z", "x+1/2,y+1/2,z", "-x+1/2,y+1/2,-z"],
     },
     Preset {
         name: "P2₁2₁2₁",
         hm: "P 21 21 21",
-        system: "直方晶（α = β = γ = 90°）",
+        system: CrystalSystem::Orthorhombic,
         ops: &[
             "x,y,z",
             "-x+1/2,-y,z+1/2",
@@ -404,7 +453,7 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         name: "Pna2₁",
         hm: "P n a 21",
-        system: "直方晶（α = β = γ = 90°）",
+        system: CrystalSystem::Orthorhombic,
         ops: &[
             "x,y,z",
             "-x,-y,z+1/2",
@@ -415,7 +464,7 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         name: "Pbca",
         hm: "P b c a",
-        system: "直方晶（α = β = γ = 90°）",
+        system: CrystalSystem::Orthorhombic,
         ops: &[
             "x,y,z",
             "-x+1/2,-y,z+1/2",
@@ -430,7 +479,7 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         name: "Pnma",
         hm: "P n m a",
-        system: "直方晶（α = β = γ = 90°）",
+        system: CrystalSystem::Orthorhombic,
         ops: &[
             "x,y,z",
             "-x+1/2,-y,z+1/2",
@@ -491,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_operations_are_refused_in_japanese() {
+    fn malformed_operations_are_refused_with_a_message() {
         for bad in [
             "",
             "x,y",
@@ -507,13 +556,16 @@ mod tests {
             "x,y,1/2",
         ] {
             let err = SymOp::parse(bad).unwrap_err();
-            assert!(!err.is_ascii(), "{bad:?}: {err}");
+            assert!(
+                !err.is_empty() && !err.starts_with("assembly."),
+                "{bad:?}: {err}"
+            );
         }
         let err = parse_list("x,y,z\n-x,-y,-z\n-x,-y,-z").unwrap_err();
-        assert!(err.starts_with("3 行目"), "{err}");
-        assert!(parse_list("-x,-y,-z").unwrap_err().contains("恒等"));
+        assert!(err.starts_with("Line 3"), "{err}");
+        assert!(parse_list("-x,-y,-z").unwrap_err().contains("identity"));
         assert!(parse_list("\n  \n").is_err());
-        assert!(parse_list("x,y,z\nbad").unwrap_err().starts_with("2 行目"));
+        assert!(parse_list("x,y,z\nbad").unwrap_err().starts_with("Line 2"));
     }
 
     #[test]
@@ -544,7 +596,7 @@ mod tests {
         // Every preset fits a cell of its system.
         let orthogonal = Cell { beta: 90.0, ..cell };
         for p in PRESETS {
-            let cell = if p.system.starts_with("直方") {
+            let cell = if p.system == CrystalSystem::Orthorhombic {
                 orthogonal
             } else {
                 cell

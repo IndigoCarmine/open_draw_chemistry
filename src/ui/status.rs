@@ -37,18 +37,24 @@ pub fn status_bar(ui: &mut egui::Ui, doc: Option<&Document>, message: &str) {
 
         if let Some(doc) = doc {
             let editor = &doc.editor;
-            pair(ui, "ツール：", tool_name(editor));
-            pair(ui, "元素：", &editor.current_element);
-            ui.label(small(format!(
-                "原子 {} · 結合 {}",
-                editor.molecule.atoms.len(),
-                editor.molecule.bonds.len()
+            pair(ui, t!("status_bar.tool"), tool_name(editor));
+            pair(ui, t!("status_bar.element"), &editor.current_element);
+            ui.label(small(t!(
+                "status_bar.counts",
+                atoms = editor.molecule.atoms.len(),
+                bonds = editor.molecule.bonds.len()
             )));
             let formula = MolecularFormula::of(&editor.molecule);
             if !formula.is_empty() {
                 ui.label(small(formula.plain()));
             }
         }
+        // No message yet (or an empty one): the bar says it is ready.
+        let message = if message.is_empty() {
+            t!("status_bar.ready")
+        } else {
+            message
+        };
         ui.label(small(message.to_owned()));
         if let Some(doc) = doc {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

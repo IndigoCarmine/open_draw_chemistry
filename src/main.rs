@@ -58,6 +58,10 @@ fn main() -> eframe::Result<()> {
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
 
+    // Registration writes translated verbs to the registry: use the OS language for them (the
+    // app sets the user's saved choice itself once its window opens).
+    #[cfg(windows)]
+    open_draw_chemistry::i18n::set_language(open_draw_chemistry::i18n::Lang::system());
     #[cfg(windows)]
     if let Some(result) = ole::run(&args) {
         return result;
@@ -98,20 +102,20 @@ mod ole {
                     .collect();
                 match register::register_current_exe(&extra.join(" ")) {
                     Ok(r) => {
-                        println!("OLE サーバーを登録しました: {}", r.created.join(", "));
+                        println!("OLE サーバーを登録しました: {}", r.created.join(", ")); // i18n-allow: CLI output
                         if r.treat_as {
-                            println!("ChemDraw のオブジェクトをこのアプリで開くよう設定しました");
+                            println!("ChemDraw のオブジェクトをこのアプリで開くよう設定しました"); // i18n-allow: CLI output
                         } else {
                             println!(
-                                "ChemDraw がインストールされているため、ChemDraw の設定は変更していません"
+                                "ChemDraw がインストールされているため、ChemDraw の設定は変更していません" // i18n-allow: CLI output
                             );
                         }
                         if r.removed_stale_treat_as {
-                            println!("以前の ChemDraw の代理設定を取り消しました");
+                            println!("以前の ChemDraw の代理設定を取り消しました"); // i18n-allow: CLI output
                         }
                     }
                     Err(e) => {
-                        eprintln!("OLE サーバーを登録できませんでした: {e}");
+                        eprintln!("OLE サーバーを登録できませんでした: {e}"); // i18n-allow: CLI output
                         std::process::exit(1);
                     }
                 }
@@ -119,10 +123,10 @@ mod ole {
             }
             Some("--unregister-ole") => {
                 if let Err(e) = register::unregister_current_user() {
-                    eprintln!("OLE サーバーの登録を解除できませんでした: {e}");
+                    eprintln!("OLE サーバーの登録を解除できませんでした: {e}"); // i18n-allow: CLI output
                     std::process::exit(1);
                 }
-                println!("OLE サーバーの登録を解除しました");
+                println!("OLE サーバーの登録を解除しました"); // i18n-allow: CLI output
                 Some(Ok(()))
             }
             _ if ole_server::is_embedding_launch(args) => Some(serve(args)),
@@ -157,7 +161,7 @@ mod ole {
         let (server, mut bridge) = match com::Server::start(own_class) {
             Ok(started) => started,
             Err(e) => {
-                ole_server::log(&format!("OLE サーバーを開始できませんでした: {e}"));
+                ole_server::log(&format!("OLE サーバーを開始できませんでした: {e}")); // i18n-allow: log output
                 return Ok(());
             }
         };

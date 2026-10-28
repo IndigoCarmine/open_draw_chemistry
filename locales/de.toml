@@ -1,0 +1,14 @@
+# Open DrawChemistry — German (de) UI strings.
+#
+# Partial: a key missing here (or left empty) is shown in English. To translate, copy keys
+# from en.toml, keeping each key and every {placeholder}; en.toml's header and
+# locales/README.md explain the placeholder and plural syntax. Plural categories for this
+# language are listed in locales/README.md.
+
+[common]
+cancel = "Abbrechen"
+coming_soon = "Demnächst"
+
+[language]
+menu = "Sprache (Language)"
+tooltip = "Sprache (Language)"

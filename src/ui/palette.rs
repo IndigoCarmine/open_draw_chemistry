@@ -81,37 +81,58 @@ impl BondKind {
     }
 }
 
-const BUTTONS: [(Icon, &str, Action); 17] = [
-    (Icon::Select, "選択", Action::Tool(PaletteTool::Select)),
-    (Icon::Eraser, "消しゴム", Action::Tool(PaletteTool::Eraser)),
-    (Icon::Single, "単結合", Action::Bond(BondKind::Single)),
-    (Icon::Double, "二重結合", Action::Bond(BondKind::Double)),
-    (Icon::Triple, "三重結合", Action::Bond(BondKind::Triple)),
-    (Icon::Wedge, "くさび結合", Action::Bond(BondKind::Wedge)),
-    (Icon::Hash, "破線くさび", Action::Bond(BondKind::Hash)),
-    (Icon::Wavy, "波線結合", Action::Bond(BondKind::Wavy)),
-    (Icon::Chain, "鎖", Action::Planned),
-    (Icon::Benzene, "ベンゼン環", Action::Planned),
-    (Icon::Cyclopentane, "シクロペンタン", Action::Planned),
-    (Icon::Cyclohexane, "シクロヘキサン", Action::Planned),
-    (Icon::Text, "テキスト", Action::Tool(PaletteTool::Text)),
+const BUTTONS: [(Icon, Action); 17] = [
+    (Icon::Select, Action::Tool(PaletteTool::Select)),
+    (Icon::Eraser, Action::Tool(PaletteTool::Eraser)),
+    (Icon::Single, Action::Bond(BondKind::Single)),
+    (Icon::Double, Action::Bond(BondKind::Double)),
+    (Icon::Triple, Action::Bond(BondKind::Triple)),
+    (Icon::Wedge, Action::Bond(BondKind::Wedge)),
+    (Icon::Hash, Action::Bond(BondKind::Hash)),
+    (Icon::Wavy, Action::Bond(BondKind::Wavy)),
+    (Icon::Chain, Action::Planned),
+    (Icon::Benzene, Action::Planned),
+    (Icon::Cyclopentane, Action::Planned),
+    (Icon::Cyclohexane, Action::Planned),
+    (Icon::Text, Action::Tool(PaletteTool::Text)),
     (
         Icon::Arrow,
-        "反応矢印",
         Action::Tool(PaletteTool::Arrow(ArrowKind::Reaction)),
     ),
     (
         Icon::Equilibrium,
-        "平衡矢印",
         Action::Tool(PaletteTool::Arrow(ArrowKind::Equilibrium)),
     ),
-    (Icon::Bracket, "ブラケット", Action::BracketMenu),
+    (Icon::Bracket, Action::BracketMenu),
     (
         Icon::Table,
-        "反応表を挿入",
         Action::Command(PaletteCommand::InsertReactionTable),
     ),
 ];
+
+/// The name of the palette button with `icon` (its tooltip, and the tool in the status bar).
+fn button_name(icon: Icon) -> &'static str {
+    match icon {
+        Icon::Select => t!("palette.tool.select"),
+        Icon::Eraser => t!("palette.tool.eraser"),
+        Icon::Single => t!("palette.tool.single_bond"),
+        Icon::Double => t!("palette.tool.double_bond"),
+        Icon::Triple => t!("palette.tool.triple_bond"),
+        Icon::Wedge => t!("palette.tool.wedge_bond"),
+        Icon::Hash => t!("palette.tool.hashed_wedge"),
+        Icon::Wavy => t!("palette.tool.wavy_bond"),
+        Icon::Chain => t!("palette.tool.chain"),
+        Icon::Benzene => t!("palette.tool.benzene"),
+        Icon::Cyclopentane => t!("palette.tool.cyclopentane"),
+        Icon::Cyclohexane => t!("palette.tool.cyclohexane"),
+        Icon::Text => t!("palette.tool.text"),
+        Icon::Arrow => t!("palette.tool.reaction_arrow"),
+        Icon::Equilibrium => t!("palette.tool.equilibrium_arrow"),
+        Icon::Bracket => t!("palette.tool.bracket"),
+        Icon::Table => t!("palette.tool.insert_reaction_table"),
+        _ => "",
+    }
+}
 
 /// Whether `action` is the editor's current state.
 fn is_selected(editor: &ChemStructEditor, action: Action) -> bool {
@@ -140,19 +161,19 @@ fn apply(editor: &mut ChemStructEditor, action: Action) {
     }
 }
 
-/// Japanese name of the editor's current tool, for the status bar: the palette button that
+/// Name of the editor's current tool, for the status bar: the palette button that
 /// is selected, or the bare tool when the bond style is one the palette does not offer.
 pub fn tool_name(editor: &ChemStructEditor) -> &'static str {
-    if let Some((_, name, _)) = BUTTONS.iter().find(|(_, _, a)| is_selected(editor, *a)) {
-        return name;
+    if let Some((icon, _)) = BUTTONS.iter().find(|(_, a)| is_selected(editor, *a)) {
+        return button_name(*icon);
     }
     match editor.tool {
-        Tool::Select => "選択",
-        Tool::Bond => "結合",
-        Tool::Eraser => "消しゴム",
-        Tool::Text => "テキスト",
-        Tool::Arrow(ArrowKind::Reaction) => "反応矢印",
-        Tool::Arrow(ArrowKind::Equilibrium) => "平衡矢印",
+        Tool::Select => t!("palette.tool.select"),
+        Tool::Bond => t!("palette.tool.bond"),
+        Tool::Eraser => t!("palette.tool.eraser"),
+        Tool::Text => t!("palette.tool.text"),
+        Tool::Arrow(ArrowKind::Reaction) => t!("palette.tool.reaction_arrow"),
+        Tool::Arrow(ArrowKind::Equilibrium) => t!("palette.tool.equilibrium_arrow"),
     }
 }
 
@@ -173,46 +194,46 @@ pub fn insert_reaction_table(editor: &mut ChemStructEditor) -> &'static str {
     match editor.insert_reaction_table() {
         Some(_) => {
             apply(editor, Action::Tool(PaletteTool::Select));
-            "反応表を挿入しました。セルをダブルクリックすると当量・質量などを入力できます（入力欄は Enter で確定）"
+            t!("palette.reaction_table.inserted")
         }
-        None => "反応表にする構造がありません。先に構造と反応矢印を描いてください",
+        None => t!("palette.reaction_table.nothing_to_tabulate"),
     }
 }
 
-/// The bracket usages the chooser offers, with their menu labels.
-pub const BRACKET_USAGES: [(BracketUsage, &str); 8] = [
-    (BracketUsage::Sru, "繰り返し単位（n）"),
-    (BracketUsage::MultipleGroup, "多重基（×n）"),
-    (BracketUsage::Copolymer, "共重合体（co）"),
-    (BracketUsage::CopolymerAlternating, "交互共重合体（alt）"),
-    (BracketUsage::CopolymerRandom, "ランダム共重合体（ran）"),
-    (BracketUsage::CopolymerBlock, "ブロック共重合体（blk）"),
-    (BracketUsage::Generic, "ポリマー（一般, gen）"),
-    (BracketUsage::MixtureUnordered, "混合物（mix）"),
+/// The bracket usages the chooser offers (labels from [`usage_name`]).
+pub const BRACKET_USAGES: [BracketUsage; 8] = [
+    BracketUsage::Sru,
+    BracketUsage::MultipleGroup,
+    BracketUsage::Copolymer,
+    BracketUsage::CopolymerAlternating,
+    BracketUsage::CopolymerRandom,
+    BracketUsage::CopolymerBlock,
+    BracketUsage::Generic,
+    BracketUsage::MixtureUnordered,
 ];
 
-/// The bracket shapes the chooser offers.
-pub const BRACKET_SHAPES: [(BracketShape, &str); 3] = [
-    (BracketShape::Square, "角括弧 [ ]"),
-    (BracketShape::Round, "丸括弧 ( )"),
-    (BracketShape::Curly, "波括弧 { }"),
+/// The bracket shapes the chooser offers (labels from [`shape_name`]).
+pub const BRACKET_SHAPES: [BracketShape; 3] = [
+    BracketShape::Square,
+    BracketShape::Round,
+    BracketShape::Curly,
 ];
 
 /// The bracket chooser (the palette's ブラケット button, the 構造 menu): one item per usage, then
 /// the shapes. Returns whether an item was chosen.
 pub fn bracket_menu(ui: &mut egui::Ui, out: &mut Vec<Command>) -> bool {
     let mut chosen = false;
-    ui.label(egui::RichText::new("選択した原子を括弧で囲む").weak());
-    for (usage, label) in BRACKET_USAGES {
-        if ui.button(label).clicked() {
+    ui.label(egui::RichText::new(t!("palette.bracket.enclose_heading")).weak());
+    for usage in BRACKET_USAGES {
+        if ui.button(usage_name(usage)).clicked() {
             out.push(Command::Bracket(usage));
             chosen = true;
         }
     }
     ui.separator();
-    ui.label(egui::RichText::new("選択した括弧の形").weak());
-    for (shape, label) in BRACKET_SHAPES {
-        if ui.button(label).clicked() {
+    ui.label(egui::RichText::new(t!("palette.bracket.shape_heading")).weak());
+    for shape in BRACKET_SHAPES {
+        if ui.button(shape_name(shape)).clicked() {
             out.push(Command::BracketShape(shape));
             chosen = true;
         }
@@ -220,11 +241,28 @@ pub fn bracket_menu(ui: &mut egui::Ui, out: &mut Vec<Command>) -> bool {
     chosen
 }
 
+/// The menu label of a bracket usage.
 fn usage_name(usage: BracketUsage) -> &'static str {
-    BRACKET_USAGES
-        .iter()
-        .find(|(u, _)| *u == usage)
-        .map_or("括弧", |(_, label)| label)
+    match usage {
+        BracketUsage::Sru => t!("palette.bracket.usage.sru"),
+        BracketUsage::MultipleGroup => t!("palette.bracket.usage.multiple_group"),
+        BracketUsage::Copolymer => t!("palette.bracket.usage.copolymer"),
+        BracketUsage::CopolymerAlternating => t!("palette.bracket.usage.alternating"),
+        BracketUsage::CopolymerRandom => t!("palette.bracket.usage.random"),
+        BracketUsage::CopolymerBlock => t!("palette.bracket.usage.block"),
+        BracketUsage::Generic => t!("palette.bracket.usage.generic"),
+        BracketUsage::MixtureUnordered => t!("palette.bracket.usage.mixture"),
+        _ => t!("palette.bracket.usage.unknown"),
+    }
+}
+
+/// The menu label of a bracket shape.
+fn shape_name(shape: BracketShape) -> &'static str {
+    match shape {
+        BracketShape::Square => t!("palette.bracket.shape.square"),
+        BracketShape::Round => t!("palette.bracket.shape.round"),
+        BracketShape::Curly => t!("palette.bracket.shape.curly"),
+    }
 }
 
 /// 括弧で囲む: brackets of `usage` around the selected atoms — or, when the selection is
@@ -252,13 +290,13 @@ pub fn bracket_selection(editor: &mut ChemStructEditor, usage: BracketUsage) -> 
             .filter(|&&id| editor.set_bracket_usage(id, usage))
             .count();
         return if changed > 0 {
-            format!("選択した括弧を「{name}」にしました")
+            t!("palette.bracket.usage_changed", name = name)
         } else {
-            format!("選択した括弧はすでに「{name}」です")
+            t!("palette.bracket.usage_unchanged", name = name)
         };
     }
     let Some(id) = editor.bracket_selection(usage) else {
-        return "括弧で囲む原子を選択してください（選択ツールで範囲をドラッグ）".to_owned();
+        return t!("palette.bracket.select_atoms").to_owned();
     };
     apply(editor, Action::Tool(PaletteTool::Select));
     let crossings = match editor.molecule.object_by_id(id) {
@@ -266,18 +304,12 @@ pub fn bracket_selection(editor: &mut ChemStructEditor, usage: BracketUsage) -> 
         _ => 0,
     };
     let mut message = match usage {
-        BracketUsage::Sru => {
-            "繰り返し単位の括弧を付けました。ラベル n はダブルクリックで編集できます".to_owned()
-        }
-        BracketUsage::MultipleGroup => {
-            "多重基の括弧を付けました。繰り返し数（2）はダブルクリックで編集できます".to_owned()
-        }
-        _ => format!("「{name}」の括弧を付けました"),
+        BracketUsage::Sru => t!("palette.bracket.added_sru").to_owned(),
+        BracketUsage::MultipleGroup => t!("palette.bracket.added_multiple_group").to_owned(),
+        _ => t!("palette.bracket.added", name = name),
     };
     if usage.is_polymer_unit() && crossings != 2 {
-        message.push_str(&format!(
-            "（括弧を横切る結合が {crossings} 本です。繰り返し単位は通常、両側に 1 本ずつです）"
-        ));
+        message.push_str(&tn!("palette.bracket.crossing_note", crossings));
     }
     message
 }
@@ -286,20 +318,17 @@ pub fn bracket_selection(editor: &mut ChemStructEditor, usage: BracketUsage) -> 
 pub fn bracket_shape(editor: &mut ChemStructEditor, shape: BracketShape) -> String {
     let brackets = editor.selected_brackets();
     if brackets.is_empty() {
-        return "形を変える括弧を選択してください".to_owned();
+        return t!("palette.bracket.select_brackets").to_owned();
     }
     let changed = brackets
         .iter()
         .filter(|&&id| editor.set_bracket_shape(id, shape))
         .count();
-    let label = BRACKET_SHAPES
-        .iter()
-        .find(|(s, _)| *s == shape)
-        .map_or("", |(_, l)| l);
+    let label = shape_name(shape);
     if changed > 0 {
-        format!("括弧を{label}にしました")
+        t!("palette.bracket.shape_changed", shape = label)
     } else {
-        format!("括弧はすでに{label}です")
+        t!("palette.bracket.shape_unchanged", shape = label)
     }
 }
 
@@ -313,15 +342,16 @@ pub fn palette(
         let gap = 4.0;
         let cell = vec2((ui.available_width() - gap) / 2.0, 44.0);
 
-        heading(ui, "描画");
+        heading(ui, t!("palette.heading.draw"));
         egui::Grid::new("palette_tools")
             .num_columns(2)
             .spacing([gap, gap])
             .show(ui, |ui| {
-                for (i, (icon, name, action)) in BUTTONS.into_iter().enumerate() {
+                for (i, (icon, action)) in BUTTONS.into_iter().enumerate() {
                     let planned = action == Action::Planned;
+                    let name = button_name(icon);
                     let tip = if planned {
-                        format!("{name}（準備中）")
+                        t!("palette.tool.planned", name = name)
                     } else {
                         name.to_owned()
                     };
@@ -349,7 +379,7 @@ pub fn palette(
                 }
             });
 
-        heading(ui, "元素");
+        heading(ui, t!("palette.heading.elements"));
         egui::Grid::new("palette_elements")
             .num_columns(2)
             .spacing([gap, gap])
@@ -376,7 +406,8 @@ pub fn palette(
 /// 周期表…: a periodic table to pick any element from, opening to the right over the canvas,
 /// with a field below it for typing a symbol. Escape or a click outside closes it.
 fn periodic_table_button(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custom: &mut String) {
-    let button = egui::Button::new("周期表…").min_size(vec2(ui.available_width(), 34.0));
+    let button = egui::Button::new(t!("palette.periodic_table.button"))
+        .min_size(vec2(ui.available_width(), 34.0));
     let response = ui.add(button);
     egui::Popup::menu(&response)
         .align(egui::RectAlign::RIGHT_START)
@@ -389,11 +420,17 @@ fn periodic_table_button(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custo
                 ui.close();
             }
             ui.horizontal(|ui| {
-                ui.label("元素記号を入力");
+                ui.label(t!("palette.periodic_table.enter_symbol"));
                 let field = ui.add(egui::TextEdit::singleline(custom).desired_width(60.0));
                 let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let valid = is_element_symbol(custom);
-                if ui.add_enabled(valid, egui::Button::new("設定")).clicked() || (entered && valid)
+                if ui
+                    .add_enabled(
+                        valid,
+                        egui::Button::new(t!("palette.periodic_table.set_symbol")),
+                    )
+                    .clicked()
+                    || (entered && valid)
                 {
                     set_element(editor, custom.trim());
                     ui.close();
@@ -470,12 +507,12 @@ mod tests {
         assert_eq!(editor.current_bond_stereo, BondStereo::None);
         assert!(is_selected(&editor, Action::Bond(BondKind::Triple)));
         assert!(!is_selected(&editor, Action::Bond(BondKind::Single)));
-        assert_eq!(tool_name(&editor), "三重結合");
+        assert_eq!(tool_name(&editor), "Triple bond");
 
         apply(&mut editor, Action::Bond(BondKind::Hash));
         assert_eq!(editor.current_bond_order, BondOrder::Single);
         assert_eq!(editor.current_bond_stereo, BondStereo::WedgeDown);
-        assert_eq!(tool_name(&editor), "破線くさび");
+        assert_eq!(tool_name(&editor), "Hashed wedge");
     }
 
     #[test]
@@ -483,20 +520,20 @@ mod tests {
         let mut editor = ChemStructEditor::default();
         select_arrow_tool(&mut editor, ArrowKind::Equilibrium);
         assert_eq!(editor.tool, Tool::Arrow(ArrowKind::Equilibrium));
-        assert_eq!(tool_name(&editor), "平衡矢印");
+        assert_eq!(tool_name(&editor), "Equilibrium arrow");
         select_arrow_tool(&mut editor, ArrowKind::Reaction);
-        assert_eq!(tool_name(&editor), "反応矢印");
+        assert_eq!(tool_name(&editor), "Reaction arrow");
         select_text_tool(&mut editor);
         assert_eq!(editor.tool, Tool::Text);
-        assert_eq!(tool_name(&editor), "テキスト");
+        assert_eq!(tool_name(&editor), "Text");
         let planned: Vec<&str> = BUTTONS
             .iter()
-            .filter(|(_, _, a)| *a == Action::Planned)
-            .map(|(_, name, _)| *name)
+            .filter(|(_, a)| *a == Action::Planned)
+            .map(|(icon, _)| button_name(*icon))
             .collect();
         assert_eq!(
             planned,
-            ["鎖", "ベンゼン環", "シクロペンタン", "シクロヘキサン"]
+            ["Chain", "Benzene ring", "Cyclopentane", "Cyclohexane"]
         );
     }
 
@@ -521,24 +558,24 @@ mod tests {
     #[test]
     fn bracketing_the_selection() {
         let mut editor = ChemStructEditor::default();
-        assert!(bracket_selection(&mut editor, BracketUsage::Sru).contains("選択してください"));
+        assert!(bracket_selection(&mut editor, BracketUsage::Sru).starts_with("Select the atoms"));
         polyethylene(&mut editor);
         let message = bracket_selection(&mut editor, BracketUsage::Sru);
         assert!(
-            message.starts_with("繰り返し単位の括弧を付けました"),
+            message.starts_with("Added repeat-unit brackets"),
             "{message}"
         );
         assert_eq!(editor.tool, Tool::Select);
         assert_eq!(editor.molecule.brackets().count(), 1);
         let message = bracket_selection(&mut editor, BracketUsage::MultipleGroup);
-        assert!(message.contains("多重基"), "{message}");
+        assert!(message.contains("Multiple group"), "{message}");
         let b = editor.molecule.brackets().next().unwrap();
         assert_eq!(
             (b.usage, b.label.as_str()),
             (BracketUsage::MultipleGroup, "2")
         );
         assert_eq!(editor.molecule.brackets().count(), 1, "changed, not added");
-        assert!(bracket_shape(&mut editor, BracketShape::Round).contains("丸括弧"));
+        assert!(bracket_shape(&mut editor, BracketShape::Round).contains("Parentheses"));
         assert_eq!(
             editor.molecule.brackets().next().unwrap().shape,
             BracketShape::Round
@@ -554,7 +591,7 @@ mod tests {
         let ids = polyethylene(&mut editor);
         editor.selected_atoms = [ids[2], ids[3]].into_iter().collect();
         let message = bracket_selection(&mut editor, BracketUsage::Sru);
-        assert!(message.contains("1 本"), "{message}");
+        assert!(message.contains("1 bond crosses"), "{message}");
     }
 
     /// 「反応表を挿入」 puts a table under the reaction and leaves the select tool on, so a
@@ -562,7 +599,9 @@ mod tests {
     #[test]
     fn inserting_a_reaction_table() {
         let mut editor = ChemStructEditor::default();
-        assert!(insert_reaction_table(&mut editor).starts_with("反応表にする構造がありません"));
+        assert!(
+            insert_reaction_table(&mut editor).starts_with("No structures for a reaction table")
+        );
         assert!(editor.molecule.objects.is_empty());
         let m = &mut editor.molecule;
         let a = m.add_atom("C".into(), [0.0, 0.0], 0);
@@ -571,7 +610,7 @@ mod tests {
         m.add_arrow([2.5, 0.0], [5.5, 0.0], ArrowKind::Reaction);
         m.add_atom("C".into(), [6.5, 0.0], 0);
         editor.tool = Tool::Bond;
-        assert!(insert_reaction_table(&mut editor).starts_with("反応表を挿入しました"));
+        assert!(insert_reaction_table(&mut editor).starts_with("Inserted a reaction table"));
         assert_eq!(editor.tool, Tool::Select);
         let table = editor
             .molecule
@@ -593,7 +632,7 @@ mod tests {
 
     #[test]
     fn exactly_one_button_is_selected_for_each_available_action() {
-        for (_, name, action) in BUTTONS {
+        for (icon, action) in BUTTONS {
             if matches!(action, Action::Planned | Action::BracketMenu) {
                 continue;
             }
@@ -601,9 +640,9 @@ mod tests {
             apply(&mut editor, action);
             let selected = BUTTONS
                 .iter()
-                .filter(|(_, _, a)| is_selected(&editor, *a))
+                .filter(|(_, a)| is_selected(&editor, *a))
                 .count();
-            assert_eq!(selected, 1, "{name}");
+            assert_eq!(selected, 1, "{}", button_name(icon));
         }
     }
 }

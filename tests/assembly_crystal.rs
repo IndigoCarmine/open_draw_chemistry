@@ -208,6 +208,7 @@ fn benzene_in_pbca_has_its_known_density() {
 
 #[test]
 fn an_impossible_crystal_is_refused_in_japanese() {
+    let _lang = open_draw_chemistry::i18n::ScopedLanguage::new(open_draw_chemistry::i18n::Lang::Ja);
     let mut design = crystal(benzene(), monoclinic(), "P2₁2₁2₁", [1, 1, 1]);
     // An orthorhombic group in a monoclinic cell would distort the molecules.
     let err = build(&design, 1).unwrap_err().to_string();

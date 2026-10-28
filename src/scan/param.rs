@@ -50,13 +50,13 @@ impl StepField {
     pub fn label(self) -> String {
         use StepField::*;
         match self {
-            RingRadius => "半径".into(),
-            RingTilt => "傾き".into(),
-            StackRise => "間隔".into(),
-            StackTwist => "ねじれ".into(),
-            StackSlip => "ずれ".into(),
-            ArrayOffset(i) => format!("移動 {}", XYZ[i]),
-            ArrayEuler(i) => format!("回転 {}", XYZ[i]),
+            RingRadius => t!("scan.param.ring_radius").into(),
+            RingTilt => t!("scan.param.ring_tilt").into(),
+            StackRise => t!("scan.param.stack_rise").into(),
+            StackTwist => t!("scan.param.stack_twist").into(),
+            StackSlip => t!("scan.param.stack_slip").into(),
+            ArrayOffset(i) => t!("scan.param.array_offset", axis = XYZ[i]),
+            ArrayEuler(i) => t!("scan.param.array_rotation", axis = XYZ[i]),
             CellA => "a".into(),
             CellB => "b".into(),
             CellC => "c".into(),
@@ -117,8 +117,8 @@ impl PoseField {
 
     pub fn label(self) -> String {
         match self {
-            PoseField::Position(i) => format!("位置 {}", XYZ[i]),
-            PoseField::Rotation(i) => format!("回転 {}", XYZ[i]),
+            PoseField::Position(i) => t!("scan.param.pose_position", axis = XYZ[i]),
+            PoseField::Rotation(i) => t!("scan.param.pose_rotation", axis = XYZ[i]),
         }
     }
 }
@@ -193,13 +193,15 @@ impl Param {
             Param::Step { step, field } => {
                 let name = design
                     .and_then(|d| d.steps.get(*step))
-                    .map_or("手順", Step::label);
+                    .map_or(t!("scan.param.step"), Step::label);
                 format!("{} {}: {}", step + 1, name, field.label())
             }
-            Param::Pose { index, field } => format!("手動配置 {}: {}", index + 1, field.label()),
-            Param::Bond(a) => format!("結合長 {}", atoms(a)),
-            Param::Angle(a) => format!("結合角 {}", atoms(a)),
-            Param::Dihedral(a) => format!("二面角 {}", atoms(a)),
+            Param::Pose { index, field } => {
+                t!("scan.param.pose", number = index + 1, field = field.label())
+            }
+            Param::Bond(a) => t!("scan.param.bond", atoms = atoms(a)),
+            Param::Angle(a) => t!("scan.param.angle", atoms = atoms(a)),
+            Param::Dihedral(a) => t!("scan.param.dihedral", atoms = atoms(a)),
         }
     }
 
@@ -223,8 +225,7 @@ impl Param {
 
     /// Put `value` into `design`.
     pub fn write_design(&self, design: &mut Design, value: f64) -> Result<(), ApplyError> {
-        let missing =
-            || ApplyError("スキャンする項目が見つかりません（集合体が変更されました）".into());
+        let missing = || ApplyError(t!("scan.error.item_missing").into());
         match *self {
             Param::Step { step, field } => {
                 let slot = design
@@ -244,7 +245,7 @@ impl Param {
                 design.manual[index].transform = place::transform_of(&pose, local);
                 Ok(())
             }
-            _ => Err(ApplyError("3D モデルの項目です".into())),
+            _ => Err(ApplyError(t!("scan.error.model_param").into())),
         }
     }
 
@@ -272,7 +273,7 @@ impl Param {
             Param::Bond([a, b]) => geom::set_bond_length(coords, graph, a, b, value, anchor),
             Param::Angle(atoms) => geom::set_angle(coords, graph, atoms, value, anchor),
             Param::Dihedral(atoms) => geom::set_dihedral(coords, graph, atoms, value, anchor),
-            _ => return Err(ApplyError("集合体の項目です".into())),
+            _ => return Err(ApplyError(t!("scan.error.assembly_param").into())),
         };
         result.map_err(|e| ApplyError(e.to_string()))
     }

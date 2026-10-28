@@ -45,6 +45,8 @@ fn page_objects(mol: &chembuider_rs::Molecule) -> Vec<(String, [i32; 2])> {
 
 #[test]
 fn a_reaction_opens_with_its_arrow_and_texts_editable() {
+    // The summary is checked in Japanese.
+    let _lang = open_draw_chemistry::i18n::ScopedLanguage::new(open_draw_chemistry::i18n::Lang::Ja);
     for name in ["Reaction.cdx", "Reaction.cdxml"] {
         let loaded = io::load(&data(name)).unwrap();
         let objects = page_objects(&loaded.molecule);
