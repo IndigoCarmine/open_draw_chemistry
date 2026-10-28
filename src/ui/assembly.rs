@@ -700,7 +700,7 @@ fn display_tab(
     out: &mut Vec<Command>,
 ) {
     let has_crystal = state.built().is_ok_and(|b| b.crystal.is_some());
-    style::caption(ui, look, "表示");
+    style::caption(ui, look, "見た目");
     style::card(ui, look, false, 0.0, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label(ink.muted("スタイル"));
@@ -1396,7 +1396,7 @@ fn lattice_params(ui: &mut egui::Ui, l: &mut Lattice, ink: &Ink) -> bool {
     let mut changed = false;
     let preset = symop::matching_preset(&l.symops);
     ui.horizontal_wrapped(|ui| {
-        ui.label("空間群")
+        ui.label(ink.muted("空間群"))
             .on_hover_text("選ぶと下の対称操作がその空間群の一般位置で置き換わります");
         egui::ComboBox::from_id_salt("space_group")
             .selected_text(preset.map_or("（任意の操作）", |p| p.name))
@@ -1457,7 +1457,7 @@ fn lattice_params(ui: &mut egui::Ui, l: &mut Lattice, ink: &Ink) -> bool {
         });
     }
 
-    ui.label("対称操作").on_hover_text(
+    ui.label(ink.muted("対称操作")).on_hover_text(
         "1 行に 1 つ、x,y,z 形式で（例: -x,y+1/2,-z+1/2）。CIF の _space_group_symop の行をそのまま貼り付けても読めます。x,y,z を必ず含めてください",
     );
     let id = ui.make_persistent_id("symops");

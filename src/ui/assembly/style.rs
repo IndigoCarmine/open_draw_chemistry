@@ -65,7 +65,7 @@ impl Look {
                 } else {
                     theme::ORANGE_TEXT
                 },
-                0.6,
+                0.4,
             ),
             card,
             border,
