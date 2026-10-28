@@ -12,9 +12,10 @@ use eframe::egui_wgpu;
 use egui::{PointerButton, Pos2, Rect, Sense};
 use lin_alg::f32::{Vec2, Vec3};
 use moleucle_3dview_rs::{
-    Atom, AtomGroup, AtomGroupRender, AtomGroupState, AtomPairRender, AtomPairState, Bond, Element,
-    LodSettings, Molecule, MoleculeViewer, OffscreenRenderer, PeriodicImages, RenderFrameState,
-    RenderStyle, SharedRenderStates, SimulationCellRender, SimulationCellState,
+    AdditionalRender, Atom, AtomGroup, AtomGroupRender, AtomGroupState, AtomPairRender,
+    AtomPairState, Bond, Element, GpuPipeline, LodSettings, Molecule, MoleculeViewer,
+    OffscreenRenderer, PeriodicImages, RenderFrameState, RenderStyle, SharedRenderStates,
+    SimulationCellRender, SimulationCellState,
     camera::{Camera, OrbitalCamera},
     new_shared_states, set_state_by_type, vdw_radius,
     viewer::ViewerEvent,
@@ -29,44 +30,110 @@ const NM_PER_ANGSTROM: f32 = 0.1;
 /// How the model is drawn. The app's own enum (the library's is not serialisable) so the choice
 /// is remembered between runs.
 ///
-/// Earlier versions offered more styles (ball-and-stick, space-filling, impostor spheres); any
-/// name not listed here — those included — loads as [`Style3d::Light`], so a state saved
-/// before keeps loading.
+/// Names saved by earlier versions load as the style that draws them now: `Light` (which was
+/// ball-and-stick with small atoms) and `BallStick` as [`Style3d::BallAndStick`],
+/// `SpaceFilling` as [`Style3d::Spheres`]; any other unknown name as the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Style3d {
+    /// Each atom a sphere at its van der Waals radius, no bonds.
+    #[serde(alias = "SpaceFilling")]
+    Spheres,
     /// Bonds as lines only.
     Wireframe,
     /// Small spheres joined by thin sticks. Last, as serde requires of the catch-all.
     #[default]
-    #[serde(other)]
-    Light,
+    #[serde(alias = "Light", alias = "BallStick", other)]
+    BallAndStick,
 }
 
 impl Style3d {
-    pub const ALL: [Style3d; 2] = [Style3d::Light, Style3d::Wireframe];
+    pub const ALL: [Style3d; 3] = [Style3d::BallAndStick, Style3d::Spheres, Style3d::Wireframe];
 
     pub fn label(self) -> &'static str {
         match self {
-            Style3d::Light => t!("three_d.view.style_light"),
+            Style3d::BallAndStick => t!("three_d.view.style_ball_and_stick"),
+            Style3d::Spheres => t!("three_d.view.style_spheres"),
             Style3d::Wireframe => t!("three_d.view.style_wireframe"),
         }
     }
 
     fn render_style(self) -> RenderStyle {
         match self {
-            // Ball-and-stick geometry with the atoms shrunk (`LIGHT_ATOM_SCALE`) at the
-            // library's coarsest sphere mesh. The impostor-only `Circles` style is cheaper
-            // still but draws no bonds.
-            Style3d::Light => RenderStyle::BallStick,
+            // Ball-and-stick geometry with the atoms shrunk (`BALL_AND_STICK_ATOM_SCALE`) at a
+            // coarse sphere mesh.
+            Style3d::BallAndStick => RenderStyle::BallStick,
+            // Ray-traced sphere impostors: a few bytes of instance data an atom instead of a
+            // mesh, so the cost does not grow with the sphere resolution and large assemblies
+            // stay as light as in ball-and-stick (the mesh `BallOnly` would not).
+            Style3d::Spheres => RenderStyle::Circles,
             Style3d::Wireframe => RenderStyle::Wireframe,
+        }
+    }
+
+    /// Atom radius as a fraction of the van der Waals radius. It sizes the drawn spheres and the
+    /// spheres a click is tested against (wireframe draws none, so it keeps ball-and-stick's).
+    fn atom_scale(self) -> f32 {
+        match self {
+            Style3d::Spheres => 1.0,
+            Style3d::BallAndStick | Style3d::Wireframe => BALL_AND_STICK_ATOM_SCALE,
         }
     }
 }
 
-/// Atom radius in the light style, as a fraction of the van der Waals radius: carbon 0.43 Å,
+/// Atom radius in ball-and-stick, as a fraction of the van der Waals radius: carbon 0.43 Å,
 /// hydrogen 0.30 Å, against the library ball-and-stick's 0.3 (0.51 Å for carbon). The sticks
 /// are the library's fixed 0.18 Å, so this keeps the atoms clearly wider than the bonds.
-const LIGHT_ATOM_SCALE: f32 = 0.25;
+const BALL_AND_STICK_ATOM_SCALE: f32 = 0.25;
+
+/// The radius (nm) of the sphere a highlighted atom is wrapped in. It has to clear the atom:
+/// 0.85 Å is about twice a ball-and-stick carbon; in spheres it clears the largest van der
+/// Waals radius the library knows (iodine, 1.98 Å).
+fn highlight_radius(style: RenderStyle) -> f32 {
+    match style {
+        RenderStyle::Circles => 0.21,
+        _ => 0.085,
+    }
+}
+
+/// The highlight spheres (selection, fixed atom, the side that moves, clashes), sized for the
+/// style drawn: the library's overlay takes one radius, and a ball-and-stick highlight would
+/// vanish inside a van der Waals sphere. The style is part of the overlay's revision, so a
+/// change of style redraws it.
+struct Highlights {
+    ball_and_stick: AtomGroupRender,
+    spheres: AtomGroupRender,
+}
+
+impl Highlights {
+    fn new() -> Self {
+        let sized = |style| {
+            let mut groups = AtomGroupRender::new();
+            groups.set_radius(highlight_radius(style));
+            groups
+        };
+        Self {
+            ball_and_stick: sized(RenderStyle::BallStick),
+            spheres: sized(RenderStyle::Circles),
+        }
+    }
+}
+
+impl AdditionalRender for Highlights {
+    fn update_scene(&self, scene: &mut moleucle_3dview_rs::Scene, frame: &RenderFrameState<'_>) {
+        match frame.render_style {
+            RenderStyle::Circles => self.spheres.update_scene(scene, frame),
+            _ => self.ball_and_stick.update_scene(scene, frame),
+        }
+    }
+
+    fn gpu_pipeline(&self) -> GpuPipeline {
+        self.ball_and_stick.gpu_pipeline()
+    }
+
+    fn revision(&self, frame: &RenderFrameState<'_>) -> Option<u64> {
+        frame.overlay_revision::<AtomGroupState>()
+    }
+}
 
 /// Sphere mesh resolution (latitude bands; twice as many longitudes). The library's default
 /// and minimum, 3, turns atoms this small into hexagons; 6 is still coarse (72 triangles a
@@ -180,9 +247,7 @@ impl Viewport3d {
     pub fn new() -> Self {
         let mut offscreen = OffscreenRenderer::new();
         // Highlights (selection, fixed atom, the side that moves, clashes) and the bond axis.
-        let mut groups = AtomGroupRender::new();
-        groups.set_radius(0.085);
-        offscreen.add_additional_render(Box::new(groups));
+        offscreen.add_additional_render(Box::new(Highlights::new()));
         let mut pairs = AtomPairRender::new();
         pairs.set_color((0.95, 0.55, 0.20));
         pairs.set_radius(0.028);
@@ -253,6 +318,23 @@ impl Viewport3d {
         if style != self.style {
             self.style = style;
             self.offscreen.set_render_style(style.render_style());
+            self.size_atoms();
+        }
+    }
+
+    /// Give the shown atoms the radii of the current style.
+    fn size_atoms(&mut self) {
+        let scale = self.style.atom_scale();
+        let radii = self.viewer.molecule().map(|molecule| {
+            molecule
+                .atoms
+                .iter()
+                .map(|a| vdw_radius(&a.element) * scale)
+                .collect()
+        });
+        if radii.is_some() {
+            self.viewer.set_atom_radii(radii);
+            self.last_hover = None;
         }
     }
 
@@ -326,13 +408,7 @@ impl Viewport3d {
                 .map(|a| element_color(&a.element))
                 .collect(),
         ));
-        self.viewer.set_atom_radii(Some(
-            model
-                .atoms
-                .iter()
-                .map(|a| vdw_radius(&a.element) * LIGHT_ATOM_SCALE)
-                .collect(),
-        ));
+        self.size_atoms();
         self.shown = Some(Shown {
             elements: model.atoms.iter().map(|a| a.element.clone()).collect(),
             bonds: model
@@ -391,13 +467,7 @@ impl Viewport3d {
         self.viewer
             .set_molecule(Molecule::from_atoms_bonds(atoms, bonds));
         self.viewer.set_atom_colors(Some(colors()));
-        self.viewer.set_atom_radii(Some(
-            scene
-                .atoms
-                .iter()
-                .map(|a| vdw_radius(&a.element) * LIGHT_ATOM_SCALE)
-                .collect(),
-        ));
+        self.size_atoms();
         let lod = if scene.atoms.len() >= LOD_FROM_ATOMS {
             LOD_SETTINGS
         } else {
@@ -800,6 +870,80 @@ mod tests {
         assert!(distance(nearer) < distance(at));
         let c = view.view_center();
         assert!((c[0] - 2.0).abs() < 1e-5 && (c[2] + 3.0).abs() < 1e-5);
+    }
+
+    /// Spheres and ball-and-stick are different drawings, not one style under two names.
+    #[test]
+    fn spheres_and_ball_and_stick_draw_differently() {
+        assert_eq!(Style3d::BallAndStick.render_style(), RenderStyle::BallStick);
+        assert_eq!(Style3d::Spheres.render_style(), RenderStyle::Circles);
+        assert_eq!(Style3d::Wireframe.render_style(), RenderStyle::Wireframe);
+        for (i, a) in Style3d::ALL.iter().enumerate() {
+            for b in &Style3d::ALL[i + 1..] {
+                assert_ne!(a.render_style(), b.render_style(), "{a:?} {b:?}");
+            }
+        }
+    }
+
+    /// Spheres draws each atom at its van der Waals radius and ball-and-stick at the small
+    /// one, whichever is chosen first and whether a model or a scene is shown.
+    #[test]
+    fn the_atom_radii_follow_the_style() {
+        let atoms = [
+            Atom3d {
+                element: "C".into(),
+                pos: [0.0, 0.0, 0.0],
+            },
+            Atom3d {
+                element: "H".into(),
+                pos: [1.1, 0.0, 0.0],
+            },
+        ];
+        let radii = |view: &Viewport3d| view.viewer.atom_radii.clone().unwrap();
+        let expected = |scale: f32| vec![vdw_radius("C") * scale, vdw_radius("H") * scale];
+
+        let mut view = Viewport3d::new();
+        view.sync_scene(
+            Some(Scene {
+                source: 1,
+                revision: 1,
+                atoms: &atoms,
+                bonds: &[],
+            }),
+            0,
+            || vec![[1.0; 4]; 2],
+        );
+        assert_eq!(radii(&view), expected(BALL_AND_STICK_ATOM_SCALE));
+        view.set_style(Style3d::Spheres);
+        assert_eq!(radii(&view), expected(1.0));
+        view.set_style(Style3d::BallAndStick);
+        assert_eq!(radii(&view), expected(BALL_AND_STICK_ATOM_SCALE));
+
+        // Chosen before the model arrives.
+        let mut view = Viewport3d::new();
+        view.set_style(Style3d::Spheres);
+        view.sync(Some(&Model3d {
+            atoms: atoms.to_vec(),
+            bonds: Vec::new(),
+            force_field: crate::three_d::ForceField::Uff,
+            energy: 0.0,
+            energy_unit: String::new(),
+            formula: String::new(),
+            molfile: String::new(),
+        }));
+        assert_eq!(radii(&view), expected(1.0));
+    }
+
+    /// A highlight shows outside the atom it marks: in spheres, around the largest van der
+    /// Waals sphere; otherwise around the ball-and-stick atoms.
+    #[test]
+    fn highlights_are_wider_than_the_atoms() {
+        let largest = ["H", "C", "N", "O", "F", "P", "S", "Cl", "Br", "I", "Xx"]
+            .map(vdw_radius)
+            .into_iter()
+            .fold(0.0, f32::max);
+        assert!(highlight_radius(RenderStyle::Circles) > largest);
+        assert!(highlight_radius(RenderStyle::BallStick) > largest * BALL_AND_STICK_ATOM_SCALE);
     }
 
     #[test]
