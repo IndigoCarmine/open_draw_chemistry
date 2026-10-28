@@ -1,4 +1,4 @@
-//! The 3D viewport: moleucle_3dview_rs's renderer, camera and picking, assembled here rather
+//! The 3D viewport: moleucle_3dview_rs's renderer and camera, assembled here rather
 //! than through its `InteractiveMoleculeViewport`.
 //!
 //! That widget reports atom clicks only (the bond a pick hits is dropped), binds the wheel to
@@ -6,7 +6,9 @@
 //! turn), a right click (to fix an atom), the wheel (to turn the bond) and the camera (to put
 //! labels next to atoms), so the render half of its `show` is reproduced here from the crate's
 //! public parts — `MoleculeViewer`, `OrbitalCamera`, `OffscreenRenderer`, `RenderFrameState` —
-//! as chem_3d_builder_rs's viewport does, and the input half is this app's own.
+//! as chem_3d_builder_rs's viewport does, and the input half is this app's own. Picking is
+//! its own too ([`pick`]): the library's tests every atom as a ball-and-stick ball, whatever
+//! radius the style draws it at.
 
 use eframe::egui_wgpu;
 use egui::{PointerButton, Pos2, Rect, Sense};
@@ -18,11 +20,12 @@ use moleucle_3dview_rs::{
     SimulationCellRender, SimulationCellState,
     camera::{Camera, OrbitalCamera},
     new_shared_states, set_state_by_type, vdw_radius,
-    viewer::ViewerEvent,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::three_d::{Atom3d, Bond3d, Model3d};
+
+mod pick;
 
 /// Å → nm, the viewer's unit.
 const NM_PER_ANGSTROM: f32 = 0.1;
@@ -216,6 +219,9 @@ pub struct Viewport3d {
     offscreen: OffscreenRenderer,
     shared: SharedRenderStates,
     last_hover: Option<(HoverKey, Hit)>,
+    /// The atoms bucketed for picking at the radii they are drawn at, rebuilt when the
+    /// viewer's revision (geometry or radii) moves on.
+    pick_grid: Option<pick::AtomGrid>,
     shown: Option<Shown>,
     /// Frame the model on the next draw, once the view's aspect ratio is known.
     reframe: bool,
@@ -267,6 +273,7 @@ impl Viewport3d {
             offscreen,
             shared: new_shared_states(),
             last_hover: None,
+            pick_grid: None,
             shown: None,
             reframe: false,
             style: Style3d::default(),
@@ -685,7 +692,9 @@ impl Viewport3d {
         out
     }
 
-    fn pick(&self, pointer: Pos2, rect: Rect) -> Hit {
+    /// What is under `pointer`, tested against the atoms at the radii they are drawn at (see
+    /// [`pick`]).
+    fn pick(&mut self, pointer: Pos2, rect: Rect) -> Hit {
         let local = pointer - rect.min;
         let (origin, dir) = self.camera.ray_from_screen(
             local.x,
@@ -693,11 +702,18 @@ impl Viewport3d {
             rect.width().max(1.0),
             rect.height().max(1.0),
         );
-        match self.viewer.pick(origin, dir) {
-            Some(ViewerEvent::AtomClicked(i)) => Hit::Atom(i),
-            Some(ViewerEvent::BondClicked(i)) => Hit::Bond(i),
-            _ => Hit::Nothing,
-        }
+        let revision = self.viewer.revision();
+        let grid = match self.pick_grid.take() {
+            Some(grid) if grid.revision == revision => grid,
+            _ => pick::AtomGrid::build(&self.viewer),
+        };
+        let hit = match pick::pick(&self.viewer, &grid, origin, dir) {
+            Some(pick::Picked::Atom(i)) => Hit::Atom(i),
+            Some(pick::Picked::Bond(i)) => Hit::Bond(i),
+            None => Hit::Nothing,
+        };
+        self.pick_grid = Some(grid);
+        hit
     }
 
     fn hover_key(&self, pointer: Pos2) -> HoverKey {
@@ -932,6 +948,44 @@ mod tests {
             molfile: String::new(),
         }));
         assert_eq!(radii(&view), expected(1.0));
+    }
+
+    /// A click lands on the atom as drawn: in spheres the whole van der Waals sphere, in
+    /// ball-and-stick only the small ball, and that still holds after the style changes once
+    /// picking has run.
+    #[test]
+    fn clicks_hit_the_atoms_as_drawn() {
+        let mut view = Viewport3d::new();
+        view.sync(Some(&Model3d {
+            atoms: vec![Atom3d {
+                element: "C".into(),
+                pos: [0.0, 0.0, 0.0],
+            }],
+            bonds: Vec::new(),
+            force_field: crate::three_d::ForceField::Uff,
+            energy: 0.0,
+            energy_unit: String::new(),
+            formula: String::new(),
+            molfile: String::new(),
+        }));
+        let rect = Rect::from_min_size(Pos2::new(0.0, 0.0), egui::vec2(400.0, 300.0));
+        view.camera.set_aspect(400.0 / 300.0);
+        view.reset_view();
+        // 1.0 Å beside the centre, across the line of sight: inside the carbon's 1.7 Å van der
+        // Waals sphere, outside its ball-and-stick ball (0.43 Å).
+        let basis = view.screen_basis(rect, [0.0; 3]);
+        let beside = view.project(rect, basis.right).expect("in front");
+        let centre = view.project(rect, [0.0; 3]).expect("in front");
+
+        assert_eq!(view.pick(centre, rect), Hit::Atom(0));
+        assert_eq!(view.pick(beside, rect), Hit::Nothing);
+        view.set_style(Style3d::Spheres);
+        assert_eq!(view.pick(beside, rect), Hit::Atom(0));
+        view.set_style(Style3d::Wireframe);
+        assert_eq!(view.pick(centre, rect), Hit::Atom(0));
+        assert_eq!(view.pick(beside, rect), Hit::Nothing);
+        view.set_style(Style3d::BallAndStick);
+        assert_eq!(view.pick(beside, rect), Hit::Nothing);
     }
 
     /// A highlight shows outside the atom it marks: in spheres, around the largest van der
