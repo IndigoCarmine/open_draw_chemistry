@@ -145,6 +145,22 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
                 Command::ToggleCleanup,
                 out,
             );
+            ui.separator();
+            item(
+                ui,
+                "括弧で囲む（繰り返し単位）",
+                "",
+                state.has_document,
+                Command::Bracket(chembuider_rs::molecule::BracketUsage::Sru),
+                out,
+            );
+            ui.add_enabled_ui(state.has_document, |ui| {
+                ui.menu_button("括弧の種類と形", |ui| {
+                    if super::palette::bracket_menu(ui, out) {
+                        ui.close();
+                    }
+                });
+            });
         });
 
         ui.menu_button("反応", |ui| {

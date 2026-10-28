@@ -72,6 +72,16 @@ pub fn extract(drawing: &Molecule, atoms: &BTreeSet<u32>) -> Molecule {
         .filter(|f| f.atoms.iter().all(|id| atoms.contains(id)))
         .cloned()
         .collect();
+    // Brackets go with their atoms: they change what the part is (a polymer's repeat unit).
+    part.objects = drawing
+        .objects
+        .iter()
+        .filter(|o| {
+            o.as_bracket()
+                .is_some_and(|b| b.atoms.iter().any(|id| atoms.contains(id)))
+        })
+        .cloned()
+        .collect();
     part
 }
 

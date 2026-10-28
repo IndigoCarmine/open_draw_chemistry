@@ -171,6 +171,8 @@ pub enum Error {
     UnknownLabels(Vec<String>),
     /// A quadruple bond, which a molfile cannot express.
     QuadrupleBond,
+    /// A multiple-group bracket (×n): its atoms would have to be drawn n times.
+    MultipleGroup,
     /// More atoms or bonds than a V2000 molfile holds.
     TooLarge,
     /// OpenBabel could not read the structure handed to it.
@@ -197,6 +199,10 @@ impl fmt::Display for Error {
                 labels.join("、")
             ),
             Error::QuadrupleBond => write!(f, "四重結合は 3D 生成に対応していません"),
+            Error::MultipleGroup => write!(
+                f,
+                "多重基の括弧（×n）を含む構造は 3D 生成に対応していません。繰り返しを描き出すか、括弧を外してください"
+            ),
             Error::TooLarge => write!(f, "構造が大きすぎます（原子・結合は各 999 個まで）"),
             Error::Unreadable => write!(f, "OpenBabel が構造を読み込めませんでした"),
             Error::GenerationFailed => write!(f, "3D 座標を生成できませんでした"),

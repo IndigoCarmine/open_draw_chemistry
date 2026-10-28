@@ -131,6 +131,11 @@ pub enum Command {
     AssemblyOpen,
     /// Put a reaction (stoichiometry) table under the active document's reaction.
     InsertReactionTable,
+    /// 括弧で囲む: put polymer / repeating-unit brackets of this usage around the selected
+    /// atoms (or give the selected brackets this usage).
+    Bracket(chembuider_rs::molecule::BracketUsage),
+    /// Give the selected brackets this shape.
+    BracketShape(chembuider_rs::molecule::BracketShape),
 }
 
 #[cfg(test)]
