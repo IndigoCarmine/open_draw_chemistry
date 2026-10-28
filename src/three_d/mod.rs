@@ -30,7 +30,7 @@ pub use job::{Job, JobState, Task};
 /// Conjugate-gradient steps spent relaxing a freshly generated model.
 const GENERATE_STEPS: u32 = 500;
 /// Steps spent by an explicit "optimise" on an existing model.
-const OPTIMIZE_STEPS: u32 = 2500;
+pub const OPTIMIZE_STEPS: u32 = 2500;
 
 /// The force fields offered for relaxing a model, as OpenBabel names them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -231,6 +231,12 @@ pub fn optimize_with(
     constraints: &[Constraint],
 ) -> Result<Model3d, Error> {
     engine::optimize(&model.molfile, force_field, OPTIMIZE_STEPS, constraints)
+}
+
+/// `constraints` as OpenBabel's restraints for a molecule of `atoms` atoms, as stiff as an
+/// optimisation's (see [`optimize_with`]); those naming atoms it does not have are left out.
+pub(crate) fn restraints(constraints: &[Constraint], atoms: usize) -> openbabel::Constraints {
+    engine::to_openbabel(constraints, u32::try_from(atoms).unwrap_or(u32::MAX))
 }
 
 /// The single-point energy of `model`'s current geometry under `force_field`, in the force

@@ -11,6 +11,7 @@ use egui_plot::{Heatmap, Line, MarkerShape, Plot, PlotPoint, PlotPoints, Points,
 use super::{Command, ViewMode};
 use crate::document::Document;
 use crate::scan::param::design_params;
+use crate::scan::run::Relax;
 use crate::scan::run::format_duration;
 use crate::scan::source::{Point, Source};
 use crate::scan::{self, Axis, MAX_POINTS, Param, Run, Scan};
@@ -90,6 +91,8 @@ pub struct ScanWindow {
     two_d: bool,
     /// The force field chosen here; the document's own until changed.
     force_field: Option<ForceField>,
+    /// Minimise everything but the scanned parameters at every point (the 3D model only).
+    relax: bool,
     /// Show the energy relative to the lowest point (ΔE).
     relative: bool,
     colors: ColorRange,
@@ -377,6 +380,20 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
             });
     });
 
+    let relaxable = target == Target::Model;
+    let mut relax = win.relax && relaxable;
+    if ui
+        .add_enabled(
+            relaxable,
+            egui::Checkbox::new(&mut relax, t!("scan.window.relax")),
+        )
+        .on_hover_text(t!("scan.window.relax_tip"))
+        .on_disabled_hover_text(t!("scan.window.relax_assembly_tip"))
+        .changed()
+    {
+        win.relax = relax;
+    }
+
     let axes: Vec<Axis> = win
         .axes
         .iter()
@@ -391,15 +408,23 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     };
     let same = axes.len() == 2 && axes[0].param == axes[1].param;
     let too_large = atoms > scan::MAX_ATOMS;
-    ui.label(muted(
-        ui,
+    let unit = scan::energy::unit(force_field);
+    let summary = if relax {
+        t!(
+            "scan.window.summary_relaxed",
+            total = total,
+            atoms = atoms,
+            unit = unit
+        )
+    } else {
         t!(
             "scan.window.summary",
             total = total,
             atoms = atoms,
-            unit = scan::energy::unit(force_field)
-        ),
-    ));
+            unit = unit
+        )
+    };
+    ui.label(muted(ui, summary));
     if has_lattice {
         ui.label(muted(ui, t!("scan.window.crystal_note")));
     }
@@ -416,9 +441,15 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     if same {
         ui.label(RichText::new(t!("scan.window.same_axes")).color(warn_color(ui)));
     }
+    let relax_refused = relax.then(|| scan::relax_refusal(atoms, total)).flatten();
+    if let Some(why) = &relax_refused {
+        ui.label(RichText::new(why).color(warn_color(ui)));
+    } else if relax && total > 0 {
+        ui.label(relax_estimate(ui, atoms, total));
+    }
 
     ui.horizontal(|ui| {
-        let ready = axes.len() == wanted && !same && !too_large;
+        let ready = axes.len() == wanted && !same && !too_large && relax_refused.is_none();
         if running {
             if ui.button(t!("common.cancel")).clicked()
                 && let Some(run) = &mut doc.scan
@@ -430,7 +461,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
             .on_disabled_hover_text(t!("scan.window.start_disabled_tip"))
             .clicked()
         {
-            start(win, doc, target, &axes, force_field);
+            start(win, doc, target, &axes, force_field, relax);
         }
     });
 }
@@ -472,18 +503,57 @@ fn axis_row(
     }
 }
 
-fn start(win: &mut ScanWindow, doc: &mut Document, target: Target, axes: &[Axis], ff: ForceField) {
+/// How long a relaxed scan of `atoms` atoms and `points` points should take, before it starts:
+/// a warning, saying how long Cancel takes, from [`scan::LONG_RELAX`] on.
+fn relax_estimate(ui: &egui::Ui, atoms: usize, points: usize) -> RichText {
+    let [low, high] = scan::relax_estimate(atoms, points);
+    let (low_text, high_text) = (format_duration(low), format_duration(high));
+    if high >= scan::LONG_RELAX {
+        let cancel = format_duration(scan::relax_cancel_latency(atoms));
+        RichText::new(t!(
+            "scan.window.relax_long",
+            low = low_text,
+            high = high_text,
+            cancel = cancel
+        ))
+        .color(warn_color(ui))
+    } else {
+        muted(
+            ui,
+            t!(
+                "scan.window.relax_estimate",
+                low = low_text,
+                high = high_text
+            ),
+        )
+    }
+}
+
+fn start(
+    win: &mut ScanWindow,
+    doc: &mut Document,
+    target: Target,
+    axes: &[Axis],
+    ff: ForceField,
+    relax: bool,
+) {
     let params: Vec<Param> = axes.iter().map(|a| a.param.clone()).collect();
+    let mut restraints = None;
     let source = match target {
         Target::Assembly => Source::assembly(&doc.assembly.design, params),
         Target::Model => {
             let Some((model, edit3d)) = doc.three_d.model_and_edit() else {
                 return;
             };
+            restraints = Some(edit3d.active_constraints(model.atoms.len()));
             Source::model(model, edit3d.anchor, params)
         }
     };
-    match Run::start(source, axes, ff) {
+    let started = match restraints {
+        Some(restraints) if relax => Run::start_relaxed(source, axes, ff, Relax::new(restraints)),
+        _ => Run::start(source, axes, ff),
+    };
+    match started {
         Ok(run) => {
             doc.scan = Some(run);
             win.message = None;
@@ -605,6 +675,14 @@ fn progress_row(ui: &mut egui::Ui, run: &Run) {
     if failed > 0 {
         ui.label(muted(ui, tn!("scan.progress.failed_points", failed)));
     }
+    let unconverged = (0..p.total).filter(|&i| run.scan.is_unconverged(i)).count();
+    if unconverged > 0 {
+        ui.label(
+            RichText::new(tn!("scan.window.unconverged_points", unconverged))
+                .size(11.0)
+                .color(warn_color(ui)),
+        );
+    }
 }
 
 /// "rise = 3.50 Å, twist = 30.0°" for point `index`.
@@ -663,10 +741,14 @@ fn apply_point(doc: &mut Document, index: usize) -> String {
             }
         }
         Source::Model { .. } => {
-            let coords = match run.source.at(&values) {
-                Ok(Point::Coords(c)) => c,
-                Ok(Point::Rebuilt { .. }) => return String::new(),
-                Err(e) => return t!("scan.apply.failed", error = e),
+            // A relaxed point puts back its minimised structure.
+            let coords = match run.structure(index) {
+                Some(relaxed) => relaxed.to_vec(),
+                None => match run.source.at(&values) {
+                    Ok(Point::Coords(c)) => c,
+                    Ok(Point::Rebuilt { .. }) => return String::new(),
+                    Err(e) => return t!("scan.apply.failed", error = e),
+                },
             };
             let Some((model, edit3d)) = doc.three_d.model_and_edit() else {
                 return t!("scan.apply.no_model").into();
@@ -729,6 +811,26 @@ fn cells(values: &[f64]) -> (f64, f64, bool) {
     (first.min(last), step, last < first)
 }
 
+/// A ring round every point of `scan` whose minimisation did not converge, at `at` (the
+/// point's place in the plot).
+fn unconverged_rings(
+    scan: &Scan,
+    at: impl Fn(usize) -> Option<[f64; 2]>,
+    color: Color32,
+) -> Option<Points<'static>> {
+    let rings: Vec<[f64; 2]> = (0..scan.total())
+        .filter(|&i| scan.is_unconverged(i))
+        .filter_map(at)
+        .collect();
+    (!rings.is_empty()).then(|| {
+        Points::new("unconverged", PlotPoints::new(rings))
+            .shape(MarkerShape::Circle)
+            .color(color)
+            .radius(6.0)
+            .filled(false)
+    })
+}
+
 /// The plot of `scan`. Returns the point clicked, if any.
 fn plot(ui: &mut egui::Ui, scan: &Scan, relative: bool, colors: &mut ColorRange) -> Option<usize> {
     if scan.axes.is_empty() || scan.total() == 0 {
@@ -784,6 +886,14 @@ fn curve(ui: &mut egui::Ui, scan: &Scan, relative: bool, y_title: &str) -> Optio
         let e = scan.shown(i, relative)?;
         Some([axis.values[i], e])
     });
+    let rings = unconverged_rings(
+        scan,
+        |i| {
+            let e = scan.shown(i, relative)?;
+            e.is_finite().then(|| [axis.values[i], e])
+        },
+        warn_color(ui),
+    );
     let (lo, hi) = (
         axis.values.iter().cloned().fold(f64::INFINITY, f64::min),
         axis.values
@@ -817,6 +927,9 @@ fn curve(ui: &mut egui::Ui, scan: &Scan, relative: bool, y_title: &str) -> Optio
                     .radius(3.0)
                     .filled(true),
             );
+            if let Some(rings) = rings {
+                plot_ui.points(rings);
+            }
             if let Some(p) = min_point {
                 plot_ui.points(
                     Points::new("minimum", PlotPoints::new(vec![p]))
@@ -942,6 +1055,13 @@ fn heatmap(
             .show_grid(false)
             .show(ui, |plot_ui| {
                 plot_ui.add(map);
+                let at = |i| match scan.values_at(i)[..] {
+                    [x, y] => Some([x, y]),
+                    _ => None,
+                };
+                if let Some(rings) = unconverged_rings(scan, at, marker) {
+                    plot_ui.points(rings);
+                }
                 if let Some(p) = min_cell {
                     plot_ui.points(
                         Points::new("minimum", PlotPoints::new(vec![p]))
@@ -997,6 +1117,10 @@ fn finish_interaction(
         .iter()
         .zip(&scan.axes)
         .map(|(v, a)| format!("{} = {}", a.label, format_value(*v, a.unit())))
+        .chain(
+            scan.is_unconverged(index)
+                .then(|| t!("scan.window.unconverged").to_owned()),
+        )
         .chain([energy, t!("scan.plot.click_to_apply").to_owned()])
         .collect();
     response.clone().on_hover_ui_at_pointer(|ui| {
@@ -1320,6 +1444,56 @@ mod tests {
             (back - 180.0).abs() < 1e-6 || (back + 180.0).abs() < 1e-6,
             "{back}"
         );
+    }
+
+    /// A relaxed scan says which points did not converge; relaxing is offered for the 3D model
+    /// only; and clicking a relaxed point puts back its minimised structure, not the model
+    /// with the dihedral merely set.
+    #[test]
+    fn a_relaxed_scan_marks_unconverged_points_and_applies_its_minimised_structures() {
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        let model = chain_model();
+        doc.three_d = three_d::Job::with_model(model.clone(), &doc.editor.molecule);
+        let dihedral = Param::Dihedral([0, 1, 2, 3]);
+        let mut scan = scan_of(vec![(dihedral.clone(), vec![-60.0, 60.0, 180.0])], |v| {
+            Some(v[0].to_radians().cos())
+        });
+        scan.unconverged[1] = true;
+        // "Minimised" at 60°: the dihedral set, and the whole chain moved along x.
+        let set = dihedral
+            .write_coords(&edit::coords(&model), &edit::graph(&model), 60.0, &[])
+            .unwrap();
+        let relaxed: Vec<_> = set.iter().map(|p| [p[0] + 0.5, p[1], p[2]]).collect();
+        doc.scan = Some(Run::finished_relaxed(
+            scan,
+            Source::model(&model, None, vec![dihedral.clone()]),
+            vec![None, Some(relaxed.clone()), None],
+        ));
+        let mut win = ScanWindow {
+            open: true,
+            relax: true,
+            ..Default::default()
+        };
+        for dark in [false, true] {
+            let text = frame(&mut win, &mut doc, ViewMode::ThreeD, dark);
+            assert!(
+                text.contains("Relax the other degrees of freedom"),
+                "{text}"
+            );
+            assert!(text.contains("optimized at each point"), "{text}");
+            assert!(text.contains("1 point did not converge"), "{text}");
+        }
+        // From the assembly view the box is there but off: a single-point scan.
+        let text = frame(&mut win, &mut doc, ViewMode::Assembly, false);
+        assert!(
+            text.contains("Relax the other degrees of freedom"),
+            "{text}"
+        );
+        assert!(text.contains("no optimization"), "{text}");
+
+        apply_point(&mut doc, 1);
+        let (m, _) = doc.three_d.model_and_edit().unwrap();
+        assert_eq!(edit::coords(m), relaxed);
     }
 
     #[test]
