@@ -6,7 +6,7 @@ use egui::{Margin, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, vec2};
 
 use super::style::{self, Look};
 use super::{AssemblyView, Change, Ink};
-use crate::assembly::model::{Array, Ring, Stack};
+use crate::assembly::model::{Array, Pivot, Ring, Stack, Transform};
 use crate::assembly::{AssemblyState, Step, symop};
 use crate::ui::icons::{self, Icon};
 
@@ -353,6 +353,31 @@ pub(super) fn summary(step: &Step) -> String {
             }
             s
         }
+        Step::Transform(Transform {
+            offset,
+            euler_deg,
+            pivot,
+            ..
+        }) => {
+            let mut parts = Vec::new();
+            if offset.iter().any(|&v| v != 0.0) {
+                parts.push(offset_text(offset));
+            }
+            if euler_deg.iter().any(|&a| a != 0.0) {
+                parts.push(
+                    match pivot {
+                        Pivot::Centroid => t!("assembly.pipeline.summary.rotated_centroid"),
+                        Pivot::Origin => t!("assembly.pipeline.summary.rotated_origin"),
+                    }
+                    .to_owned(),
+                );
+            }
+            if parts.is_empty() {
+                t!("assembly.pipeline.summary.unmoved").to_owned()
+            } else {
+                parts.join(" · ")
+            }
+        }
         Step::Lattice(l) => {
             let group = symop::matching_preset(&l.symops).map_or_else(
                 || tn!("assembly.pipeline.summary.operations", l.symops.len()),
@@ -397,6 +422,8 @@ pub(super) fn count_text(step: &Step, before: usize, after: usize) -> String {
             after,
             factor = after / before
         ),
+        // It moves the structure and copies nothing.
+        Step::Transform(_) => tn!("assembly.pipeline.count.result", after),
         _ => tn!(
             "assembly.pipeline.count.times",
             after,
@@ -470,7 +497,7 @@ pub(super) fn add_box(ui: &mut Ui, look: &Look, state: &AssemblyState, changes: 
             ui.add_space(2.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                let chips: [Chip; 4] = [
+                let chips: [Chip; 5] = [
                     (
                         Step::new_array().label(),
                         t!("assembly.pipeline.add.array_tip"),
@@ -494,6 +521,12 @@ pub(super) fn add_box(ui: &mut Ui, look: &Look, state: &AssemblyState, changes: 
                         t!("assembly.pipeline.add.lattice_tip"),
                         !has_lattice,
                         Step::new_lattice,
+                    ),
+                    (
+                        Step::new_transform().label(),
+                        t!("assembly.pipeline.add.transform_tip"),
+                        true,
+                        Step::new_transform,
                     ),
                 ];
                 for (name, tip, enabled, make) in chips {

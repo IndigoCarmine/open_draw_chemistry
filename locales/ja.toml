@@ -754,6 +754,7 @@ step_ring = "環状"
 step_stack = "積層・らせん"
 step_array = "配列"
 step_lattice = "結晶"
+step_transform = "移動・回転"
 
 [assembly.model.ring]
 count = "個数"
@@ -784,6 +785,16 @@ offset = "間隔"
 offset_tip = "i 番目を i × 間隔 だけ動かします"
 rotation = "回転"
 rotation_tip = "i 番目を原点まわりに i × 角度 回してから動かします（x → y → z 軸の順）"
+
+[assembly.model.transform]
+offset = "移動"
+offset_tip = "それまでの全体を、回転させたあとこれだけ動かします"
+rotation = "回転"
+rotation_tip = "それまでの全体を中心まわりに回します（x → y → z 軸の順）。移動はその後"
+pivot = "中心"
+pivot_tip = "回転の中心。重心には手順から外した（削除・手動配置にした）分子も含まれます"
+pivot_centroid = "重心"
+pivot_origin = "原点"
 
 [assembly.model.lattice]
 space_group = "空間群"
@@ -876,6 +887,9 @@ enabled_tip = "使っています（クリックで飛ばす）"
 disabled_tip = "飛ばしています（クリックで使う）"
 
 [assembly.pipeline.summary]
+rotated_centroid = "重心まわりに回転"
+rotated_origin = "原点まわりに回転"
+unmoved = "移動なし"
 copies = "{n}個"
 rotated = "回転"
 slip = "ずれ {value}Å"
@@ -894,6 +908,7 @@ array_tip = "それまでの全体を一定の間隔と回転で並べます"
 ring_tip = "分子を z 軸まわりの円に並べます（ロゼット）"
 stack_tip = "それまでの全体を z 方向に積み重ねます。ねじれとずれでらせんになります"
 lattice_tip = "それまでの全体を非対称単位として、格子定数と空間群の対称操作で単位胞を作り、繰り返します"
+transform_tip = "それまでの全体を複製せずに 1 回だけ動かし、回します"
 lattice_exists = "結晶の手順はすでにあります"
 
 [assembly.symop.system]

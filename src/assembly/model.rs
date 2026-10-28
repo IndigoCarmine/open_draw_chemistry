@@ -170,6 +170,55 @@ pub struct Array {
     pub euler_deg: Vec3,
 }
 
+/// What a [`Transform`] turns the structure about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Pivot {
+    /// The origin of the assembly's frame.
+    Origin,
+    /// The centroid of every atom built so far (by position, unweighted).
+    #[default]
+    Centroid,
+}
+
+/// Moves everything built so far once, without copying it: turned by `euler` (degrees,
+/// extrinsic xyz, as [`Array`]) about the pivot, then moved by `offset`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Transform {
+    pub enabled: bool,
+    pub offset: Vec3,
+    pub euler_deg: Vec3,
+    #[serde(default)]
+    pub pivot: Pivot,
+}
+
+impl Transform {
+    /// The move with the pivot at `pivot`: `p ↦ R·(p − pivot) + pivot + offset`.
+    pub fn about(&self, pivot: Vec3) -> Rigid {
+        Rigid::translation(math::scale(pivot, -1.0))
+            .then(&Rigid::rotation(math::euler_xyz(self.euler_deg)))
+            .then(&Rigid::translation(math::add(pivot, self.offset)))
+    }
+
+    /// The move of `set`, its centroid taken from `shapes` (as [`Lattice::unit_cell`]).
+    fn of_set(&self, set: &[Instance], shapes: &[Option<Shape>]) -> Rigid {
+        let pivot = match self.pivot {
+            Pivot::Origin => [0.0; 3],
+            Pivot::Centroid => {
+                let atoms: Vec<Vec3> = set
+                    .iter()
+                    .filter_map(|inst| {
+                        let (positions, _) = shapes.get(inst.component)?.as_ref()?;
+                        Some(positions.iter().map(|&p| inst.transform.apply(p)))
+                    })
+                    .flatten()
+                    .collect();
+                centroid(&atoms)
+            }
+        };
+        self.about(pivot)
+    }
+}
+
 /// A crystal: everything built so far is the asymmetric unit, copied by the space group's
 /// symmetry operations into a unit cell and the cell repeated `reps` times along its edges.
 ///
@@ -320,6 +369,7 @@ pub enum Step {
     Stack(Stack),
     Array(Array),
     Lattice(Lattice),
+    Transform(Transform),
 }
 
 impl Step {
@@ -362,6 +412,16 @@ impl Step {
         })
     }
 
+    /// No move at all: the user then sets the offset and the turn.
+    pub fn new_transform() -> Self {
+        Step::Transform(Transform {
+            enabled: true,
+            offset: [0.0; 3],
+            euler_deg: [0.0; 3],
+            pivot: Pivot::Centroid,
+        })
+    }
+
     /// The step's name in the panel.
     pub fn label(&self) -> &'static str {
         match self {
@@ -369,6 +429,7 @@ impl Step {
             Step::Stack(_) => t!("assembly.model.step_stack"),
             Step::Array(_) => t!("assembly.model.step_array"),
             Step::Lattice(_) => t!("assembly.model.step_lattice"),
+            Step::Transform(_) => t!("assembly.model.step_transform"),
         }
     }
 
@@ -378,6 +439,7 @@ impl Step {
             Step::Stack(s) => s.enabled,
             Step::Array(s) => s.enabled,
             Step::Lattice(s) => s.enabled,
+            Step::Transform(s) => s.enabled,
         }
     }
 
@@ -387,6 +449,7 @@ impl Step {
             Step::Stack(s) => &mut s.enabled,
             Step::Array(s) => &mut s.enabled,
             Step::Lattice(s) => &mut s.enabled,
+            Step::Transform(s) => &mut s.enabled,
         }
     }
 
@@ -400,16 +463,22 @@ impl Step {
             Step::Lattice(l) => {
                 return l.symops.len().max(1).saturating_mul(l.cell_count());
             }
+            Step::Transform(_) => 1,
         };
         n.max(1) as usize
     }
 
     /// The transform of each copy, in order. A lattice's symmetry copies depend on where each
     /// molecule is, so they are made in [`Design::placements`]; here it gives only the
-    /// whole-cell repeats.
+    /// whole-cell repeats. A move about the centroid depends on the structure too: here it
+    /// turns about the origin, whatever its [`Pivot`], and [`Design::placements`] puts the
+    /// pivot in place — so for a [`Step::Transform`] this is not where the step puts the
+    /// molecules; use [`Design::placements`] (or [`Transform::about`] with the pivot) instead.
     pub fn transforms(&self) -> Vec<Rigid> {
-        if let Step::Lattice(l) = self {
-            return l.translations();
+        match self {
+            Step::Lattice(l) => return l.translations(),
+            Step::Transform(t) => return vec![t.about([0.0; 3])],
+            _ => {}
         }
         let n = self.copies();
         (0..n)
@@ -424,7 +493,7 @@ impl Step {
                         .then(&Rigid::translation(slip_offset(s, i))),
                     Step::Array(s) => Rigid::rotation(math::euler_xyz(math::scale(s.euler_deg, i)))
                         .then(&Rigid::translation(math::scale(s.offset, i))),
-                    Step::Lattice(_) => unreachable!("handled above"),
+                    Step::Lattice(_) | Step::Transform(_) => unreachable!("handled above"),
                 }
             })
             .collect()
@@ -687,6 +756,15 @@ impl Design {
                         z: unit.len(),
                         asymmetric: std::mem::replace(&mut set, next),
                     });
+                    after(i, set.len());
+                    continue;
+                }
+                if let Step::Transform(transform) = step {
+                    let shapes = shapes.get_or_insert_with(|| self.shapes());
+                    let t = transform.of_set(&set, shapes);
+                    for inst in &mut set {
+                        inst.transform = inst.transform.then(&t);
+                    }
                     after(i, set.len());
                     continue;
                 }
@@ -1291,6 +1369,138 @@ mod tests {
         }
         assert_eq!(d.step_molecule_count(), 1);
         assert_eq!(d.instances().len(), 1 + d.manual.len());
+    }
+
+    /// A design of one two-atom molecule (O at the origin, H 2 Å along x) copied by `steps`.
+    fn design_of(steps: Vec<Step>) -> Design {
+        Design {
+            components: vec![Component {
+                name: "oh".into(),
+                atoms: vec![atom("O", [0.0; 3]), atom("H", [2.0, 0.0, 0.0])],
+                bonds: Vec::new(),
+                orient: None,
+            }],
+            steps,
+            ..Default::default()
+        }
+    }
+
+    /// Every atom of the built design, molecule by molecule.
+    fn atoms_of(d: &Design) -> Vec<Vec3> {
+        let shapes = d.shapes();
+        d.instances()
+            .iter()
+            .flat_map(|inst| {
+                let (positions, _) = shapes[inst.component].clone().unwrap();
+                positions.into_iter().map(move |p| inst.transform.apply(p))
+            })
+            .collect()
+    }
+
+    fn assert_points(got: &[Vec3], expected: &[Vec3]) {
+        assert_eq!(got.len(), expected.len(), "{got:?}");
+        for (g, e) in got.iter().zip(expected) {
+            assert!(math::distance(*g, *e) < 1e-9, "{got:?} vs {expected:?}");
+        }
+    }
+
+    /// A 2 × 1 row of the molecule, 4 Å apart along y: atoms at (0,0), (2,0), (0,4), (2,4),
+    /// centroid (1, 2, 0).
+    fn row() -> Step {
+        Step::Array(Array {
+            enabled: true,
+            n: 2,
+            offset: [0.0, 4.0, 0.0],
+            euler_deg: [0.0; 3],
+        })
+    }
+
+    fn transform(pivot: Pivot) -> Step {
+        Step::Transform(Transform {
+            enabled: true,
+            offset: [10.0, 0.0, 0.0],
+            euler_deg: [0.0, 0.0, 90.0],
+            pivot,
+        })
+    }
+
+    #[test]
+    fn a_transform_turns_everything_about_its_pivot_then_moves_it() {
+        // About the centroid (1, 2, 0): p ↦ Rz(90°)(p − c) + c + (10, 0, 0).
+        let d = design_of(vec![row(), transform(Pivot::Centroid)]);
+        assert_eq!(d.molecule_count(), 2);
+        assert_eq!(d.running_counts(), vec![2, 2]);
+        assert_points(
+            &atoms_of(&d),
+            &[
+                [13.0, 1.0, 0.0],
+                [13.0, 3.0, 0.0],
+                [9.0, 1.0, 0.0],
+                [9.0, 3.0, 0.0],
+            ],
+        );
+        // About the origin: p ↦ Rz(90°) p + (10, 0, 0).
+        let d = design_of(vec![row(), transform(Pivot::Origin)]);
+        assert_eq!(d.molecule_count(), 2);
+        assert_points(
+            &atoms_of(&d),
+            &[
+                [10.0, 0.0, 0.0],
+                [10.0, 2.0, 0.0],
+                [6.0, 0.0, 0.0],
+                [6.0, 2.0, 0.0],
+            ],
+        );
+        // Disabled, it does nothing.
+        let mut d = design_of(vec![row(), transform(Pivot::Centroid)]);
+        *d.steps[1].enabled_mut() = false;
+        assert_eq!(atoms_of(&d), atoms_of(&design_of(vec![row()])));
+    }
+
+    #[test]
+    fn a_new_transform_is_the_identity() {
+        let step = Step::new_transform();
+        let Step::Transform(t) = &step else {
+            panic!("{step:?}");
+        };
+        assert_eq!(t.pivot, Pivot::Centroid);
+        assert!(t.enabled);
+        let moved = design_of(vec![row(), step.clone()]);
+        assert_eq!(moved.molecule_count(), 2);
+        assert_points(&atoms_of(&moved), &atoms_of(&design_of(vec![row()])));
+        let alone = design_of(vec![step]);
+        assert_points(&atoms_of(&alone), &[[0.0; 3], [2.0, 0.0, 0.0]]);
+    }
+
+    #[test]
+    fn steps_after_a_transform_copy_the_moved_structure() {
+        let lift = Step::Array(Array {
+            enabled: true,
+            n: 2,
+            offset: [0.0, 0.0, 5.0],
+            euler_deg: [0.0; 3],
+        });
+        let d = design_of(vec![row(), transform(Pivot::Centroid), lift]);
+        assert_eq!(d.molecule_count(), 4);
+        let moved = [
+            [13.0, 1.0, 0.0],
+            [13.0, 3.0, 0.0],
+            [9.0, 1.0, 0.0],
+            [9.0, 3.0, 0.0],
+        ];
+        let lifted: Vec<Vec3> = moved
+            .iter()
+            .map(|&p| math::add(p, [0.0, 0.0, 5.0]))
+            .collect();
+        assert_points(&atoms_of(&d), &[moved.to_vec(), lifted].concat());
+
+        // A stack after it piles up the moved pair as well.
+        let d = design_of(vec![row(), transform(Pivot::Origin), Step::new_stack()]);
+        assert_eq!(d.molecule_count(), 20);
+        assert_points(
+            &atoms_of(&d)[..4],
+            &atoms_of(&design_of(vec![row(), transform(Pivot::Origin)])),
+        );
     }
 
     #[test]
