@@ -38,7 +38,7 @@ lin_alg = { version = "1.4.3", features = ["computer_graphics"] }
 # Required: openbabel-sys links the prebuilt OpenBabel that `scripts/fetch-openbabel.sh`
 # downloads (or builds OpenBabel from source with CMake). Every release ships its libraries,
 # plugins and data beside the executable (see .github/workflows/release.yml).
-openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.4" }
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.5" }
 
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
