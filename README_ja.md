@@ -1,54 +1,98 @@
-# egui Template
+# Open DrawChemistry
 
 [English README](README.md)
 
-[egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) でクロスプラットフォームのデスクトップアプリを作るためのテンプレートです。
+ChemDraw / ChemSketch / XDrawChem のような、化学構造式と反応式を描くデスクトップアプリです。
+[egui](https://github.com/emilk/egui) で作られており、構造式エディタには
+[chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)、ChemDraw ファイルの読み書きには
+[cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs) を使っています。
 
-`v*` タグを push すると、GitHub Actions が **Windows / macOS / Linux 向けインストーラ**をビルドして Release に公開します。
+## 機能（第 1 段階）
 
-| プラットフォーム | 成果物 | 形式 |
-| --- | --- | --- |
-| Windows | `egui-template-<version>-windows-x64-setup.exe` | Inno Setup インストーラ |
-| Windows | `egui-template-<version>-windows-x64.exe` | ポータブル実行ファイル |
-| macOS | `egui-template-<version>-macos-universal.dmg` | Applications へドラッグする形式のディスクイメージ（Intel + Apple Silicon ユニバーサル） |
-| macOS | `egui-template-<version>-macos-universal` | ポータブル実行ファイル |
-| Linux | `egui-template-<version>-linux-x86_64.AppImage` | 単体で動作する AppImage |
-| Linux | `egui-template_<version>_amd64.deb` | Debian / Ubuntu パッケージ |
-| Linux | `egui-template-<version>-linux-x86_64` | ポータブル実行ファイル |
+- 構造式の作図・編集：選択／結合／消しゴム、結合の種類（くさび・破線くさび・太線・波線・配位など）、
+  元素の選択、右クリックの結合メニュー（ChemDraw 風）、元に戻す／やり直し、2D クリーンアップ。
+- **ChemDraw ファイル（`.cdx` / `.cdxml`）の読み込みと保存。** まだ表示できないオブジェクト
+  （矢印・テキスト・図形など）は保存時にそのまま残ります。
+- タブによる複数文書、最近使ったファイル、ドラッグ＆ドロップで開く、未保存の確認。
+- 解析パネル：分子式、精密質量、同位体パターン（m/z）、元素分析。
+- MOL2 / SMILES（Windows では PNG も）へのエクスポート。Windows ではコピーすると
+  ChemDraw 互換の構造と EMF の図がクリップボードに入り、Office に貼り付けられます。
+- **2D → 3D**（OpenBabel）：描いた構造から 3D モデルを生成（水素の付加、くさび結合の立体の反映、
+  Ph / OMe などの略号の展開）、MMFF94 / MMFF94s / UFF / GAFF による構造最適化、
+  MOL / SDF / XYZ / PDB へのエクスポート。3D ビューアはまだ準備中で、今はパネルに分子式・
+  原子数・エネルギーを表示します。
 
-## 含まれているもの
+今後の予定：自由配置の反応式（矢印・テキスト・ブラケット・図形）、3D ビューア、
+ibisOffice への埋め込み、文書ウィンドウ内での OLE 編集（インプレース編集）。
 
-- **状態の永続化** — eframe の `persistence` 機能により、再起動しても画面の状態が復元されます。
-- **全プラットフォーム分のアイコン** — `resources/` に `icon.png`（ウィンドウ + Linux）・`icon.ico`（Windows の `.exe`）・`icon.icns`（macOS バンドル）を用意しています。
-- **宣言的な macOS バンドル** — `cargo bundle` が `[package.metadata.bundle]` から `Info.plist` を生成するため、plist を手で管理する必要がありません。
-- **Wayland でのドラッグ&ドロップ** — `[patch.crates-io]` で `winit` / `egui-winit` のフォークを指定しています（本家は Wayland のネイティブ DnD に未対応）。
-- **テスト可能なアプリロジック** — アプリ本体を `main.rs` ではなく `src/lib.rs` に置いているため、`cargo test` から参照できます。
-- **CI** — 3 プラットフォームで `cargo fmt` / `cargo clippy -D warnings` / `cargo test` を実行します。
+> **Rust 1.95 以上**が必要です（Wayland のドラッグ＆ドロップ用 `egui-winit` フォークによる）。
 
-> **Rust 1.95 以上**が必要です。edition 2024 自体は 1.85 で足りますが、Wayland DnD 用の
-> `egui-winit` フォークが要求バージョンを引き上げています。
+## Word / PowerPoint の ChemDraw オブジェクトを編集する（Windows）
+
+**ChemDraw が入っていない PC** では、Word や PowerPoint の文書に埋め込まれた ChemDraw の構造式を
+このアプリで編集できます。ダブルクリックすると「Word の埋め込み — …」と表示されたタブで開き、
+保存（Ctrl+S）するかタブを閉じると、構造式（と表示用の図）が文書に書き戻されます。
+オブジェクトは ChemDraw のオブジェクトのままなので、ChemDraw がある PC ではまた ChemDraw で開けます。
+
+インストーラが現在のユーザーに設定します。手動で行う場合：
+
+```sh
+open_draw_chemistry.exe --register-ole     # 登録（ユーザーごと、管理者権限は不要）
+open_draw_chemistry.exe --unregister-ole   # 登録したものだけを削除
+```
+
+登録は `HKCU\Software\Classes` の下だけに書き込みます。このアプリ自身の OLE クラス
+（`OpenDrawChemistry.Document.1`。「挿入 ▸ オブジェクト」にも出ます）と、**ChemDraw が
+インストールされていない場合に限り**、ChemDraw のクラスをこのアプリで開く `TreatAs` です。
+ChemDraw がある PC では ChemDraw の設定は一切変更しません。後から ChemDraw をインストールした
+場合は、もう一度 `--register-ole` を実行する（またはアンインストールする）と ChemDraw に戻ります。
+
+編集はこのアプリのウィンドウで行います（Word の中でのインプレース編集には対応していません）。
+問題の調査には、`LocalServer32` のコマンドに `--ole-log <ファイル>` を加えると、
+コンテナからの呼び出しがログに記録されます。
 
 ## はじめかた
 
+このアプリには [OpenBabel](https://openbabel.org) が必須です（3D 生成・SMILES・3D ファイルの読み込み）。
+[openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs) を通してリンクします。最初に一度（openbabel_rs を更新したときも）
+ビルド済みの OpenBabel を取得してください（`bash` と、`gh` または `curl` が必要です）。
+
 ```bash
-cargo run
+bash scripts/fetch-openbabel.sh   # third_party/openbabel-prebuilt/ に展開（コミットしない）
+cargo run -- path/to/file.cdx     # ファイルの指定は省略可
 ```
 
-あとは [`src/app.rs`](src/app.rs) を編集してください。中のデモ用ウィジェットは削除する前提で置いてあります。
+`.cargo/config.toml` が `OPENBABEL_SYS_PREBUILT_DIR` をこのディレクトリに向けます。
+Windows では openbabel-sys のビルドスクリプトが OpenBabel の DLL とプラグインを実行ファイルの
+隣にコピーし（Linux / macOS は rpath）、`cargo run` も `cargo test` もそのまま動きます。
+バインディングの小さな C++ シムのために C++ コンパイラ（Windows では MSVC Build Tools）は必要です。
 
-## 自分のアプリにする
+ビルド済みの OpenBabel があるのは `x86_64-pc-windows-msvc`、`x86_64-unknown-linux-gnu`、
+`aarch64-apple-darwin`、`x86_64-apple-darwin` です。ホスト以外のターゲット向けにビルドするときは、
+そのターゲットのビルド済み OpenBabel を別ディレクトリに取得し、ビルドをそこへ向けます。
 
-名前は複数のファイルから相互に参照しているため、次の順で変更してください。
+```bash
+bash scripts/fetch-openbabel.sh x86_64-apple-darwin   # -> third_party/openbabel-prebuilt-x86_64-apple-darwin/
+OPENBABEL_SYS_PREBUILT_DIR=$PWD/third_party/openbabel-prebuilt-x86_64-apple-darwin \
+  cargo build --release --target x86_64-apple-darwin
+```
 
-1. **`Cargo.toml`** — `name` / `version` / `description` / `authors` / `license` / `repository` と `[package.metadata.deb]` セクション。
-2. **`src/lib.rs`** — `APP_NAME`（ウィンドウタイトルと永続化キー）。
-3. **`.github/workflows/release.yml`** — `BIN_NAME`（`Cargo.toml` の `name` と一致させる）と `APP_NAME`（成果物のファイル名に使用）。
-4. **`installer/windows.iss`** — `MyAppName` / `MyAppPublisher` / `MyAppURL` / `MyAppExeName`、そして **`AppId` の GUID を新しく生成**してください。`AppId` は Windows がアップグレードを判別するための識別子です。一度リリースしたあとは絶対に変更しないでください。
-5. **`Cargo.toml` の `[package.metadata.bundle]`** — `name` / `identifier`（自分が管理するドメインを使用）/ `category` / 各種説明文。あわせて `release.yml` の `macos` ジョブ内にハードコードされている `egui Template.app` のパスも、`bundle.name` と一致するように更新してください。
-6. **`installer/linux/egui-template.desktop`** — ファイル名自体もリネームし、`Exec` と `Icon` を更新。
-7. **`installer/linux/AppRun`** — `exec` 行のバイナリ名。
-8. **`resources/icon.png`** / **`resources/icon.ico`** / **`resources/icon.icns`** — 自分のアイコンに差し替え。PNG は 1024×1024、`.ico` はマルチ解像度（16〜256 px）、`.icns` は最低でも 32/128/256/512/1024 px を含む状態を保ってください。
-9. **`LICENSE`** — 著作権者名を記入。
+ビルド済みのないターゲットでは、CMake を入れて `OPENBABEL_SYS_PREBUILT_DIR` を空にし、OpenBabel を
+ソースからビルドしてください（初回は 10〜20 分かかります）。OpenBabel なしのビルドはありません。
+
+リリース版はすべて OpenBabel を同梱しています。
+
+| パッケージ | ライブラリ | プラグイン | データ |
+| --- | --- | --- | --- |
+| Windows（インストーラ・zip） | `.exe` の隣の `openbabel-3.dll`・`inchi.dll` | `.exe` の隣の `*.obf` | `.exe` の隣の `data\` |
+| Linux（`.deb`・AppImage） | `usr/lib/open-draw-chemistry/`（rpath `$ORIGIN/../lib/open-draw-chemistry`） | `usr/lib/open-draw-chemistry/openbabel/` | `usr/share/open-draw-chemistry/openbabel/` |
+| macOS（`.app`・ユニバーサル） | `Contents/Frameworks/`（rpath `@executable_path/../Frameworks`） | `Contents/Frameworks/openbabel/` | `Contents/Resources/openbabel/` |
+
+プラグインとデータの場所は、アプリが起動時に OpenBabel に伝えます（`src/three_d/runtime.rs`）。
+Windows 版は Visual C++ ランタイム（`msvcp140.dll`・`vcruntime140.dll`・`vcruntime140_1.dll`）も
+アプリと同じフォルダに同梱しているので、`vc_redist.x64.exe` を入れていないまっさらな Windows でも動きます。
+`open_draw_chemistry --check-openbabel` はウィンドウを開かずに同梱の OpenBabel を試します。
+リリースのワークフローは各パッケージでこれを実行します。
 
 ## リリースする
 
@@ -70,18 +114,20 @@ Windows のインストーラも未署名なので、ダウンロード時に Sm
 ## ローカルでインストーラをビルドする
 
 ```bash
+bash scripts/fetch-openbabel.sh
 cargo build --release
 
-# Windows（Inno Setup 6 が必要）
+# Windows（Inno Setup 6 が必要）：アプリのフォルダ（ポータブル zip の中身）を作ってからインストーラ
+bash scripts/stage-windows.sh           # -> target\stage\windows\
 iscc installer\windows.iss              # -> dist\
 
-# Linux .deb（cargo-deb が必要）
-cargo install cargo-deb && cargo deb
+# Linux .deb（cargo-deb と patchelf が必要）
+bash scripts/stage-linux.sh target/deb-root && mkdir -p target/deb-root/DEBIAN
+cargo install cargo-deb && cargo deb --no-build
 
-# macOS .app（cargo-bundle が必要）
-cargo install cargo-bundle && cargo bundle --release
-# さらに .dmg を作る場合は `brew install create-dmg` が必要です。
-# 詳細は .github/workflows/release.yml の macos ジョブを参照してください
+# macOS ユニバーサル .app（cargo-bundle と両アーキテクチャの OpenBabel が必要）
+# .github/workflows/release.yml の macos ジョブ（scripts/bundle-macos.sh）を参照してください。
+# さらに .dmg を作る場合は `brew install create-dmg` が必要です
 ```
 
 ## act でワークフローを試す
@@ -106,4 +152,4 @@ sudo apt-get install -y \
 
 ## ライセンス
 
-MIT — [LICENSE](LICENSE) を参照してください。
+GPL-2.0-or-later — [LICENSE](LICENSE) を参照してください（3D 生成で OpenBabel をリンクするため）。

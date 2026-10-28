@@ -1,31 +1,86 @@
 [package]
-name = "egui_template"
+name = "open_draw_chemistry"
 version = "0.1.0"
 edition = "2024"
 # Raised from edition 2024's 1.85 by the egui-winit fork in [patch.crates-io].
 rust-version = "1.95"
-description = "A cross-platform egui/eframe application template with tag-driven installer releases"
-authors = ["Your Name <you@example.com>"]
-license = "MIT"
-repository = "https://github.com/your-name/egui_template"
+description = "A chemical structure and reaction drawing application (ChemDraw-compatible CDX/CDXML)"
+authors = ["IndigoCarmine"]
+# GPL because the 3D builder links OpenBabel (GPL-2.0).
+license = "GPL-2.0-or-later"
+repository = "https://github.com/IndigoCarmine/open_draw_chemistry"
 readme = "README.md"
 
 [dependencies]
-eframe = { version = "0.37.0", features = ["persistence"] }
+# `wgpu` because the 3D viewer (moleucle_3dview_rs) renders through it; main.rs selects it.
+eframe = { version = "0.37.0", features = ["persistence", "wgpu"] }
 egui = "0.37.0"
 serde = { version = "1.0.229", features = ["derive"] }
 
+# The 2D structure editor widget, reaction schemes and CDX/CDXML codecs. Pinned to a rev
+# because it is not on crates.io; it must share this app's egui version.
+chembuider-rs = { git = "https://github.com/IndigoCarmine/chembuider-rs", rev = "2bfeea49aa20d080443edb991a879146d6c3959c" }
+rfd = "0.17.2"
+# The per-user config directory, where the user's own fragments are kept.
+dirs = "6.0.0"
+# Reads and writes fragment files in chembuider-rs's JSON format.
+serde_json = "1.0.154"
+# The parameter scan's energy curve and heatmap (see `src/ui/scan.rs`). 0.38 is the release
+# built against egui 0.37.
+egui_plot = "0.38.0"
+
+# UI translations (see `src/i18n/`): the catalogs in `locales/` are TOML, the OS locale picks
+# the first language, and the system font fallback is told the language so Han characters are
+# drawn in a Japanese, Simplified or Traditional Chinese font as fits. All three are already in
+# eframe's dependency tree.
+toml = { version = "1.1.8", default-features = false, features = ["std", "parse", "serde"] }
+sys-locale = "0.3.2"
+egui_system_font_provider = "0.37.0"
+
+# The 3D viewer (wgpu; the egui 0.37 port). MIT. Pinned to a rev for the same reason as above.
+moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_rs", rev = "0a110d4b7ea0ce57db8688957feff67aa89171d7" }
+# The viewer's vector types, needed to drive its camera and renderer directly.
+lin_alg = { version = "1.4.3", features = ["computer_graphics"] }
+
+# 2D → 3D generation, force-field optimisation, SMILES and 3D file reading (see `src/three_d/`).
+# Required: openbabel-sys links the prebuilt OpenBabel that `scripts/fetch-openbabel.sh`
+# downloads (or builds OpenBabel from source with CMake). Every release ships its libraries,
+# plugins and data beside the executable (see .github/workflows/release.yml).
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.8" }
+
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+# Windows OLE: Copy publishes an OLE data object (OleSetClipboard), so Word/PowerPoint paste
+# the structure as an embedded ChemDraw object (see `src/ole/`), and the OLE server
+# (`src/ole_server/`) edits such objects: COM objects, structured storage, metafiles and the
+# registry. `windows-core` is needed by the `#[implement]` macro. Same version eframe/wgpu
+# already pull in.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media",
+    "Win32_Media_Audio",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-core = "0.62.2"
 
 # Upstream winit/egui-winit do not implement native drag-and-drop on Wayland.
 # These forks do; without them DnD silently does nothing under a Wayland session.
 [patch.crates-io]
 winit = { git = "https://github.com/IndigoCarmine/winit", branch = "wayland-native-dnd" }
 egui-winit = { git = "https://github.com/IndigoCarmine/egui-winit", branch = "main" }
-
-[dev-dependencies]
-serde_json = "1.0.154"
 
 [build-dependencies]
 winresource = "0.1.34"
@@ -34,14 +89,14 @@ winresource = "0.1.34"
 # `cargo bundle` generates Info.plist from these keys, so there is no plist to
 # hand-maintain. Build the bundle locally with `cargo bundle --release`.
 [package.metadata.bundle]
-name = "egui Template"
-identifier = "com.example.egui-template"
+name = "Open DrawChemistry"
+identifier = "io.github.indigocarmine.open-draw-chemistry"
 icon = ["resources/icon.icns"]
-category = "Utility"
-short_description = "A cross-platform egui/eframe application template"
+category = "Education"
+short_description = "Chemical structure and reaction drawing"
 long_description = """
-A starting point for cross-platform desktop applications built with egui and
-eframe, including tag-driven installer releases for Windows, macOS and Linux.
+Draw chemical structures and reaction schemes, and read and write ChemDraw
+CDX/CDXML files.
 """
 
 # Release binaries: smaller and faster, at the cost of longer link times.
@@ -53,18 +108,27 @@ strip = true
 
 # --- cargo-deb: used by .github/workflows/release.yml to build the Linux .deb ---
 [package.metadata.deb]
-maintainer = "Your Name <you@example.com>"
-copyright = "2026, Your Name <you@example.com>"
+maintainer = "IndigoCarmine"
+copyright = "2026, IndigoCarmine"
 license-file = ["LICENSE", "0"]
-extended-description = "A cross-platform GUI application built with egui and eframe."
-section = "utils"
+extended-description = "Draw chemical structures and reaction schemes; read and write ChemDraw CDX/CDXML files."
+section = "science"
 priority = "optional"
 # eframe dlopens its GL/X11/Wayland libraries rather than linking them, so `$auto`
-# only ever detects libc. Without listing them the package installs cleanly and
-# then fails to start on a minimal system.
+# does not detect them. Without listing them the package installs cleanly and
+# then fails to start on a minimal system. (`$auto` does find what the binary and the
+# bundled OpenBabel link: libc, libstdc++, zlib, libxml2.)
 depends = "$auto, libxkbcommon0, libwayland-client0, libegl1, libgl1, libx11-6, libxcursor1, libxi6, libxrandr2"
+# The app and its private OpenBabel come from the tree scripts/stage-linux.sh lays out in
+# target/deb-root (the binary's rpath, $ORIGIN/../lib/open-draw-chemistry, reaches the
+# libraries in /usr/lib/open-draw-chemistry). The release workflow
+# also creates target/deb-root/DEBIAN, which tells dpkg-shlibdeps (behind `$auto`) that the
+# bundled libraries belong to this package rather than lacking a package of their own.
 assets = [
-    ["target/release/egui_template", "usr/bin/", "755"],
-    ["installer/linux/egui-template.desktop", "usr/share/applications/", "644"],
-    ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/egui-template.png", "644"],
+    ["target/deb-root/usr/bin/open_draw_chemistry", "usr/bin/", "755"],
+    ["target/deb-root/usr/lib/open-draw-chemistry/*.so.*", "usr/lib/open-draw-chemistry/", "644"],
+    ["target/deb-root/usr/lib/open-draw-chemistry/openbabel/*.so", "usr/lib/open-draw-chemistry/openbabel/", "644"],
+    ["target/deb-root/usr/share/open-draw-chemistry/openbabel/*", "usr/share/open-draw-chemistry/openbabel/", "644"],
+    ["installer/linux/open-draw-chemistry.desktop", "usr/share/applications/", "644"],
+    ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/open-draw-chemistry.png", "644"],
 ]

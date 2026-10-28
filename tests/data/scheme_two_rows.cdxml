@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE CDXML SYSTEM "https://static.chemistry.revvitycloud.com/cdxml/CDXML.dtd" >
+<!-- A hand-written two-row, two-step scheme in the form ChemDraw 26 writes one:
+     row 1  (I) -i)-> (II)      the arrow a graphic superseded by an arrow object, its step and
+                                 the labels' chemical properties given;
+     row 2  (II) -ii)-> 4/(III)  its "(II)" placed well below the structure, so only its chemical
+                                 property ties it there; no step: the arrow text is found over the
+                                 shaft, and the bold "4" is a free text just above the label "(III)".
+     (II) carries a nickname node (TEG) with its own fragment, as ChemDraw writes one. -->
+<CDXML BondLength="14.40" LabelFont="3" LabelSize="10" LabelFace="96" CaptionFont="3" CaptionSize="10">
+<colortable><color r="1" g="1" b="1"/><color r="0" g="0" b="0"/></colortable>
+<fonttable><font id="3" charset="iso-8859-1" name="Arial"/></fonttable>
+<page id="1" BoundingBox="90 80 300 240">
+<fragment id="10" BoundingBox="100 100 114.40 100">
+<n id="11" p="100 100" Z="1"/>
+<n id="12" p="114.40 100" Z="2"/>
+<b id="13" B="11" E="12" Z="3"/>
+</fragment>
+<t id="20" p="103 125" BoundingBox="100 116 112 127" Z="4"><s font="3" size="10" color="0">(I)</s></t>
+<graphic id="30" SupersededBy="31" BoundingBox="220 100 140 100" Z="5" GraphicType="Line" ArrowType="FullHead" HeadSize="2250"/>
+<t id="32" p="175 92" BoundingBox="175 84 183 94" Z="6"><s font="3" size="10" color="0">i)</s></t>
+<fragment id="40" BoundingBox="250 96 278.80 104">
+<n id="41" p="250 100" Element="8" Z="7"><t id="44" p="246.50 103.50"><s font="3" size="10" color="0" face="96">O</s></t></n>
+<n id="42" p="264.40 100" NodeType="Nickname" Z="8"><fragment id="45"><n id="46" p="264.40 100" NodeType="ExternalConnectionPoint"/><n id="47" p="278.80 100"/><b id="48" B="46" E="47"/></fragment><t id="49" p="260.90 103.50"><s font="3" size="10" color="0" face="96">TEG</s></t></n>
+<b id="43" B="41" E="42" Z="9"/>
+</fragment>
+<t id="50" p="250 125" BoundingBox="248 116 262 127" Z="10"><s font="3" size="10" color="0">(II)</s></t>
+<fragment id="70" BoundingBox="100 200 114.40 200">
+<n id="71" p="100 200" Element="8" Z="11"><t id="74" p="96.50 203.50"><s font="3" size="10" color="0" face="96">O</s></t></n>
+<n id="72" p="114.40 200" Z="12"/>
+<b id="73" B="71" E="72" Order="2" Z="13"/>
+</fragment>
+<t id="80" p="100 259" BoundingBox="98 250 112 261" Z="14"><s font="3" size="10" color="0">(II)</s></t>
+<graphic id="90" BoundingBox="220 200 140 200" Z="15" GraphicType="Line" ArrowType="FullHead" HeadSize="2250"/>
+<t id="92" p="175 192" BoundingBox="175 184 183 194" Z="16"><s font="3" size="10" color="0">ii)</s></t>
+<fragment id="100" BoundingBox="250 200 264.40 200">
+<n id="101" p="250 200" Z="17"/>
+<n id="102" p="264.40 200" Element="7" Z="18"><t id="104" p="260.90 203.50"><s font="3" size="10" color="0" face="96">N</s></t></n>
+<b id="103" B="101" E="102" Z="19"/>
+</fragment>
+<t id="110" p="255 222" BoundingBox="254 214 260 224" Z="20"><s font="3" size="10" color="0" face="1">4</s></t>
+<t id="111" p="251 236" BoundingBox="250 228 264 239" Z="21"><s font="3" size="10" color="0">(III)</s></t>
+<scheme id="60"><step id="61" ReactionStepReactants="10" ReactionStepProducts="40" ReactionStepArrows="30" ReactionStepObjectsAboveArrow="32"/></scheme>
+<chemicalproperty id="21" ChemicalPropertyDisplayID="20" ChemicalPropertyIsActive="yes" ChemicalPropertyType="22" BasisObjects="11 12 13"/>
+<chemicalproperty id="51" ChemicalPropertyDisplayID="50" ChemicalPropertyIsActive="yes" ChemicalPropertyType="22" BasisObjects="41 42 43"/>
+<chemicalproperty id="81" ChemicalPropertyDisplayID="80" ChemicalPropertyIsActive="yes" ChemicalPropertyType="22" BasisObjects="71 72 73"/>
+<chemicalproperty id="112" ChemicalPropertyDisplayID="111" ChemicalPropertyIsActive="yes" ChemicalPropertyType="22" BasisObjects="101 102 103"/>
+<arrow id="31" BoundingBox="140 96 220 104" Z="5" FillType="None" ArrowheadHead="Full" ArrowheadType="Solid" HeadSize="2250" Head3D="220 100 0" Tail3D="140 100 0"/>
+</page>
+</CDXML>

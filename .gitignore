@@ -1,6 +1,10 @@
 /target
 /dist
 
+# Prebuilt OpenBabel, downloaded by scripts/fetch-openbabel.sh
+/third_party/openbabel-prebuilt
+/third_party/openbabel-prebuilt-*
+
 # Release-workflow scratch output (also produced when building installers locally)
 /out
 /AppDir

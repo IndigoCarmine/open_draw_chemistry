@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- The same icon as icon.svg on macOS's grid: an 824 px tile centred in the 1024 px canvas,
+       as Apple's app icon template lays it out, so it sits level with other Dock icons. -->
+  <rect x="100" y="100" width="824" height="824" rx="185.4" fill="#E4482A"/>
+  <g transform="translate(240.08 240.08) scale(5.4384)">
+    <path d="M50,16 L79,33 L79,63 L50,86 L21,63 L21,33 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="4" stroke-linejoin="round"/>
+    <line x1="50" y1="56" x2="50" y2="88" stroke="#E4482A" stroke-width="4.5"/>
+    <circle cx="50" cy="52" r="7" fill="#E4482A"/>
+  </g>
+</svg>
