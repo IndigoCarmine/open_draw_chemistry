@@ -604,7 +604,8 @@ section_model = "Model"
 section_edit = "Edit"
 section_export = "Export"
 # How the 3D model is drawn: small spheres joined by sticks, cheap to render.
-style_light = "Spheres (light)"
+style_ball_and_stick = "Ball-and-stick"
+style_spheres = "Spheres"
 style_wireframe = "Wireframe"
 # Toggle button: show a number label on each atom.
 atom_numbers = "Atom numbers"
