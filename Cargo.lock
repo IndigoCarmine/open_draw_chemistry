@@ -652,12 +652,13 @@ dependencies = [
 [[package]]
 name = "chembuider-rs"
 version = "0.4.2"
-source = "git+https://github.com/IndigoCarmine/chembuider-rs?rev=d6f4dd2fdbc8b17f77c1d0af70f1fa5b04a80e24#d6f4dd2fdbc8b17f77c1d0af70f1fa5b04a80e24"
+source = "git+https://github.com/IndigoCarmine/chembuider-rs?rev=aa0b93cb4908b8c9f3ce71c45f9770cdcac6e139#aa0b93cb4908b8c9f3ce71c45f9770cdcac6e139"
 dependencies = [
  "cdx-file-rs",
  "cfb",
  "clipboard-win",
  "egui",
+ "fontdb",
  "resvg",
  "serde",
  "serde_json",
