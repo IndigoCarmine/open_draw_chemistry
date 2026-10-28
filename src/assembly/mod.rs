@@ -9,6 +9,7 @@
 //! - [`build`]: the design turned into atoms and bonds, cached by revision;
 //! - [`place`]: molecules placed by hand — their pose, mouse moves, a free spot for a new one;
 //! - [`clash`]: atoms of different molecules too close, by a cell list (periodic or not);
+//! - [`measure`]: atoms picked across molecules for a distance, an angle or a dihedral;
 //! - [`export`]: PDB, XYZ, MOL2 and CIF writers;
 //! - [`file`]: the `.odasm` file the design is saved in.
 //!
@@ -23,6 +24,7 @@ pub mod clash;
 pub mod export;
 pub mod file;
 pub mod math;
+pub mod measure;
 pub mod model;
 pub mod place;
 pub mod symop;

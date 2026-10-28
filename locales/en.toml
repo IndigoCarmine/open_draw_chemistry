@@ -1385,3 +1385,19 @@ more_hbonds = { one = "{n} more", other = "{n} more" }
 stack_count = { one = "π-stacking: {n}{more}{pending}", other = "π-stacking: {n}{more}{pending}" }
 # Count of π-stacks not listed.
 more_stacks = { one = "{n} more", other = "{n} more" }
+
+[assembly.measure]
+# The assembly viewer's switch for measuring between atoms.
+tool = "Measure"
+tool_tip = "Click atoms of any molecules to measure the distance, angle or dihedral between them (M). Esc stops"
+prompt = "Click atoms: 2 for a distance, 3 for an angle, 4 for a dihedral. Click a picked atom again to let it go"
+title = "Measurement"
+# A measured atom: {atom} its element and number in its monomer ("C3"), {n} its molecule.
+atom = "{atom} (#{n})"
+copy = "Copy"
+copy_tip = "Copy the atoms and the value"
+# Shown in the panel's footer after the copy button.
+copied = "Measurement copied"
+clear = "Clear"
+# While measuring a crystal: its periodic images are not drawn (clicks on them could not be told from the atoms they repeat).
+images_hidden = "Periodic images are hidden while measuring"
