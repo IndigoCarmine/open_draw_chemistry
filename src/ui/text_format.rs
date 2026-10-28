@@ -1,24 +1,29 @@
-//! The text format bar (書式): font, size, bold/italic, sub/superscript and ChemDraw's Symbol
-//! font for page texts (reaction conditions, captions).
+//! The text format controls (書式): font, size, bold/italic, sub/superscript and ChemDraw's
+//! Symbol font for page texts (reaction conditions, captions).
 //!
-//! It floats over the top-left corner of the canvas while it has something to act on: the
-//! テキスト tool is active, a text box is open, or page texts are selected. Floating rather than
-//! taking a row keeps the drawing where it is when the bar comes and goes, and keeps it next
-//! to the text being edited; the right panel stays 解析. What a change applies to is the
-//! editor's business (`chembuider_rs::widget::text_format`): the selected characters of the
-//! open text box (or its whole text), else the selected texts, and in any case new texts.
+//! They sit in the toolbar's format section ([`super::format_bar`]), which reports each change
+//! as a [`Command::TextFormat`](super::Command::TextFormat) for [`apply`] to carry out. What a
+//! change applies to is the editor's business (`chembuider_rs::widget::text_format`): the
+//! selected characters of the open text box (or its whole text), else the selected texts, and
+//! in any case new texts. The controls show the format of that text ([`TextSummary`]), mixed
+//! where it differs.
 
 use chembuider_rs::widget::fonts::{self, FontName};
-use chembuider_rs::widget::text_format::{FormatChange, FormatTarget};
-use chembuider_rs::{ChemStructEditor, Script, Tool};
+use chembuider_rs::widget::text_format::{FormatChange, FormatTarget, text_range};
+use chembuider_rs::{ChemStructEditor, RichText, Script, SpanStyle};
 use serde::{Deserialize, Serialize};
+
+use super::format_bar::Value;
 
 /// Sizes offered, in points (ChemDraw's text is 10 pt).
 const SIZES: [f32; 10] = [8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 24.0, 36.0];
 /// How many recently used fonts are remembered.
 const RECENT_MAX: usize = 8;
+/// The sizes that can be typed, in points.
+const SIZE_RANGE: std::ops::RangeInclusive<f32> = 1.0..=999.0;
 
-/// The bar's state: the recently used fonts (saved with the app) and the font list's search.
+/// The controls' state: the recently used fonts (saved with the app), the font list's search
+/// and the size being typed.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextFormatBar {
@@ -26,6 +31,8 @@ pub struct TextFormatBar {
     pub recent: Vec<String>,
     #[serde(skip)]
     search: String,
+    #[serde(skip)]
+    size_input: String,
 }
 
 impl TextFormatBar {
@@ -37,18 +44,98 @@ impl TextFormatBar {
     }
 }
 
-/// Whether the bar has anything to act on.
-pub fn wanted(editor: &ChemStructEditor) -> bool {
-    editor.tool == Tool::Text
-        || editor.text_edit.is_some()
-        || editor
-            .molecule
-            .objects
-            .iter()
-            .any(|o| o.as_text().is_some() && editor.selected_objects.contains(&o.id()))
+/// The format of the text a change would apply to, each value over all of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextSummary {
+    pub target: FormatTarget,
+    /// The font of the text not in Symbol (Symbol only when all of it is).
+    pub font: Value<Option<FontName>>,
+    pub size: Value<Option<f32>>,
+    pub bold: Value<bool>,
+    pub italic: Value<bool>,
+    pub script: Value<Script>,
+    /// In Symbol; for the open text box with nothing selected, whether Symbol typing is on.
+    pub symbol: Value<bool>,
 }
 
-fn target_label(target: FormatTarget) -> String {
+impl TextSummary {
+    pub fn of(editor: &ChemStructEditor) -> Self {
+        let format = editor.text_format();
+        let mut styles = styles(editor);
+        if styles.is_empty() {
+            styles.push(format.style);
+        }
+        let font = Value::of(styles.iter().filter(|s| !s.is_symbol()).map(|s| s.font))
+            .unwrap_or(Value::Same(Some(FontName::symbol())));
+        let symbol = match format.target {
+            FormatTarget::Editing { selection: false } => Value::Same(format.symbol_typing),
+            _ => over(&styles, |s| s.is_symbol()),
+        };
+        Self {
+            target: format.target,
+            font,
+            size: over(&styles, |s| s.size),
+            bold: over(&styles, |s| s.bold),
+            italic: over(&styles, |s| s.italic),
+            script: over(&styles, |s| s.script),
+            symbol,
+        }
+    }
+}
+
+/// What `styles` (one at least) share of `f`.
+fn over<T: PartialEq>(styles: &[SpanStyle], f: impl Fn(&SpanStyle) -> T) -> Value<T> {
+    Value::of(styles.iter().map(f)).expect("one style at least")
+}
+
+/// The styles of all the text a change would apply to: the characters selected in the open
+/// text box, or every run of the selected texts. Empty when that is the one style the editor
+/// reports (the text box with nothing selected, or new texts).
+fn styles(editor: &ChemStructEditor) -> Vec<SpanStyle> {
+    if let Some(edit) = &editor.text_edit {
+        let (rich, map) = RichText::parse_mapped(&edit.text);
+        let Some(range) = edit
+            .selection
+            .clone()
+            .map(|s| text_range(&map, s))
+            .filter(|s| !s.is_empty())
+        else {
+            return Vec::new();
+        };
+        let mut styles = rich.styles_in(range);
+        // A new text takes what it does not set itself from the style of new texts.
+        if edit.id.is_none() {
+            let base = &editor.new_text_style;
+            for style in &mut styles {
+                style.font = style.font.or(base.font);
+                style.size = style.size.or(base.size);
+                style.bold |= base.bold;
+                style.italic |= base.italic;
+            }
+        }
+        return styles;
+    }
+    editor
+        .molecule
+        .objects
+        .iter()
+        .filter(|o| editor.selected_objects.contains(&o.id()))
+        .filter_map(|o| o.as_text())
+        .flat_map(|t| t.lines())
+        .flat_map(|line| line.spans.into_iter().map(|s| s.style))
+        .collect()
+}
+
+/// Apply `change` to what the user is working on, remembering a chosen font. Returns whether
+/// the molecule changed (formatting selected texts).
+pub fn apply(editor: &mut ChemStructEditor, bar: &mut TextFormatBar, change: FormatChange) -> bool {
+    if let FormatChange::Font(Some(font)) = change {
+        bar.remember(font.as_str());
+    }
+    editor.apply_text_format(change)
+}
+
+pub fn target_label(target: FormatTarget) -> String {
     match target {
         FormatTarget::NewText => t!("text_format.target.new_text").to_owned(),
         FormatTarget::Editing { selection: true } => t!("text_format.target.selection").to_owned(),
@@ -59,6 +146,12 @@ fn target_label(target: FormatTarget) -> String {
     }
 }
 
+/// A control's tooltip, followed by what it applies to.
+fn tip(text: &str, target: FormatTarget) -> String {
+    let target = target_label(target);
+    format!("{text}\n{}", t!("format_bar.applies_to", target = target))
+}
+
 fn size_label(size: Option<f32>) -> String {
     match size {
         Some(s) => format!("{s} pt"),
@@ -66,196 +159,267 @@ fn size_label(size: Option<f32>) -> String {
     }
 }
 
-/// Show the bar over the canvas `canvas` when it is wanted, applying what is chosen to
-/// `editor`. Returns whether the molecule changed (formatting selected texts).
-pub fn show(
-    ui: &egui::Ui,
-    canvas: egui::Rect,
-    editor: &mut ChemStructEditor,
-    bar: &mut TextFormatBar,
-) -> bool {
-    if !wanted(editor) {
-        return false;
+/// The size shown for `size`.
+pub fn size_text(size: Value<Option<f32>>) -> String {
+    match size {
+        Value::Same(s) => size_label(s),
+        Value::Mixed => t!("format_bar.mixed").to_owned(),
     }
-    let format = editor.text_format();
-    let style = format.style;
-    let mut changes: Vec<FormatChange> = Vec::new();
-    let mut popup_rects: Vec<egui::Rect> = Vec::new();
-    let area = egui::Area::new(egui::Id::unique("odc_text_format_bar"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(canvas.left_top() + egui::vec2(8.0, 8.0))
-        .show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::symmetric(8, 4))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(t!("text_format.title")).strong());
-                        ui.weak(target_label(format.target));
-                        ui.separator();
-                        font_menu(ui, style.font, bar, &mut changes, &mut popup_rects);
-                        let size = egui::ComboBox::from_id_salt("odc_text_size")
-                            .width(64.0)
-                            .selected_text(size_label(style.size))
-                            .show_ui(ui, |ui| {
-                                popup_rects.push(ui.clip_rect());
-                                for size in
-                                    std::iter::once(None).chain(SIZES.iter().map(|s| Some(*s)))
-                                {
-                                    if ui
-                                        .selectable_label(style.size == size, size_label(size))
-                                        .clicked()
-                                    {
-                                        changes.push(FormatChange::Size(size));
-                                    }
-                                }
-                            });
-                        size.response.on_hover_text(t!("text_format.size_tip"));
-                        ui.separator();
-                        if ui
-                            .selectable_label(style.bold, egui::RichText::new("B").strong())
-                            .on_hover_text(t!("text_format.bold"))
-                            .clicked()
-                        {
-                            changes.push(FormatChange::Bold(!style.bold));
-                        }
-                        if ui
-                            .selectable_label(style.italic, egui::RichText::new("I").italics())
-                            .on_hover_text(t!("text_format.italic"))
-                            .clicked()
-                        {
-                            changes.push(FormatChange::Italic(!style.italic));
-                        }
-                        let sub = style.script == Script::Sub;
-                        if ui
-                            .selectable_label(sub, "x₂")
-                            .on_hover_text(t!("text_format.subscript"))
-                            .clicked()
-                        {
-                            changes.push(FormatChange::Script(if sub {
-                                Script::Normal
-                            } else {
-                                Script::Sub
-                            }));
-                        }
-                        let sup = style.script == Script::Super;
-                        if ui
-                            .selectable_label(sup, "x²")
-                            .on_hover_text(t!("text_format.superscript"))
-                            .clicked()
-                        {
-                            changes.push(FormatChange::Script(if sup {
-                                Script::Normal
-                            } else {
-                                Script::Super
-                            }));
-                        }
-                        ui.separator();
-                        let symbol_on = match format.target {
-                            FormatTarget::Editing { selection: false } => format.symbol_typing,
-                            _ => style.is_symbol(),
-                        };
-                        if ui
-                            .selectable_label(symbol_on, "Σ Symbol")
-                            .on_hover_text(t!("text_format.symbol_tip"))
-                            .clicked()
-                        {
-                            changes.push(FormatChange::Symbol(!symbol_on));
-                        }
-                    });
-                });
-        });
-    editor.keep_text_edit_open_over(area.response.rect);
-    for rect in popup_rects {
-        editor.keep_text_edit_open_over(rect);
-    }
-    let mut modified = false;
-    for change in changes {
-        if let FormatChange::Font(Some(font)) = change {
-            bar.remember(font.as_str());
-        }
-        modified |= editor.apply_text_format(change);
-    }
-    modified
 }
 
-/// The font list: a search box, the standard font, the recent fonts, then every installed one.
-fn font_menu(
+/// A size typed in: points, with or without "pt", within [`SIZE_RANGE`], to a tenth.
+pub fn parse_size(text: &str) -> Option<f32> {
+    let text = text.trim();
+    let number = text
+        .strip_suffix("pt")
+        .or_else(|| text.strip_suffix("PT"))
+        .or_else(|| text.strip_suffix("Pt"))
+        .unwrap_or(text)
+        .trim()
+        .replace(',', ".");
+    let size: f32 = number.parse().ok()?;
+    let size = (size * 10.0).round() / 10.0;
+    (size.is_finite() && SIZE_RANGE.contains(&size)).then_some(size)
+}
+
+/// The font shown for `font`.
+pub fn font_text(font: Value<Option<FontName>>) -> String {
+    match font {
+        Value::Same(None) => t!("text_format.font.default").to_owned(),
+        Value::Same(Some(f)) if !fonts::is_installed(f.as_str()) => {
+            t!("text_format.font.not_installed", font = f.to_string())
+        }
+        Value::Same(Some(f)) => f.to_string(),
+        Value::Mixed => t!("format_bar.mixed").to_owned(),
+    }
+}
+
+/// The size list: a box to type a size into (Enter applies it), then the usual sizes; in the
+/// toolbar a drop-down, in a menu (`in_menu`) a submenu.
+pub fn size_menu(
     ui: &mut egui::Ui,
-    current: Option<FontName>,
+    in_menu: bool,
+    summary: &TextSummary,
     bar: &mut TextFormatBar,
     changes: &mut Vec<FormatChange>,
-    popup_rects: &mut Vec<egui::Rect>,
 ) {
-    let shown = current.map_or_else(
-        || t!("text_format.font.default").to_owned(),
-        |f| f.to_string(),
+    let list = |ui: &mut egui::Ui| size_list(ui, summary.size, bar, changes);
+    let shown = size_text(summary.size);
+    if in_menu {
+        let label = t!("format_bar.size", size = shown);
+        super::appearance::submenu(ui, &label, list);
+        return;
+    }
+    let combo = egui::ComboBox::from_id_salt("odc_text_size")
+        .width(64.0)
+        // Open while its box is clicked into; a size picked closes it.
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .selected_text(shown)
+        .show_ui(ui, list);
+    combo
+        .response
+        .on_hover_text(tip(t!("text_format.size_tip"), summary.target));
+}
+
+fn size_list(
+    ui: &mut egui::Ui,
+    current: Value<Option<f32>>,
+    bar: &mut TextFormatBar,
+    changes: &mut Vec<FormatChange>,
+) {
+    let input = ui.add(
+        egui::TextEdit::singleline(&mut bar.size_input)
+            .hint_text(t!("format_bar.size_input"))
+            .desired_width(80.0),
     );
-    let missing = current.is_some_and(|f| !fonts::is_installed(f.as_str()));
+    if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        if let Some(size) = parse_size(&bar.size_input) {
+            changes.push(FormatChange::Size(Some(size)));
+            ui.close();
+        }
+        bar.size_input.clear();
+    }
+    ui.separator();
+    for size in std::iter::once(None).chain(SIZES.iter().map(|s| Some(*s))) {
+        if ui
+            .selectable_label(current == Value::Same(size), size_label(size))
+            .clicked()
+        {
+            changes.push(FormatChange::Size(size));
+            ui.close();
+        }
+    }
+}
+
+/// A toggle for `value`: pressed when all of the text has it, half-lit when some has, and
+/// named (for screen readers and the tests) `name`, with its state. Returns whether it was
+/// clicked.
+fn toggle(ui: &mut egui::Ui, value: Value<bool>, text: egui::RichText, name: &str) -> bool {
+    let on = value == Value::Same(true);
+    let mut button = egui::Button::selectable(on, text).min_size(egui::vec2(24.0, 0.0));
+    if value == Value::Mixed {
+        button = button.fill(ui.visuals().selection.bg_fill.gamma_multiply(0.4));
+    }
+    let response = ui.add(button);
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::new(egui::Role::CheckBox);
+        info.enabled = enabled;
+        info.label = Some(name.to_owned());
+        // No state is the mixed one.
+        info.selected = match value {
+            Value::Same(b) => Some(b),
+            Value::Mixed => None,
+        };
+        info
+    });
+    let hover = match value {
+        Value::Mixed => format!("{name} — {}", t!("format_bar.mixed")),
+        Value::Same(_) => name.to_owned(),
+    };
+    response.on_hover_text(hover).clicked()
+}
+
+/// Bold, italic, sub- and superscript, and Symbol.
+pub fn style_toggles(ui: &mut egui::Ui, summary: &TextSummary, changes: &mut Vec<FormatChange>) {
+    if toggle(
+        ui,
+        summary.bold,
+        egui::RichText::new("B").strong(),
+        t!("text_format.bold"),
+    ) {
+        changes.push(FormatChange::Bold(summary.bold != Value::Same(true)));
+    }
+    if toggle(
+        ui,
+        summary.italic,
+        egui::RichText::new("I").italics(),
+        t!("text_format.italic"),
+    ) {
+        changes.push(FormatChange::Italic(summary.italic != Value::Same(true)));
+    }
+    for (script, text, name) in [
+        (Script::Sub, "x₂", t!("text_format.subscript")),
+        (Script::Super, "x²", t!("text_format.superscript")),
+    ] {
+        let value = match summary.script {
+            Value::Same(s) => Value::Same(s == script),
+            Value::Mixed => Value::Mixed,
+        };
+        if toggle(ui, value, egui::RichText::new(text), name) {
+            let on = value == Value::Same(true);
+            changes.push(FormatChange::Script(if on {
+                Script::Normal
+            } else {
+                script
+            }));
+        }
+    }
+    if toggle(
+        ui,
+        summary.symbol,
+        egui::RichText::new("Σ"),
+        t!("text_format.symbol_tip"),
+    ) {
+        changes.push(FormatChange::Symbol(summary.symbol != Value::Same(true)));
+    }
+}
+
+/// The font list: a search box, the standard font, the recent fonts, then every installed one;
+/// in the toolbar a drop-down, in a menu (`in_menu`) a submenu.
+pub fn font_menu(
+    ui: &mut egui::Ui,
+    in_menu: bool,
+    summary: &TextSummary,
+    bar: &mut TextFormatBar,
+    changes: &mut Vec<FormatChange>,
+) {
+    let list = |ui: &mut egui::Ui| font_list(ui, summary.font, bar, changes);
+    let shown = font_text(summary.font);
+    if in_menu {
+        let label = t!("format_bar.font", font = shown);
+        super::appearance::submenu(ui, &label, list);
+        return;
+    }
     let combo = egui::ComboBox::from_id_salt("odc_text_font")
-        .width(170.0)
+        .width(150.0)
         .height(360.0)
-        .selected_text(if missing {
-            t!("text_format.font.not_installed", font = shown)
-        } else {
-            shown
-        })
-        .show_ui(ui, |ui| {
-            popup_rects.push(ui.clip_rect());
-            let before = changes.len();
-            let search = ui.add(
-                egui::TextEdit::singleline(&mut bar.search)
-                    .hint_text(t!("text_format.font.search"))
-                    .desired_width(160.0),
-            );
-            if !search.has_focus() && !ui.ctx().memory(|m| m.focused().is_some()) {
-                search.request_focus();
+        // Open while its search box is clicked into or its list scrolled; a font picked
+        // closes it.
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .selected_text(shown)
+        .show_ui(ui, list);
+    combo
+        .response
+        .on_hover_text(tip(t!("text_format.font.tip"), summary.target));
+}
+
+fn font_list(
+    ui: &mut egui::Ui,
+    font: Value<Option<FontName>>,
+    bar: &mut TextFormatBar,
+    changes: &mut Vec<FormatChange>,
+) {
+    let current = match font {
+        Value::Same(f) => Some(f),
+        Value::Mixed => None,
+    };
+    let before = changes.len();
+    let search = ui.add(
+        egui::TextEdit::singleline(&mut bar.search)
+            .hint_text(t!("text_format.font.search"))
+            .desired_width(160.0),
+    );
+    if !search.has_focus() && !ui.ctx().memory(|m| m.focused().is_some()) {
+        search.request_focus();
+    }
+    let query = bar.search.to_lowercase();
+    let matches = |name: &str| query.is_empty() || name.to_lowercase().contains(&query);
+    let mut pick = |ui: &mut egui::Ui, font: Option<&str>, label: &str| {
+        let selected = current.is_some_and(|c| match (c, font) {
+            (None, None) => true,
+            (Some(c), Some(f)) => c.as_str().eq_ignore_ascii_case(f),
+            _ => false,
+        });
+        if ui.selectable_label(selected, label).clicked() {
+            changes.push(FormatChange::Font(font.map(FontName::new)));
+            ui.close();
+        }
+    };
+    if query.is_empty() {
+        pick(ui, None, t!("text_format.font.default"));
+    }
+    let recent: Vec<String> = bar.recent.iter().filter(|n| matches(n)).cloned().collect();
+    if !recent.is_empty() {
+        ui.separator();
+        ui.weak(t!("text_format.font.recent"));
+        for name in &recent {
+            pick(ui, Some(name), name);
+        }
+    }
+    ui.separator();
+    egui::ScrollArea::vertical()
+        .max_height(280.0)
+        .show(ui, |ui| {
+            let all = fonts::system_families();
+            let mut any = false;
+            for name in all.iter().filter(|n| matches(n)) {
+                any = true;
+                let label = if name.eq_ignore_ascii_case(fonts::SYMBOL) {
+                    t!("text_format.font.symbol")
+                } else {
+                    name
+                };
+                pick(ui, Some(name), label);
             }
-            let query = bar.search.to_lowercase();
-            let matches = |name: &str| query.is_empty() || name.to_lowercase().contains(&query);
-            let mut pick = |ui: &mut egui::Ui, font: Option<&str>, label: &str| {
-                let selected = current.map(|f| f.as_str()) == font
-                    || current
-                        .is_some_and(|c| font.is_some_and(|f| c.as_str().eq_ignore_ascii_case(f)));
-                if ui.selectable_label(selected, label).clicked() {
-                    changes.push(FormatChange::Font(font.map(FontName::new)));
-                }
-            };
-            if query.is_empty() {
-                pick(ui, None, t!("text_format.font.default"));
-            }
-            let recent: Vec<String> = bar.recent.iter().filter(|n| matches(n)).cloned().collect();
-            if !recent.is_empty() {
-                ui.separator();
-                ui.weak(t!("text_format.font.recent"));
-                for name in &recent {
-                    pick(ui, Some(name), name);
-                }
-            }
-            ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height(280.0)
-                .show(ui, |ui| {
-                    let all = fonts::system_families();
-                    let mut any = false;
-                    for name in all.iter().filter(|n| matches(n)) {
-                        any = true;
-                        let label = if name.eq_ignore_ascii_case(fonts::SYMBOL) {
-                            t!("text_format.font.symbol")
-                        } else {
-                            name
-                        };
-                        pick(ui, Some(name), label);
-                    }
-                    if !any {
-                        ui.weak(t!("text_format.font.no_match"));
-                    }
-                });
-            // A font was picked: the next search starts afresh.
-            if changes.len() > before {
-                bar.search.clear();
+            if !any {
+                ui.weak(t!("text_format.font.no_match"));
             }
         });
-    combo.response.on_hover_text(t!("text_format.font.tip"));
+    // A font was picked: the next search starts afresh.
+    if changes.len() > before {
+        bar.search.clear();
+    }
 }
 
 #[cfg(test)]
@@ -274,28 +438,17 @@ mod tests {
         }
         assert_eq!(bar.recent.len(), RECENT_MAX);
         assert_eq!(bar.recent[0], "Font 19");
-        // Saved with the app, the search box not.
+        // Saved with the app, the search box and the size being typed not.
         bar.search = "x".into();
+        bar.size_input = "12".into();
         let back: TextFormatBar =
             serde_json::from_str(&serde_json::to_string(&bar).unwrap()).unwrap();
         assert_eq!(back.recent, bar.recent);
         assert!(back.search.is_empty());
+        assert!(back.size_input.is_empty());
     }
 
-    #[test]
-    fn the_bar_shows_for_the_text_tool_an_open_box_or_selected_texts() {
-        let mut editor = ChemStructEditor::default();
-        assert!(!wanted(&editor));
-        editor.tool = Tool::Text;
-        assert!(wanted(&editor));
-        editor.tool = Tool::Select;
-        let id = editor.molecule.add_text([0.0, 0.0], "THF");
-        editor.selected_objects.insert(id);
-        assert!(wanted(&editor));
-    }
-
-    /// The bar acts on the editor: a font chosen for the selected text is applied and
-    /// remembered.
+    /// A font chosen for the selected text is applied and remembered.
     #[test]
     fn choosing_a_font_formats_the_selected_text() {
         let mut editor = ChemStructEditor::default();
@@ -303,10 +456,57 @@ mod tests {
         editor.selected_objects.insert(id);
         let mut bar = TextFormatBar::default();
         let font = FontName::new("Times New Roman");
-        bar.remember(font.as_str());
-        assert!(editor.apply_text_format(FormatChange::Font(Some(font))));
+        assert!(apply(&mut editor, &mut bar, FormatChange::Font(Some(font))));
         let text = editor.molecule.objects[0].as_text().unwrap();
         assert_eq!(text.text, "{@Times New Roman:THF}");
         assert_eq!(bar.recent, ["Times New Roman"]);
+    }
+
+    #[test]
+    fn a_typed_size_is_points_within_range() {
+        assert_eq!(parse_size("12"), Some(12.0));
+        assert_eq!(parse_size(" 13.5 pt "), Some(13.5));
+        assert_eq!(parse_size("7,25pt"), Some(7.3));
+        assert_eq!(parse_size("0"), None);
+        assert_eq!(parse_size("1000"), None);
+        assert_eq!(parse_size("big"), None);
+        assert_eq!(parse_size("NaN"), None);
+    }
+
+    /// The summary is of the text a change applies to: new texts with nothing selected, every
+    /// run of the selected texts (mixed where they differ), the characters selected in the
+    /// open text box.
+    #[test]
+    fn the_summary_is_mixed_where_the_text_differs() {
+        let mut editor = ChemStructEditor::default();
+        editor.new_text_style.bold = true;
+        let summary = TextSummary::of(&editor);
+        assert_eq!(summary.target, FormatTarget::NewText);
+        assert_eq!(summary.bold, Value::Same(true));
+        assert_eq!(summary.size, Value::Same(None));
+
+        let a = editor.molecule.add_text([0.0, 0.0], "**THF**");
+        let b = editor
+            .molecule
+            .add_text([0.0, 2.0], "{@Arial,14:Et}{@Symbol:a}");
+        editor.selected_objects = [a].into();
+        let summary = TextSummary::of(&editor);
+        assert_eq!(summary.target, FormatTarget::Selected(1));
+        assert_eq!(summary.bold, Value::Same(true));
+        assert_eq!(summary.font, Value::Same(None));
+        assert_eq!(summary.symbol, Value::Same(false));
+
+        editor.selected_objects = [a, b].into();
+        let summary = TextSummary::of(&editor);
+        assert_eq!(summary.bold, Value::Mixed);
+        assert_eq!(summary.size, Value::Mixed);
+        assert_eq!(summary.font, Value::Mixed);
+        assert_eq!(summary.symbol, Value::Mixed);
+        assert_eq!(summary.italic, Value::Same(false));
+
+        // Symbol runs leave the font alone: b alone is in Arial.
+        editor.selected_objects = [b].into();
+        let summary = TextSummary::of(&editor);
+        assert_eq!(summary.font, Value::Same(Some(FontName::new("Arial"))));
     }
 }

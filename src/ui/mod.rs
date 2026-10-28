@@ -12,6 +12,7 @@ use crate::three_d::{Export3d, ForceField};
 
 pub mod appearance;
 pub mod assembly;
+pub mod format_bar;
 pub mod fragments;
 pub mod icons;
 pub mod interactions;
@@ -159,6 +160,8 @@ pub enum Command {
     /// Give the structures the selection touches (or every structure) this drop shadow, or
     /// none.
     Shadow(Option<chembuider_rs::molecule::Shadow>),
+    /// Format what the text controls apply to (see [`text_format`]).
+    TextFormat(chembuider_rs::widget::text_format::FormatChange),
 }
 
 #[cfg(test)]

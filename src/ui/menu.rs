@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use egui::vec2;
 
 use super::appearance::{self, Appearance};
+use super::format_bar::{self, FormatState};
 use super::icons::{self, Frame, Icon};
+use super::text_format::TextFormatBar;
 use super::{Command, ViewMode};
 use crate::i18n::Lang;
 use crate::io::Export;
@@ -33,6 +35,8 @@ pub struct MenuState<'a> {
     pub language: Lang,
     /// What the 書式 menu acts on; `None` without a document.
     pub selection: Option<appearance::Selection>,
+    /// What the toolbar's format section shows; `None` without a document.
+    pub format: Option<FormatState>,
 }
 
 /// The languages to choose from, each by its own name, the current one ticked: the 表示 menu's
@@ -346,9 +350,38 @@ pub fn menu_bar(
     });
 }
 
-pub fn toolbar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>) {
+/// The toolbar: files, undo, view and cleanup, then with the drawing the format section
+/// ([`format_bar`]), and on the right the view switch and the language.
+pub fn toolbar(
+    ui: &mut egui::Ui,
+    state: &MenuState<'_>,
+    text_bar: &mut TextFormatBar,
+    appearance: &mut Appearance,
+    out: &mut Vec<Command>,
+) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
+        // The right end first, so the rest knows the width it has.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            view_switch(ui, state.view, out);
+            language_button(ui, state.language, out);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                left_tools(ui, state, text_bar, appearance, out);
+            });
+        });
+    });
+}
+
+/// The toolbar's buttons from 新規 to クリーンアップ, and the format section after them.
+fn left_tools(
+    ui: &mut egui::Ui,
+    state: &MenuState<'_>,
+    text_bar: &mut TextFormatBar,
+    appearance: &mut Appearance,
+    out: &mut Vec<Command>,
+) {
+    // The buttons' closures hold on to `out` until the end of this block.
+    {
         let size = vec2(32.0, 32.0);
         let mut tool = |ui: &mut egui::Ui, icon, enabled, command, tip: &str| {
             if icons::icon_button(ui, icon, size, Frame::Flat, false, enabled, tip).clicked() {
@@ -407,12 +440,10 @@ pub fn toolbar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>)
         if text_button(ui, cleanup, state.has_document) {
             out.push(Command::ToggleCleanup);
         }
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            view_switch(ui, state.view, out);
-            language_button(ui, state.language, out);
-        });
-    });
+    }
+    if state.view.is_drawing() {
+        format_bar::show(ui, state.format.as_ref(), text_bar, appearance, out);
+    }
 }
 
 /// The 2D / 3D / 集合体 segmented control.

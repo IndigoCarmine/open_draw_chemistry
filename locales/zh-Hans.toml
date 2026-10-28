@@ -1056,7 +1056,6 @@ minutes = "{minutes} 分 {seconds} 秒"
 hours = "{hours} 小时 {minutes} 分"
 
 [text_format]
-title = "格式"
 size_default = "默认"
 size_tip = "文字大小（默认 10 pt）"
 bold = "粗体"
@@ -1128,6 +1127,17 @@ shadow_offset_y = "偏移 Y"
 shadow_blur = "模糊"
 shadow_length_tip = "绘图单位：一根键为 1.5"
 shadow_apply = "应用阴影"
+
+[format_bar]
+font = "字体：{font}"
+size = "字号：{size}"
+mixed = "混合"
+more = "更多格式"
+applies_to = "应用于：{target}"
+size_input = "输入字号后按 Enter"
+text_color_needs = "请选择要着色的原子标签或文本"
+line_color_needs = "请选择要着色的键"
+no_document = "请新建或打开文档以设置格式"
 
 [format.status]
 ring_filled = "已填充环"

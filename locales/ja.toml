@@ -1057,7 +1057,6 @@ minutes = "{minutes} 分 {seconds} 秒"
 hours = "{hours} 時間 {minutes} 分"
 
 [text_format]
-title = "書式"
 size_default = "標準"
 size_tip = "文字の大きさ（標準は 10 pt）"
 bold = "太字"
@@ -1129,6 +1128,17 @@ shadow_offset_y = "ずらし Y"
 shadow_blur = "ぼかし"
 shadow_length_tip = "描画の単位（結合 1 本が 1.5）"
 shadow_apply = "影を設定"
+
+[format_bar]
+font = "フォント: {font}"
+size = "サイズ: {size}"
+mixed = "混在"
+more = "その他の書式"
+applies_to = "適用先: {target}"
+size_input = "サイズを入力して Enter"
+text_color_needs = "色を付ける原子ラベルかテキストを選択してください"
+line_color_needs = "色を付ける結合を選択してください"
+no_document = "書式を設定するには文書を作成するか開いてください"
 
 [format.status]
 ring_filled = "環を塗りつぶしました"

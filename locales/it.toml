@@ -1037,7 +1037,6 @@ minutes = "{minutes} min {seconds} s"
 hours = "{hours} h {minutes} min"
 
 [text_format]
-title = "Formato"
 size_default = "Predefinita"
 size_tip = "Dimensione del testo (predefinita 10 pt)"
 bold = "Grassetto"
@@ -1109,6 +1108,17 @@ shadow_offset_y = "Spostamento Y"
 shadow_blur = "Sfocatura"
 shadow_length_tip = "In unità del disegno: un legame misura 1,5"
 shadow_apply = "Applica ombra"
+
+[format_bar]
+font = "Carattere: {font}"
+size = "Dimensione: {size}"
+mixed = "Misto"
+more = "Altra formattazione"
+applies_to = "Si applica a: {target}"
+size_input = "Digita una dimensione, Invio"
+text_color_needs = "Seleziona etichette di atomi o testi per colorarli"
+line_color_needs = "Seleziona legami per colorarne le linee"
+no_document = "Crea o apri un documento per formattarlo"
 
 [format.status]
 ring_filled = "Anello riempito"
