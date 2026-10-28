@@ -1153,6 +1153,9 @@ no_operations = "There are no symmetry operations (at least x,y,z is needed)"
 no_identity = "Include the identity operation x,y,z"
 
 [scan.window]
+color_auto = "Auto"
+color_min = "Min"
+color_max = "Max"
 # Title of the parameter scan window.
 title = "Parameter scan"
 no_document = "No document is open"
