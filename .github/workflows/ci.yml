@@ -70,5 +70,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/fetch-openbabel.sh
 
+      # On Windows OpenBabel loads its .obf plugins only from the directory of openbabel-3.dll,
+      # so openbabel-sys's build script copies the DLLs and plugins beside the test binaries
+      # (target/debug and target/debug/deps), outside its OUT_DIR. Swatinem/rust-cache deletes
+      # those copies before saving (cleanProfileTarget keeps only dependency-named files in
+      # deps/), and after a cache hit cargo sees openbabel-sys up to date and never reruns the
+      # script, so every OpenBabel test fails with "Unable to find OpenBabel plugins". Cleaning
+      # openbabel-sys makes the script run, and copy them, again. This step can go once
+      # openbabel-sys reruns its build script when a copy is missing (rerun-if-changed on them).
+      - name: Rebuild openbabel-sys so its plugins sit beside the test binaries
+        if: runner.os == 'Windows'
+        run: cargo clean -p openbabel-sys
+
       - run: cargo test --all-targets
       - run: cargo build --release
