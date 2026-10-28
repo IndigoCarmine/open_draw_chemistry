@@ -3,27 +3,19 @@
 //! With OpenBabel (the `openbabel` feature) the drawing goes through [`molfile::to_molfile`],
 //! which keeps wedges and hashes and expands abbreviations, and OpenBabel writes a canonical
 //! **isomeric** SMILES: it perceives tetrahedral centres from the 2D coordinates plus wedges,
-//! and double-bond geometry from the coordinates. Without OpenBabel, or if it fails, the
-//! library's own [`chembuider_rs::molecule::smiles::to_smiles`] is used — canonical too, but
-//! with no stereochemistry, which the panel says.
+//! and double-bond geometry from the coordinates. There is no stereo-less fallback: if
+//! OpenBabel fails the panel shows why, and a build without OpenBabel shows
+//! [`NEEDS_OPENBABEL`] instead of a SMILES.
 
 use std::collections::HashSet;
 
-use chembuider_rs::molecule::smiles::to_smiles;
 use chembuider_rs::widget::analysis::analysis_target;
 use chembuider_rs::{BondOrder, Config, Molecule};
 
 use crate::three_d::Error;
-use crate::three_d::molfile::expand_labels;
 
-/// A computed SMILES.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Smiles {
-    pub text: String,
-    /// Whether the string carries stereochemistry (OpenBabel's isomeric SMILES); `false` for
-    /// the stereo-less fallback.
-    pub isomeric: bool,
-}
+/// Shown instead of a SMILES when the app is built without the `openbabel` feature.
+pub const NEEDS_OPENBABEL: &str = "SMILES の生成には OpenBabel が必要です";
 
 /// The structures the SMILES is of: those with a selected atom, or everything drawn. Page
 /// objects (arrows, text, tables) play no part.
@@ -34,44 +26,22 @@ pub fn target(mol: &Molecule, selection: &HashSet<u32>) -> Molecule {
     target
 }
 
-/// The SMILES of `mol` (already the [`target`]), or a short Japanese reason why there is none.
-/// May be slow for a big drawing with OpenBabel: call it off the UI thread.
-pub fn compute(mol: &Molecule, config: &Config) -> Result<Smiles, String> {
+/// The canonical isomeric SMILES of `mol` (already the [`target`]), or a short Japanese reason
+/// why there is none ([`NEEDS_OPENBABEL`] without the `openbabel` feature). May be slow for a
+/// big drawing: call it off the UI thread.
+pub fn compute(mol: &Molecule, config: &Config) -> Result<String, String> {
     if mol.atoms.is_empty() {
         return Err("構造がありません".to_owned());
     }
     if mol.bonds.iter().any(|b| b.order == BondOrder::Quadruple) {
         return Err("四重結合は SMILES に対応していません".to_owned());
     }
-    match openbabel_smiles(mol, config) {
-        Ok(text) => Ok(Smiles {
-            text,
-            isomeric: true,
-        }),
-        // These are properties of the drawing, so the fallback would fail on them too.
-        Err(Error::UnknownLabels(labels)) => Err(format!(
-            "SMILES にできないラベルがあります: {}",
-            labels.join("、")
-        )),
-        Err(_) => fallback(mol, config),
-    }
-}
-
-/// The library's stereo-less SMILES, abbreviations expanded first.
-fn fallback(mol: &Molecule, config: &Config) -> Result<Smiles, String> {
-    let expanded = expand_labels(mol, config).map_err(|e| match e {
+    openbabel_smiles(mol, config).map_err(|e| match e {
         Error::UnknownLabels(labels) => {
             format!("SMILES にできないラベルがあります: {}", labels.join("、"))
         }
+        Error::Unavailable => NEEDS_OPENBABEL.to_owned(),
         other => other.to_string(),
-    })?;
-    let text = to_smiles(&expanded);
-    if text.is_empty() {
-        return Err("SMILES を生成できませんでした".to_owned());
-    }
-    Ok(Smiles {
-        text,
-        isomeric: false,
     })
 }
 
@@ -90,9 +60,7 @@ fn openbabel_smiles(mol: &Molecule, config: &Config) -> Result<String, Error> {
 }
 
 #[cfg(not(feature = "openbabel"))]
-fn openbabel_smiles(mol: &Molecule, config: &Config) -> Result<String, Error> {
-    // Still surface unknown labels the same way as the OpenBabel path.
-    expand_labels(mol, config)?;
+fn openbabel_smiles(_mol: &Molecule, _config: &Config) -> Result<String, Error> {
     Err(Error::Unavailable)
 }
 
@@ -105,6 +73,7 @@ mod tests {
         Config::default()
     }
 
+    #[cfg(feature = "openbabel")]
     /// Ethanol, C–C–O.
     fn ethanol(mol: &mut Molecule, dx: f32) -> u32 {
         let a = mol.add_atom("C".into(), [dx, 0.0], 0);
@@ -146,34 +115,34 @@ mod tests {
         m
     }
 
+    #[cfg(feature = "openbabel")]
     #[test]
     fn ethanol_is_cco() {
         let mut m = Molecule::default();
         ethanol(&mut m, 0.0);
-        assert_eq!(compute(&m, &config()).unwrap().text, "CCO");
+        assert_eq!(compute(&m, &config()).unwrap(), "CCO");
     }
 
+    #[cfg(feature = "openbabel")]
     #[test]
     fn two_molecules_are_dot_joined() {
         let mut m = Molecule::default();
         ethanol(&mut m, 0.0);
         m.add_atom("N".into(), [10.0, 0.0], 0);
-        let s = compute(&m, &config()).unwrap().text;
+        let s = compute(&m, &config()).unwrap();
         let mut parts: Vec<&str> = s.split('.').collect();
         parts.sort_unstable();
         assert_eq!(parts, ["CCO", "N"]);
     }
 
+    #[cfg(feature = "openbabel")]
     #[test]
     fn the_selection_scopes_the_smiles() {
         let mut m = Molecule::default();
         ethanol(&mut m, 0.0);
         let n = m.add_atom("N".into(), [10.0, 0.0], 0);
         let selected: HashSet<u32> = [n].into_iter().collect();
-        assert_eq!(
-            compute(&target(&m, &selected), &config()).unwrap().text,
-            "N"
-        );
+        assert_eq!(compute(&target(&m, &selected), &config()).unwrap(), "N");
         let all = target(&m, &HashSet::new());
         assert_eq!(all.atoms.len(), 4);
     }
@@ -185,7 +154,10 @@ mod tests {
         let b = m.add_atom("C".into(), [1.3, 0.0], 0);
         m.add_bond(a, b, BondOrder::Single);
         let err = compute(&m, &config()).unwrap_err();
+        #[cfg(feature = "openbabel")]
         assert!(err.contains("Xyzzy"), "{err}");
+        #[cfg(not(feature = "openbabel"))]
+        assert_eq!(err, NEEDS_OPENBABEL);
 
         let mut q = Molecule::default();
         let a = q.add_atom("Mo".into(), [0.0, 0.0], 0);
@@ -210,23 +182,22 @@ mod tests {
     #[test]
     fn a_wedge_gives_the_drawn_configuration() {
         let r = compute(&butan_2_ol(BondStereo::WedgeUp), &config()).unwrap();
-        assert!(r.isomeric);
-        assert!(r.text.contains('@'), "{}", r.text);
+        assert!(r.contains('@'), "{r}");
         // (R)-butan-2-ol.
-        assert_eq!(r.text, canonical("C[C@@H](O)CC"));
+        assert_eq!(r, canonical("C[C@@H](O)CC"));
         let s = compute(&butan_2_ol(BondStereo::WedgeDown), &config()).unwrap();
-        assert_eq!(s.text, canonical("C[C@H](O)CC"));
-        assert_ne!(r.text, s.text);
+        assert_eq!(s, canonical("C[C@H](O)CC"));
+        assert_ne!(r, s);
         // No wedge: no stereo.
         let plain = compute(&butan_2_ol(BondStereo::None), &config()).unwrap();
-        assert!(!plain.text.contains('@'), "{}", plain.text);
+        assert!(!plain.contains('@'), "{plain}");
     }
 
     #[cfg(feature = "openbabel")]
     #[test]
     fn double_bond_geometry_is_kept() {
-        let e = compute(&but_2_ene(true), &config()).unwrap().text;
-        let z = compute(&but_2_ene(false), &config()).unwrap().text;
+        let e = compute(&but_2_ene(true), &config()).unwrap();
+        let z = compute(&but_2_ene(false), &config()).unwrap();
         assert!(e.contains('/') || e.contains('\\'), "{e}");
         assert_eq!(e, canonical("C/C=C/C"));
         assert_eq!(z, canonical("C/C=C\\C"));
@@ -234,12 +205,14 @@ mod tests {
 
     #[cfg(not(feature = "openbabel"))]
     #[test]
-    fn without_openbabel_the_fallback_has_no_stereo() {
-        let r = compute(&butan_2_ol(BondStereo::WedgeUp), &config()).unwrap();
-        assert!(!r.isomeric);
-        assert!(!r.text.contains('@'));
-        let e = compute(&but_2_ene(true), &config()).unwrap();
-        assert!(!e.isomeric);
-        assert_eq!(e.text, "CC=CC");
+    fn without_openbabel_there_is_no_smiles_only_the_message() {
+        assert_eq!(
+            compute(&butan_2_ol(BondStereo::WedgeUp), &config()),
+            Err(NEEDS_OPENBABEL.to_owned())
+        );
+        assert_eq!(
+            compute(&but_2_ene(true), &config()),
+            Err(NEEDS_OPENBABEL.to_owned())
+        );
     }
 }
