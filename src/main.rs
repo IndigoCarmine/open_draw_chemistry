@@ -47,6 +47,17 @@ fn main() -> eframe::Result<()> {
 
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
+    // `--check-openbabel`: prove that this installation finds its OpenBabel (the release
+    // workflow runs it on every package), then exit without opening a window.
+    if args.first().is_some_and(|a| a == "--check-openbabel") {
+        let result = open_draw_chemistry::three_d::runtime::self_check(true);
+        match &result {
+            Ok(report) => print!("{report}"),
+            Err(report) => eprintln!("{report}"),
+        }
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
+
     #[cfg(windows)]
     if let Some(result) = ole::run(&args) {
         return result;
