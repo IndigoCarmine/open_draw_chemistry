@@ -2636,8 +2636,8 @@ dependencies = [
 
 [[package]]
 name = "openbabel"
-version = "0.4.6"
-source = "git+https://github.com/IndigoCarmine/openbabel_rs?tag=v0.4.6#8ce9a4531c22f4cdf4880fd7803dad8c739283a5"
+version = "0.4.8"
+source = "git+https://github.com/IndigoCarmine/openbabel_rs?tag=v0.4.8#829357b747690c2e7e053a9594ea4129998e65b6"
 dependencies = [
  "cxx",
  "openbabel-sys",
@@ -2645,8 +2645,8 @@ dependencies = [
 
 [[package]]
 name = "openbabel-sys"
-version = "0.4.6"
-source = "git+https://github.com/IndigoCarmine/openbabel_rs?tag=v0.4.6#8ce9a4531c22f4cdf4880fd7803dad8c739283a5"
+version = "0.4.8"
+source = "git+https://github.com/IndigoCarmine/openbabel_rs?tag=v0.4.8#829357b747690c2e7e053a9594ea4129998e65b6"
 dependencies = [
  "cmake",
  "cxx",
