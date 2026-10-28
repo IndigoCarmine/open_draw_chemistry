@@ -7,7 +7,8 @@
 //! double-click empty space to reframe, click an atom to select its molecule. A selected
 //! molecule placed by hand turns with Alt+drag and moves with Shift+drag instead ([`place`]).
 //! While a monomer is being oriented the viewer shows that monomer alone, and three clicks
-//! pick its atoms.
+//! pick its atoms. In measuring mode (M) clicks pick up to four atoms of any molecules instead
+//! of selecting, for the distance, angle or dihedral between them ([`crate::assembly::measure`]).
 
 mod contacts;
 mod pipeline;
@@ -23,11 +24,13 @@ use super::Command;
 use super::viewport3d::{
     Frame3d, Hit, Scene, Style3d, Viewport3d, element_color, exclusive_groups,
 };
+use crate::assembly::measure::{self, AtomRef, MeasurePick};
 use crate::assembly::model::{Array, Lattice, Ring, Stack, helix_radius};
 use crate::assembly::symop::{self, SymOp};
 use crate::assembly::{AssemblyExport, AssemblyState, Built, Component, Step};
 use crate::document::Document;
 use crate::theme::{self, dark};
+use crate::three_d::edit::Measure;
 
 /// The selected molecule's highlight in the viewer, and its colour in labels.
 const SELECTED_COLOR: (f32, f32, f32) = (0.98, 0.45, 0.22);
@@ -101,6 +104,14 @@ fn orient_role(n: usize) -> &'static str {
     }
 }
 
+/// Atoms being picked to measure, in the assembly of the state with this id (the view is
+/// shared by every document).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Measuring {
+    state: u64,
+    pick: MeasurePick,
+}
+
 /// The right panel's tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PanelTab {
@@ -134,6 +145,9 @@ pub struct AssemblyView {
     viewport: Option<Viewport3d>,
     #[serde(skip)]
     orient: Option<OrientPick>,
+    /// Measuring mode, with the atoms picked.
+    #[serde(skip)]
+    measure: Option<Measuring>,
     /// The last thing the panel did or could not do, and whether it is a problem.
     #[serde(skip)]
     pub report: Option<(String, bool)>,
@@ -160,13 +174,28 @@ impl AssemblyView {
         self.orient.is_some()
     }
 
-    /// Start picking the orientation atoms of `component`.
+    /// Start picking the orientation atoms of `component` (which ends measuring).
     pub fn start_orienting(&mut self, component: usize) {
         self.orient = Some(OrientPick {
             component,
             atoms: Vec::new(),
         });
+        self.measure = None;
         self.report = None;
+    }
+
+    /// Whether clicks in the viewer pick atoms to measure.
+    pub fn is_measuring(&self) -> bool {
+        self.measure.is_some()
+    }
+
+    /// Switch measuring on (not while orienting a monomer) or off, letting the picks go.
+    pub fn set_measuring(&mut self, on: bool) {
+        if !on {
+            self.measure = None;
+        } else if self.measure.is_none() && self.orient.is_none() {
+            self.measure = Some(Measuring::default());
+        }
     }
 }
 
@@ -230,6 +259,9 @@ pub fn viewer_area(
         view.orient = None;
     }
     orient_prompt(ui, &doc.assembly, view);
+    if !view.is_orienting() && !doc.assembly.is_empty() {
+        measure_bar(ui, view);
+    }
 
     let message = if doc.assembly.is_empty() {
         Some(t!("assembly.view.no_monomers").to_owned())
@@ -287,17 +319,43 @@ fn orient_prompt(ui: &mut egui::Ui, state: &AssemblyState, view: &mut AssemblyVi
     }
 }
 
-/// Undo, redo and Escape (stop orienting, clear the selection) from the keyboard.
+/// Over the viewer: the measuring switch and, while measuring, what to click.
+fn measure_bar(ui: &mut egui::Ui, view: &mut AssemblyView) {
+    let mut on = view.is_measuring();
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        let toggle = ui
+            .selectable_label(on, RichText::new(t!("assembly.measure.tool")).size(12.0))
+            .on_hover_text(t!("assembly.measure.tool_tip"));
+        if toggle.clicked() {
+            on = !on;
+        }
+        if on {
+            ui.label(
+                RichText::new(t!("assembly.measure.prompt"))
+                    .size(12.0)
+                    .color(PICK_STROKE),
+            );
+        }
+    });
+    if on != view.is_measuring() {
+        view.set_measuring(on);
+    }
+}
+
+/// Undo, redo, M (measure) and Escape (stop orienting or measuring, clear the selection) from
+/// the keyboard.
 fn shortcuts(ui: &egui::Ui, state: &mut AssemblyState, view: &mut AssemblyView) {
     use egui::{Key, KeyboardShortcut, Modifiers};
-    let (redo, undo, escape) = ui.input_mut(|i| {
+    let (redo, undo, escape_pressed, measure) = ui.input_mut(|i| {
         let redo = i.consume_shortcut(&KeyboardShortcut::new(
             Modifiers::COMMAND | Modifiers::SHIFT,
             Key::Z,
         )) || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Y));
         let undo = i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Z));
         let escape = i.consume_key(Modifiers::NONE, Key::Escape);
-        (redo, undo, escape)
+        let measure = i.consume_key(Modifiers::NONE, Key::M);
+        (redo, undo, escape, measure)
     });
     if undo {
         history(state, view, false);
@@ -305,7 +363,17 @@ fn shortcuts(ui: &egui::Ui, state: &mut AssemblyState, view: &mut AssemblyView) 
     if redo {
         history(state, view, true);
     }
-    if escape && view.orient.take().is_none() {
+    if measure {
+        view.set_measuring(!view.is_measuring());
+    }
+    if escape_pressed {
+        escape(state, view);
+    }
+}
+
+/// Escape: stop orienting, else stop measuring, else clear the selection.
+fn escape(state: &mut AssemblyState, view: &mut AssemblyView) {
+    if view.orient.take().is_none() && view.measure.take().is_none() {
         state.selected = None;
     }
 }
@@ -393,9 +461,12 @@ fn viewer(
             .map(|c| c.cell.vectors()),
         built.cell.map(|c| (c.vectors(), view.crystal.images)),
     );
+    let measuring = view.measure.is_some();
+    let picked = measured(&mut view.measure, state, &built);
+    // While measuring, clicks do not select, so the selection is not shown either.
     let selected: Vec<usize> = state
         .selected
-        .filter(|&m| m < built.molecule_count())
+        .filter(|&m| !measuring && m < built.molecule_count())
         .map(|m| built.molecule_atoms(m).collect())
         .unwrap_or_default();
     let clashes = view.clashes.get(ui.ctx(), state.id(), &built).map(|c| c.0);
@@ -405,17 +476,19 @@ fn viewer(
         .unwrap_or_default();
     viewport.set_highlights(
         exclusive_groups(&[
+            (&picked, SELECTED_COLOR),
             (&selected, SELECTED_COLOR),
             (&clashing, place::CLASH_HIGHLIGHT),
         ]),
         Vec::new(),
     );
     // Alt or Shift with a hand-placed molecule selected: the drag moves the molecule, not
-    // the camera.
-    let movable = state
-        .selected
-        .and_then(|m| state.design.manual_index(m))
-        .is_some();
+    // the camera (never while measuring, which changes nothing).
+    let movable = !measuring
+        && state
+            .selected
+            .and_then(|m| state.design.manual_index(m))
+            .is_some();
     let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
     viewport.claim_drag(movable && (alt || shift));
     let frame = match viewport.show(ui, render_state, false) {
@@ -428,10 +501,39 @@ fn viewer(
     }
     place::overlay(ui, viewport, &frame, state, &built, clashes.as_deref());
     assembly_overlay(ui, &frame, state, &built);
-    if let Some(delta) = frame.drag {
+    if measuring {
+        measure_overlay(ui, viewport, &frame, &built, &picked);
+    } else if let Some(delta) = frame.drag {
         place::drag_selected(state, viewport, &frame, delta, alt);
     }
-    let molecule_of = |hit: Hit| match hit {
+    if let Some(hit) = frame.primary {
+        click(state, view, &built, hit);
+    }
+}
+
+/// A click in the viewer on `hit` of `built`: while measuring it picks atoms (a bond, its two
+/// ends; empty space lets them go), otherwise it selects the molecule hit.
+fn click(state: &mut AssemblyState, view: &mut AssemblyView, built: &Built, hit: Hit) {
+    if let Some(pick) = measure_pick(&mut view.measure, state) {
+        let atom = |a: usize| AtomRef::of(&state.design, built, a);
+        match hit {
+            Hit::Atom(a) => {
+                if let Some(a) = atom(a) {
+                    pick.click(a);
+                }
+            }
+            Hit::Bond(b) => {
+                if let Some(b) = built.bonds.get(b)
+                    && let (Some(begin), Some(end)) = (atom(b.begin), atom(b.end))
+                {
+                    pick.pick_pair(begin, end);
+                }
+            }
+            Hit::Nothing => pick.clear(),
+        }
+        return;
+    }
+    state.selected = match hit {
         Hit::Atom(a) => built.molecule_of_atom.get(a).copied(),
         Hit::Bond(b) => built
             .bonds
@@ -439,8 +541,97 @@ fn viewer(
             .and_then(|b| built.molecule_of_atom.get(b.begin).copied()),
         Hit::Nothing => None,
     };
-    if let Some(hit) = frame.primary {
-        state.selected = molecule_of(hit);
+}
+
+/// The atoms being measured in `state`'s assembly: none yet if they were picked in another
+/// document's.
+fn measure_pick<'a>(
+    measure: &'a mut Option<Measuring>,
+    state: &AssemblyState,
+) -> Option<&'a mut MeasurePick> {
+    let measuring = measure.as_mut()?;
+    if measuring.state != state.id() {
+        *measuring = Measuring {
+            state: state.id(),
+            pick: MeasurePick::default(),
+        };
+    }
+    Some(&mut measuring.pick)
+}
+
+/// The measured atoms' indices in `built` (`state`'s build), letting go of those it no longer
+/// has.
+fn measured(measure: &mut Option<Measuring>, state: &AssemblyState, built: &Built) -> Vec<usize> {
+    measure_pick(measure, state)
+        .map(|pick| pick.follow(&state.design, built))
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn measured_atoms(state: &AssemblyState, view: &mut AssemblyView, built: &Built) -> Vec<usize> {
+    measured(&mut view.measure, state, built)
+}
+
+/// Atom `a` of `built` named for the measurement: its element and number in its monomer, and
+/// its molecule.
+fn measured_atom_name(built: &Built, a: usize) -> String {
+    let m = built.molecule_of_atom[a];
+    t!(
+        "assembly.measure.atom",
+        atom = format!(
+            "{}{}",
+            built.atoms[a].element,
+            a - built.molecule_start[m] + 1
+        ),
+        n = m + 1
+    )
+}
+
+/// The measured atoms numbered in order and joined, with what they measure.
+fn measure_overlay(
+    ui: &egui::Ui,
+    viewport: &Viewport3d,
+    frame: &Frame3d,
+    built: &Built,
+    picked: &[usize],
+) {
+    let painter = ui.painter_at(frame.rect);
+    let at = |i: usize| {
+        built
+            .atoms
+            .get(i)
+            .and_then(|a| viewport.project(frame.rect, a.pos))
+    };
+    let points: Vec<Pos2> = picked.iter().filter_map(|&i| at(i)).collect();
+    if points.len() != picked.len() {
+        return;
+    }
+    if points.len() >= 2 {
+        painter.add(egui::Shape::dashed_line(
+            &points,
+            Stroke::new(1.5, PICK_STROKE),
+            5.0,
+            3.0,
+        ));
+    }
+    for (n, (&i, &p)) in picked.iter().zip(&points).enumerate() {
+        tag(
+            &painter,
+            p + vec2(7.0, -16.0),
+            format!("{} {}", n + 1, measured_atom_name(built, i)),
+            PICK_STROKE,
+        );
+    }
+    if let Some(value) = measure::measure(built, picked) {
+        let centre = points
+            .iter()
+            .fold(Pos2::ZERO, |acc, p| acc + p.to_vec2() / points.len() as f32);
+        tag(
+            &painter,
+            centre + vec2(6.0, 6.0),
+            value.to_string(),
+            Color32::WHITE,
+        );
     }
 }
 
@@ -647,6 +838,9 @@ pub fn panel(
     if let Some(tab) = style::tabs(ui, &look, view.tab, &tabs) {
         view.tab = tab;
     }
+    if view.is_measuring() {
+        measure_section(ui, &mut doc.assembly, view, &look, &ink);
+    }
     let model_name = model_name(doc);
     let has_model = doc.three_d.model().is_some();
     let mut changes = Vec::new();
@@ -674,6 +868,56 @@ pub fn panel(
     for change in changes {
         apply(change, doc, &model_name, view);
     }
+}
+
+/// While measuring, above the tabs: the atoms picked, what they measure, and buttons to copy it
+/// and to let the atoms go.
+fn measure_section(
+    ui: &mut egui::Ui,
+    state: &mut AssemblyState,
+    view: &mut AssemblyView,
+    look: &Look,
+    ink: &Ink,
+) {
+    style::caption(ui, look, t!("assembly.measure.title"));
+    let Ok(built) = state.built() else { return };
+    let picked = measured(&mut view.measure, state, &built);
+    if picked.is_empty() {
+        ui.label(ink.muted(t!("assembly.measure.prompt")));
+        return;
+    }
+    let atoms = picked
+        .iter()
+        .map(|&a| measured_atom_name(&built, a))
+        .collect::<Vec<_>>()
+        .join(" – ");
+    ui.label(RichText::new(&atoms).size(12.0).color(look.accent));
+    let value = measure::measure(&built, &picked);
+    let mut clear = false;
+    ui.horizontal_wrapped(|ui| {
+        if let Some(value) = value {
+            let name = match value {
+                Measure::Distance(_) => t!("three_d.view.distance"),
+                Measure::Angle(_) => t!("three_d.view.angle"),
+                Measure::Dihedral(_) => t!("three_d.view.dihedral"),
+            };
+            ui.label(ink.muted(name));
+            ui.label(RichText::new(value.to_string()).size(13.0).strong());
+            if ui
+                .small_button(t!("assembly.measure.copy"))
+                .on_hover_text(t!("assembly.measure.copy_tip"))
+                .clicked()
+            {
+                ui.ctx().copy_text(format!("{atoms}: {value}"));
+                view.report = Some((t!("assembly.measure.copied").to_owned(), false));
+            }
+        }
+        clear = ui.small_button(t!("assembly.measure.clear")).clicked();
+    });
+    if clear && let Some(pick) = measure_pick(&mut view.measure, state) {
+        pick.clear();
+    }
+    ui.add_space(4.0);
 }
 
 /// The 構築 tab: the monomers, the steps' pipeline and the box adding one, and the hand
@@ -1714,6 +1958,144 @@ mod tests {
         assert_eq!(state.design.components[0].orient, Some([1, 0, 2]));
         assert!(state.can_undo());
         assert!(view.report.as_ref().is_some_and(|(_, problem)| !problem));
+    }
+
+    fn ring_of_water() -> AssemblyState {
+        AssemblyState::with_design(Design {
+            components: vec![water()],
+            steps: vec![Step::new_ring()],
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn outside_measuring_a_click_selects_the_molecule() {
+        let mut state = ring_of_water();
+        let built = state.built().unwrap();
+        let mut view = AssemblyView::default();
+        click(&mut state, &mut view, &built, Hit::Atom(4));
+        assert_eq!(state.selected, Some(1));
+        click(&mut state, &mut view, &built, Hit::Bond(4));
+        assert_eq!(state.selected, Some(2), "a bond's molecule");
+        click(&mut state, &mut view, &built, Hit::Nothing);
+        assert_eq!(state.selected, None);
+    }
+
+    #[test]
+    fn measuring_picks_atoms_across_molecules_and_selects_none() {
+        let mut state = ring_of_water();
+        let built = state.built().unwrap();
+        let mut view = AssemblyView::default();
+        state.selected = Some(5);
+        view.set_measuring(true);
+        assert!(view.is_measuring());
+        click(&mut state, &mut view, &built, Hit::Atom(0));
+        click(&mut state, &mut view, &built, Hit::Atom(3));
+        assert_eq!(state.selected, Some(5), "the selection is left alone");
+        let picked = measured_atoms(&state, &mut view, &built);
+        assert_eq!(picked, vec![0, 3]);
+        let value = crate::assembly::measure::measure(&built, &picked).unwrap();
+        // Neighbouring oxygens of the 5 Å rosette are a chord, 5 Å, apart.
+        assert_eq!(value.to_string(), "5.000 Å");
+        // A bond picks its two ends; empty space lets go.
+        click(&mut state, &mut view, &built, Hit::Bond(2));
+        assert_eq!(measured_atoms(&state, &mut view, &built), vec![3, 4]);
+        click(&mut state, &mut view, &built, Hit::Nothing);
+        assert!(measured_atoms(&state, &mut view, &built).is_empty());
+        assert_eq!(state.selected, Some(5));
+        // Off again: clicks select as before.
+        view.set_measuring(false);
+        click(&mut state, &mut view, &built, Hit::Atom(0));
+        assert_eq!(state.selected, Some(0));
+    }
+
+    #[test]
+    fn a_rebuild_keeps_the_measured_atoms_that_remain() {
+        let mut state = ring_of_water();
+        let mut view = AssemblyView::default();
+        view.set_measuring(true);
+        let built = state.built().unwrap();
+        for a in [3, 15] {
+            click(&mut state, &mut view, &built, Hit::Atom(a));
+        }
+        // Deleting the first copy moves both picked atoms down by a molecule.
+        state.edit(|d| d.remove_molecule(0));
+        let built = state.built().unwrap();
+        assert_eq!(measured_atoms(&state, &mut view, &built), vec![0, 12]);
+        // Deleting the copy of the second pick lets it go.
+        state.edit(|d| d.remove_molecule(4));
+        let built = state.built().unwrap();
+        assert_eq!(measured_atoms(&state, &mut view, &built), vec![0]);
+        // Another document's assembly does not inherit the picks.
+        let mut other = ring_of_water();
+        let built = other.built().unwrap();
+        assert!(measured_atoms(&other, &mut view, &built).is_empty());
+        click(&mut other, &mut view, &built, Hit::Atom(1));
+        assert_eq!(measured_atoms(&other, &mut view, &built), vec![1]);
+    }
+
+    #[test]
+    fn measuring_and_orienting_exclude_each_other() {
+        let mut state = ring_of_water();
+        let built = state.built().unwrap();
+        let mut view = AssemblyView::default();
+        view.set_measuring(true);
+        click(&mut state, &mut view, &built, Hit::Atom(0));
+        view.start_orienting(0);
+        assert!(view.is_orienting());
+        assert!(!view.is_measuring(), "orienting ends the measurement");
+        view.set_measuring(true);
+        assert!(!view.is_measuring(), "no measuring while orienting");
+        // Orienting picks as before.
+        pick_orient_atom(&mut state, &mut view, 1);
+        assert_eq!(view.orient.as_ref().unwrap().atoms, vec![1]);
+    }
+
+    #[test]
+    fn escape_stops_orienting_then_measuring_then_clears_the_selection() {
+        let mut state = ring_of_water();
+        let built = state.built().unwrap();
+        let mut view = AssemblyView::default();
+        state.selected = Some(2);
+        view.start_orienting(0);
+        escape(&mut state, &mut view);
+        assert!(!view.is_orienting());
+        assert_eq!(state.selected, Some(2));
+        view.set_measuring(true);
+        click(&mut state, &mut view, &built, Hit::Atom(0));
+        escape(&mut state, &mut view);
+        assert!(!view.is_measuring());
+        assert_eq!(state.selected, Some(2));
+        view.set_measuring(true);
+        assert!(
+            measured_atoms(&state, &mut view, &built).is_empty(),
+            "Esc let the picks go"
+        );
+        view.set_measuring(false);
+        escape(&mut state, &mut view);
+        assert_eq!(state.selected, None);
+    }
+
+    /// The measurement in the panel and the bar over the viewer draw headless.
+    #[test]
+    fn the_measurement_draws_headless() {
+        let ctx = egui::Context::default();
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        doc.assembly = ring_of_water();
+        let built = doc.assembly.built().unwrap();
+        let mut view = AssemblyView::default();
+        view.set_measuring(true);
+        let mut commands = Vec::new();
+        for atoms in [0, 3, 6, 9] {
+            click(&mut doc.assembly, &mut view, &built, Hit::Atom(atoms));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                panel(ui, Some(&mut doc), &mut view, &mut commands);
+                viewer_area(ui, "test", Some(&mut doc), &mut view, None);
+            });
+            output.textures_delta.clear();
+        }
+        assert!(view.is_measuring());
+        assert!(commands.is_empty());
     }
 
     /// One headless frame of the panel and the viewer area, with and without a monomer.

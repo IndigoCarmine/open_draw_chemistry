@@ -459,6 +459,17 @@ pub struct Instance {
     pub transform: Rigid,
 }
 
+/// One molecule of the assembly named by where it comes from rather than by its place in the
+/// build, so the name still holds when molecules before it are removed or added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Origin {
+    /// A copy the steps make, by its index among all their copies (the excluded ones counted,
+    /// as [`Design::excluded`] names them).
+    Step(usize),
+    /// A hand-placed molecule, by its index in [`Design::manual`].
+    Manual(usize),
+}
+
 /// Everything that determines the assembly: what is saved, and what undo restores.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -683,6 +694,27 @@ impl Design {
             }
         }
         Some(copy)
+    }
+
+    /// Which copy molecule `m` of the build is, by a name that survives the design changing
+    /// around it (see [`Origin`]).
+    pub fn origin_of(&self, m: usize) -> Option<Origin> {
+        self.manual_index(m)
+            .map(Origin::Manual)
+            .or_else(|| self.step_copy_index(m).map(Origin::Step))
+    }
+
+    /// The molecule of the build that `origin` is, if the design still makes it.
+    pub fn molecule_of(&self, origin: Origin) -> Option<usize> {
+        match origin {
+            Origin::Step(c) => {
+                if c >= self.all_step_copies() || self.excluded.binary_search(&c).is_ok() {
+                    return None;
+                }
+                Some(c - self.excluded.iter().take_while(|&&e| e < c).count())
+            }
+            Origin::Manual(k) => (k < self.manual.len()).then(|| self.manual_molecule(k)),
+        }
     }
 
     /// Turn molecule `m`, made by the steps, into a hand-placed one where it is, so it can be

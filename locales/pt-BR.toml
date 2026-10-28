@@ -1021,3 +1021,14 @@ hbond_count = { one = "Ligações de hidrogênio: {n}{more}{pending}", other = "
 more_hbonds = { one = "Mais {n}", other = "Mais {n}" }
 stack_count = { one = "Empilhamento π: {n}{more}{pending}", other = "Empilhamento π: {n}{more}{pending}" }
 more_stacks = { one = "Mais {n}", other = "Mais {n}" }
+
+[assembly.measure]
+tool = "Medir"
+tool_tip = "Clique em átomos de quaisquer moléculas para medir a distância, o ângulo ou o diedro entre eles (M). Esc para sair"
+prompt = "Clique em átomos: 2 para uma distância, 3 para um ângulo, 4 para um diedro. Clique de novo em um átomo escolhido para soltá-lo"
+title = "Medida"
+atom = "{atom} (nº {n})"
+copy = "Copiar"
+copy_tip = "Copiar os átomos e o valor"
+copied = "Medida copiada"
+clear = "Limpar"

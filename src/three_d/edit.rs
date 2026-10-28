@@ -616,11 +616,19 @@ pub enum Measure {
 impl Measure {
     /// The measurement over `atoms` (two to four) in `coords`.
     pub fn of(atoms: &[usize], coords: &[Vec3]) -> Option<Measure> {
-        let p = |i: usize| coords.get(i).copied();
-        Some(match *atoms {
-            [a, b] => Measure::Distance(geom::distance(p(a)?, p(b)?)),
-            [a, b, c] => Measure::Angle(geom::angle(p(a)?, p(b)?, p(c)?)),
-            [a, b, c, d] => Measure::Dihedral(geom::dihedral(p(a)?, p(b)?, p(c)?, p(d)?)),
+        let points = atoms
+            .iter()
+            .map(|&i| coords.get(i).copied())
+            .collect::<Option<Vec<_>>>()?;
+        Measure::of_points(&points)
+    }
+
+    /// The measurement over two to four points, in order.
+    pub fn of_points(points: &[Vec3]) -> Option<Measure> {
+        Some(match *points {
+            [a, b] => Measure::Distance(geom::distance(a, b)),
+            [a, b, c] => Measure::Angle(geom::angle(a, b, c)),
+            [a, b, c, d] => Measure::Dihedral(geom::dihedral(a, b, c, d)),
             _ => return None,
         })
     }
@@ -898,5 +906,11 @@ mod tests {
         ));
         assert_eq!(Measure::of(&[0], &c), None);
         assert_eq!(Measure::of(&[0, 9], &c), None);
+        // The same over the points themselves.
+        assert_eq!(
+            Measure::of_points(&[c[2], c[0], c[1], c[3]]),
+            Measure::of(&[2, 0, 1, 3], &c)
+        );
+        assert_eq!(Measure::of_points(&[c[0]]), None);
     }
 }
