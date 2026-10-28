@@ -164,17 +164,12 @@ impl OpenDrawApp {
         crate::i18n::set_language(lang);
 
         // ─── chembuider-rs language hook ─────────────────────────────────────────────
-        // The one place the library's UI language (its analysis panel, …) is set. The pinned
-        // library has no language API yet; its analysis panel only switches between Japanese
-        // and English.
-        // TODO(chembuider-rs i18n): once the rev with `chembuider_rs::i18n` is pinned, replace
-        // the line below with
-        //     if let Some(l) = chembuider_rs::i18n::Language::from_tag(lang.code()) {
-        //         chembuider_rs::i18n::set_language(l);
-        //     }
-        // (`Lang::code()` gives the same tags as `Language::tag()`), and consider
-        // `chembuider_rs::widget::fonts::add_cjk_ui_font` in place of `crate::i18n::fonts`.
-        self.analysis.ja = lang == Lang::Ja;
+        // The one place the library's UI language (its analysis panel, bond menu, …) is set.
+        // `Lang::code()` gives the same tags as the library's `Language::tag()`; its global
+        // setting overrides the panel's old `ja` flag.
+        if let Some(l) = chembuider_rs::i18n::Language::from_tag(lang.code()) {
+            chembuider_rs::i18n::set_language(l);
+        }
     }
 
     fn active_doc(&self) -> Option<&Document> {
