@@ -1410,6 +1410,8 @@ images_hidden = "Periodic images are hidden while measuring"
 # Submenu: pick a color and fill the selected rings (ChemDraw's ring shading).
 fill_ring = "Fill ring"
 fill_ring_hint = "Fills the rings of the selected atoms or bonds"
+# Shown in place of the ring items while no atom or bond is selected.
+ring_needs_selection = "Select the atoms or bonds of a ring to fill or clear it"
 fill = "Fill"
 clear_fill = "Clear ring fill"
 line_color = "Line color"
@@ -1422,6 +1424,8 @@ shadow = "Shadow"
 # What a shadow applies to, shown at the top of the shadow submenu.
 shadow_scope_all = "For every structure (nothing is selected)"
 shadow_scope_selection = "For the structures in the selection"
+# Only texts or other page objects are selected: they cast no shadow.
+shadow_scope_none = "Select atoms or bonds of a structure, or nothing for every structure"
 # Checkbox: whether the structures cast a drop shadow.
 shadow_on = "Cast a shadow"
 shadow_opacity = "Opacity"

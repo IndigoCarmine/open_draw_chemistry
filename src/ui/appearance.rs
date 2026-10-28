@@ -6,7 +6,11 @@
 //! records one per change it makes (`ChemStructEditor::fill_selected_ring` and its siblings).
 //! What each change applies to is the editor's business: the selected ring atoms or bonds, the
 //! selected bonds, the selected labels and texts, and for a shadow the structures the
-//! selection touches (every structure when nothing is selected).
+//! selection touches (every structure when nothing is selected). A ring is filled or cleared
+//! only through a selection, never through the atom last drawn or hovered (the editor's
+//! hotspot), so both menus offer it only while atoms or bonds are selected. Line and text
+//! colours are opaque: CDX and CDXML keep no opacity for them, so a translucent one would not
+//! survive saving.
 
 use chembuider_rs::ChemStructEditor;
 use chembuider_rs::molecule::Shadow;
@@ -70,14 +74,15 @@ impl ColorChoice {
                 if response.on_hover_text(&name).clicked() {
                     // A swatch keeps the opacity chosen.
                     self.rgba = [r, g, b, self.rgba[3]];
-                    if alpha == Alpha::Opaque {
-                        self.rgba[3] = 255;
-                    }
                     self.hsva = None;
                     changed = true;
                 }
             }
         });
+        if alpha == Alpha::Opaque {
+            // A swatch keeps the opacity, and a colour remembered from before may have one.
+            self.rgba[3] = 255;
+        }
         let mut hsva = match self.hsva {
             Some(h) if h.to_srgba_unmultiplied() == self.rgba => h,
             _ => Hsva::from_srgba_unmultiplied(self.rgba),
@@ -151,6 +156,9 @@ pub struct Selection {
     pub shadow: Option<Shadow>,
     /// Nothing is selected, so a shadow goes to every structure.
     pub everything: bool,
+    /// Atoms or bonds are selected: there is a ring to fill or clear, and structures for a
+    /// shadow.
+    pub structure: bool,
 }
 
 impl Selection {
@@ -160,8 +168,30 @@ impl Selection {
             everything: editor.selected_atoms.is_empty()
                 && editor.selected_bonds.is_empty()
                 && editor.selected_objects.is_empty(),
+            structure: structure_selected(editor),
         }
     }
+}
+
+/// Whether atoms or bonds are selected.
+fn structure_selected(editor: &ChemStructEditor) -> bool {
+    !editor.selected_atoms.is_empty() || !editor.selected_bonds.is_empty()
+}
+
+/// Run `change` on the ring the selection picks out: false, doing nothing, when no atom or bond
+/// is selected, and the hotspot (which only follows the cursor) set aside while it runs, so a
+/// lone selected atom is not passed over for it.
+fn on_selected_ring(
+    editor: &mut ChemStructEditor,
+    change: impl FnOnce(&mut ChemStructEditor) -> bool,
+) -> bool {
+    if !structure_selected(editor) {
+        return false;
+    }
+    let hotspot = editor.hotspot_atom.take();
+    let changed = change(editor);
+    editor.hotspot_atom = hotspot;
+    changed
 }
 
 /// A submenu that stays open while its picker is clicked and dragged.
@@ -187,21 +217,27 @@ pub fn items(
     out: &mut Vec<Command>,
 ) {
     ui.add_enabled_ui(selection.is_some(), |ui| {
-        submenu(ui, t!("format.fill_ring"), |ui| {
-            ui.weak(t!("format.fill_ring_hint"));
-            appearance.ring_fill.ui(ui, Alpha::OnlyBlend);
-            action(
-                ui,
-                t!("format.fill"),
-                Command::FillRing(appearance.ring_fill.rgba),
-                out,
-            );
+        let ring = selection.is_some_and(|s| s.structure);
+        if selection.is_some() && !ring {
+            ui.weak(t!("format.ring_needs_selection"));
+        }
+        ui.add_enabled_ui(ring, |ui| {
+            submenu(ui, t!("format.fill_ring"), |ui| {
+                ui.weak(t!("format.fill_ring_hint"));
+                appearance.ring_fill.ui(ui, Alpha::OnlyBlend);
+                action(
+                    ui,
+                    t!("format.fill"),
+                    Command::FillRing(appearance.ring_fill.rgba),
+                    out,
+                );
+            });
+            action(ui, t!("format.clear_fill"), Command::ClearRingFill, out);
         });
-        action(ui, t!("format.clear_fill"), Command::ClearRingFill, out);
         ui.separator();
         submenu(ui, t!("format.line_color"), |ui| {
             ui.weak(t!("format.line_color_hint"));
-            appearance.line.ui(ui, Alpha::OnlyBlend);
+            appearance.line.ui(ui, Alpha::Opaque);
             action(
                 ui,
                 t!("format.apply_color"),
@@ -217,7 +253,7 @@ pub fn items(
         });
         submenu(ui, t!("format.text_color"), |ui| {
             ui.weak(t!("format.text_color_hint"));
-            appearance.text.ui(ui, Alpha::OnlyBlend);
+            appearance.text.ui(ui, Alpha::Opaque);
             action(
                 ui,
                 t!("format.apply_color"),
@@ -248,13 +284,20 @@ fn shadow_items(
 ) {
     let current = selection.and_then(|s| s.shadow);
     draft.follow(current);
-    ui.weak(if selection.is_some_and(|s| s.everything) {
-        t!("format.shadow_scope_all")
-    } else {
-        t!("format.shadow_scope_selection")
+    // Page objects alone (texts, arrows) belong to no structure, so a shadow would change
+    // nothing.
+    let structures = selection.is_some_and(|s| s.everything || s.structure);
+    ui.weak(match selection {
+        Some(s) if s.everything => t!("format.shadow_scope_all"),
+        Some(s) if s.structure => t!("format.shadow_scope_selection"),
+        _ => t!("format.shadow_scope_none"),
     });
     let mut on = current.is_some();
-    if ui.checkbox(&mut on, t!("format.shadow_on")).changed() {
+    let checkbox = ui.add_enabled(
+        structures,
+        egui::Checkbox::new(&mut on, t!("format.shadow_on")),
+    );
+    if checkbox.changed() {
         out.push(Command::Shadow(on.then_some(draft.shadow)));
     }
     ui.separator();
@@ -293,12 +336,14 @@ fn shadow_items(
             length(ui, &mut draft.shadow.blur, 0.0..=3.0);
             ui.end_row();
         });
-    action(
-        ui,
-        t!("format.shadow_apply"),
-        Command::Shadow(Some(draft.shadow)),
-        out,
-    );
+    ui.add_enabled_ui(structures, |ui| {
+        action(
+            ui,
+            t!("format.shadow_apply"),
+            Command::Shadow(Some(draft.shadow)),
+            out,
+        );
+    });
 }
 
 /// Carry out a 書式 command on `editor`. Returns the status-bar message, or `None` for a
@@ -306,14 +351,14 @@ fn shadow_items(
 pub fn run(editor: &mut ChemStructEditor, command: &Command) -> Option<&'static str> {
     let message = match *command {
         Command::FillRing(rgba) => {
-            if editor.fill_selected_ring(rgba) {
+            if on_selected_ring(editor, |e| e.fill_selected_ring(rgba)) {
                 t!("format.status.ring_filled")
             } else {
                 t!("format.status.no_ring")
             }
         }
         Command::ClearRingFill => {
-            if editor.clear_selected_ring_fill() {
+            if on_selected_ring(editor, |e| e.clear_selected_ring_fill()) {
                 t!("format.status.fill_cleared")
             } else {
                 t!("format.status.no_fill")
@@ -418,7 +463,7 @@ pub(crate) mod tests {
                 .unwrap_or_else(|| panic!("no widget labelled {label:?} in {:?}", self.labels()))
         }
 
-        /// The labels of the last frame's widgets.
+        /// The labels of the last frame's widgets, and the texts of its labels.
         pub fn labels(&self) -> Vec<String> {
             let nodes = self
                 .last
@@ -427,7 +472,8 @@ pub(crate) mod tests {
             nodes
                 .into_iter()
                 .flat_map(|u| u.nodes.iter())
-                .filter_map(|(_, n)| n.label().map(str::to_owned))
+                // A label's text is its value.
+                .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
                 .collect()
         }
 
@@ -474,6 +520,7 @@ pub(crate) mod tests {
         let selection = Some(Selection {
             shadow: None,
             everything: false,
+            structure: true,
         });
         let mut h = Harness::new();
         let mut show = |ui: &mut egui::Ui| {
@@ -552,6 +599,157 @@ pub(crate) mod tests {
         assert_eq!(editor.molecule.shadow_of(ring[3]), Some(shadow));
         assert_eq!(editor.undo_stack.len(), 4);
         assert_eq!(run(&mut editor, &Command::Undo), None);
+    }
+
+    /// A menu with the 書式 items as `selection` has them, and the commands a walk through it
+    /// gives.
+    fn walk(
+        appearance: &mut Appearance,
+        selection: Selection,
+        steps: &[&str],
+    ) -> (Vec<Command>, Vec<String>) {
+        let mut out = Vec::new();
+        let mut h = Harness::new();
+        let mut show = |ui: &mut egui::Ui| {
+            ui.menu_button("Format", |ui| {
+                items(ui, appearance, Some(selection), &mut out)
+            });
+        };
+        h.frame(Vec::new(), &mut show);
+        h.click("Format", &mut show);
+        let (last, through) = steps.split_last().unwrap();
+        for step in through {
+            h.hover(step, &mut show);
+        }
+        let labels = h.labels();
+        h.click(last, &mut show);
+        drop(show);
+        (out, labels)
+    }
+
+    /// A ring is filled or cleared only through a selection: with none the items are greyed out
+    /// with a hint, and the commands leave the ring under the hotspot (the atom last drawn or
+    /// hovered) alone; a lone selected atom wins over the hotspot.
+    #[test]
+    fn the_ring_items_need_a_selection() {
+        let nothing = Selection {
+            shadow: None,
+            everything: true,
+            structure: false,
+        };
+        let mut appearance = Appearance::default();
+        let (out, labels) = walk(&mut appearance, nothing, &[t!("format.clear_fill")]);
+        assert!(out.is_empty(), "{out:?}");
+        assert!(
+            labels
+                .iter()
+                .any(|l| l == t!("format.ring_needs_selection"))
+        );
+        let (out, _) = walk(&mut appearance, nothing, &[t!("format.fill_ring")]);
+        assert!(out.is_empty(), "{out:?}");
+        let ring = Selection {
+            structure: true,
+            everything: false,
+            ..nothing
+        };
+        let (out, labels) = walk(&mut appearance, ring, &[t!("format.clear_fill")]);
+        assert_eq!(out, [Command::ClearRingFill]);
+        assert!(
+            !labels
+                .iter()
+                .any(|l| l == t!("format.ring_needs_selection"))
+        );
+
+        let mut editor = ChemStructEditor::default();
+        let (ring, o, _) = phenol(&mut editor);
+        editor.hotspot_atom = Some(ring[2]);
+        assert_eq!(
+            run(&mut editor, &Command::FillRing([1, 2, 3, 4])),
+            Some(t!("format.status.no_ring"))
+        );
+        assert!(editor.molecule.ring_fills.is_empty());
+        editor.molecule.set_ring_fill(ring.clone(), [1, 2, 3, 4]);
+        assert_eq!(
+            run(&mut editor, &Command::ClearRingFill),
+            Some(t!("format.status.no_fill"))
+        );
+        assert_eq!(editor.molecule.ring_fills.len(), 1);
+        assert!(editor.undo_stack.is_empty());
+        assert_eq!(editor.hotspot_atom, Some(ring[2]));
+
+        // The hotspot on the O (on no ring) does not hide the selected ring atom.
+        editor.hotspot_atom = Some(o);
+        editor.selected_atoms = [ring[0]].into();
+        assert_eq!(
+            run(&mut editor, &Command::ClearRingFill),
+            Some(t!("format.status.fill_cleared"))
+        );
+        assert!(editor.molecule.ring_fills.is_empty());
+        assert_eq!(editor.hotspot_atom, Some(o));
+    }
+
+    /// With only texts selected the shadow submenu says what it needs, and offers nothing that
+    /// would change nothing.
+    #[test]
+    fn the_shadow_submenu_says_texts_cast_none() {
+        let texts = Selection {
+            shadow: None,
+            everything: false,
+            structure: false,
+        };
+        let mut appearance = Appearance::default();
+        for item in [t!("format.shadow_on"), t!("format.shadow_apply")] {
+            let (out, labels) = walk(&mut appearance, texts, &[t!("format.shadow"), item]);
+            assert!(out.is_empty(), "{item}: {out:?}");
+            assert!(labels.iter().any(|l| l == t!("format.shadow_scope_none")));
+            assert!(
+                !labels
+                    .iter()
+                    .any(|l| l == t!("format.shadow_scope_selection"))
+            );
+        }
+        let atoms = Selection {
+            structure: true,
+            ..texts
+        };
+        let (out, labels) = walk(
+            &mut appearance,
+            atoms,
+            &[t!("format.shadow"), t!("format.shadow_apply")],
+        );
+        assert_eq!(out, [Command::Shadow(Some(Shadow::default()))]);
+        assert!(
+            labels
+                .iter()
+                .any(|l| l == t!("format.shadow_scope_selection"))
+        );
+    }
+
+    /// Line and text colours are applied opaque, even one remembered with an opacity.
+    #[test]
+    fn line_and_text_colours_are_opaque() {
+        let selection = Selection {
+            shadow: None,
+            everything: false,
+            structure: true,
+        };
+        let mut appearance = Appearance {
+            line: [1, 2, 3, 100].into(),
+            text: [4, 5, 6, 0].into(),
+            ..Default::default()
+        };
+        let (line, _) = walk(
+            &mut appearance,
+            selection,
+            &[t!("format.line_color"), t!("format.apply_color")],
+        );
+        assert_eq!(line, [Command::LineColor(Some([1, 2, 3, 255]))]);
+        let (text, _) = walk(
+            &mut appearance,
+            selection,
+            &[t!("format.text_color"), t!("format.apply_color")],
+        );
+        assert_eq!(text, [Command::TextColor(Some([4, 5, 6, 255]))]);
     }
 
     #[test]

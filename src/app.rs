@@ -2025,6 +2025,96 @@ mod tests {
         assert_eq!(out, [Command::FillRing(fill)]);
     }
 
+    /// A right-click with nothing selected fills or clears no ring: the items are greyed out,
+    /// whatever atom the editor last drew or hovered.
+    #[test]
+    fn the_canvas_menu_needs_a_selected_ring() {
+        let mut app = app_with_one_untitled();
+        let (ring, ..) = ui::appearance::tests::phenol(&mut app.docs[0].editor);
+        app.docs[0].editor.hotspot_atom = Some(ring[0]);
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut appearance = ui::appearance::Appearance::default();
+        let mut text_format = ui::text_format::TextFormatBar::default();
+        let mut context_atom = None;
+        let mut out = Vec::new();
+        let doc = &mut app.docs[0];
+        let mut show = |ui: &mut egui::Ui| {
+            editor_canvas(
+                ui,
+                doc,
+                &mut context_atom,
+                &mut text_format,
+                &mut appearance,
+                &mut out,
+            )
+        };
+        h.frame(Vec::new(), &mut show);
+        let corner = egui::pos2(30.0, 30.0);
+        h.click_at(corner, egui::PointerButton::Secondary, &mut show);
+        assert!(
+            h.labels()
+                .iter()
+                .any(|l| l == t!("format.ring_needs_selection"))
+        );
+        // The fill submenu does not open, so there is no Fill button to press.
+        h.hover(t!("format.fill_ring"), &mut show);
+        assert!(!h.labels().iter().any(|l| l == t!("format.fill")));
+        h.click(t!("format.clear_fill"), &mut show);
+        drop(show);
+        assert!(out.is_empty(), "{out:?}");
+        assert!(app.docs[0].editor.molecule.ring_fills.is_empty());
+    }
+
+    /// Line and text colours remembered with an opacity are applied opaque, and so come back
+    /// unchanged from CDX and CDXML (which keep no opacity for them).
+    #[test]
+    fn translucent_line_and_text_colours_are_saved_opaque() {
+        use Step::{Click, Hover};
+
+        let ctx = egui::Context::default();
+        let mut app = app_with_one_untitled();
+        let (ring, o, text) = ui::appearance::tests::phenol(&mut app.docs[0].editor);
+        let dir = std::env::temp_dir().join(format!("odc-opaque-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut appearance = ui::appearance::Appearance::default();
+        appearance.line = [200, 10, 10, 60].into();
+        appearance.text = [10, 10, 200, 128].into();
+        let format = t!("menu.format.title");
+        app.docs[0].editor.selected_atoms = ring.iter().copied().chain([o]).collect();
+        app.docs[0].editor.selected_objects = [text].into();
+        for submenu in [t!("format.line_color"), t!("format.text_color")] {
+            let steps = [
+                Click(format),
+                Hover(submenu),
+                Click(t!("format.apply_color")),
+            ];
+            for command in through_menu(&mut h, &app, &mut appearance, &steps) {
+                app.run(&ctx, command);
+            }
+        }
+        let (line, label) = ([200, 10, 10, 255], [10, 10, 200, 255]);
+        let check = |mol: &chembuider_rs::Molecule, what: &str| {
+            let bonds: Vec<_> = mol.bonds.iter().map(|b| b.color).collect();
+            assert!(bonds.iter().all(|c| *c == Some(line)), "{what}: {bonds:?}");
+            let atom = mol.atoms.iter().find(|a| a.element == "O").unwrap();
+            assert_eq!(atom.color, Some(label), "{what}");
+            let texts: Vec<_> = mol.objects.iter().filter_map(|o| o.as_text()).collect();
+            assert_eq!(texts[0].color, Some(label), "{what}");
+        };
+        check(&app.docs[0].editor.molecule, "drawn");
+        for name in ["opaque.cdx", "opaque.cdxml"] {
+            let path = dir.join(name);
+            let format = Format::from_path(&path).unwrap();
+            app.docs[0].save_as(&path, format).unwrap();
+            let mut reopened = OpenDrawApp::default();
+            reopened.open_path(&path);
+            assert_eq!(reopened.docs.len(), 1, "{name}");
+            check(&reopened.docs[0].editor.molecule, name);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// The 書式 menu end to end: a ring fill, line and text colours (each its own) and a
     /// shadow set from the menu bar survive saving as CDX and CDXML and opening again, each is
     /// one undo step of Edit > Undo / Redo, and once reset the drawing saves as it did before
