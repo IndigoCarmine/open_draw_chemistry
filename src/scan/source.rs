@@ -136,13 +136,23 @@ impl Source {
                     })
                 }
             }
+            Source::Model { model, .. } => self.at_from(&edit::coords(model), values),
+        }
+    }
+
+    /// The model's atoms at `from` (another structure of them, such as a neighbouring point's
+    /// relaxed one) with the parameters set to `values`. The assembly's points are always
+    /// rebuilt from its design, so for it this is [`Source::at`].
+    pub fn at_from(&self, from: &[Vec3], values: &[f64]) -> Result<Point, String> {
+        match self {
+            Source::Assembly { .. } => self.at(values),
             Source::Model {
-                model,
                 graph,
                 anchor,
                 params,
+                ..
             } => {
-                let mut coords = edit::coords(model);
+                let mut coords = from.to_vec();
                 for (p, &v) in params.iter().zip(values) {
                     coords = p
                         .write_coords(&coords, graph, v, *anchor)

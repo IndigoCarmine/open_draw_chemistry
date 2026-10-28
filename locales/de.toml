@@ -924,6 +924,16 @@ export_csv = "CSV exportieren…"
 minimum = "Minimum: E = {energy} {unit} bei {values}"
 plot_help = "Punkt (Zelle) anklicken, um seine Parameterwerte auf die Struktur anzuwenden (rückgängig machbar). Scrollen zum Zoomen, Ziehen zum Verschieben, Doppelklick setzt die Ansicht zurück"
 values_separator = ", "
+relax = "Übrige Freiheitsgrade relaxieren"
+relax_tip = "An jedem Punkt die gescannten Parameter (und die in der 3D-Ansicht gesetzten Beschränkungen) festhalten, alles andere optimieren und die Energie der optimierten Struktur nehmen. Jeder Punkt startet von der optimierten Struktur seines Nachbarn. Deutlich langsamer als ein Single-Point-Scan"
+relax_assembly_tip = "Relaxieren ist nur für Bindungslängen, -winkel und Diederwinkel des 3D-Modells verfügbar, nicht für die Anordnung"
+summary_relaxed = "Punkte: {total} · Atome: {atoms} · an jedem Punkt optimiert, gescannte Parameter festgehalten ({unit})"
+relax_model_only = "Nur ein Scan des 3D-Modells kann relaxiert werden"
+relax_too_many_atoms = "Zu viele Atome zum Relaxieren ({atoms}). Ein relaxierter Scan nimmt höchstens {max} Atome"
+relax_too_many_points = "Zu viele Punkte zum Relaxieren ({points}). Ein relaxierter Scan nimmt höchstens {max} Punkte"
+relax_conflict = "OpenBabel kann beim Optimieren einen Bindungswinkel und einen Diederwinkel nicht gleichzeitig festhalten (der Diederwinkel würde nicht gehalten). Nur einen von beiden scannen oder beschränken"
+unconverged_points = { one = "{n} Punkt ist innerhalb der Optimierungsschritte nicht konvergiert (im Diagramm umkreist)", other = "{n} Punkte sind innerhalb der Optimierungsschritte nicht konvergiert (im Diagramm umkreist)" }
+unconverged = "Nicht konvergiert (Optimierungsschritte aufgebraucht)"
 
 [scan.progress]
 counts = "{done} / {total} Punkte · vergangen {elapsed}"

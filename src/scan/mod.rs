@@ -1,5 +1,7 @@
 //! Parameter scans (パラメータスキャン): one or two parameters of the assembly or the 3D model
-//! stepped over a grid, the MM single-point energy of the whole structure at every point.
+//! stepped over a grid, the MM single-point energy of the whole structure at every point — or,
+//! for the 3D model, a relaxed scan: the energy after minimising everything but the scanned
+//! parameters ([`run::Run::start_relaxed`]).
 //!
 //! - [`param`]: what can be scanned, and how a value is read from and written into the
 //!   design or the model's coordinates;
@@ -34,6 +36,18 @@ pub const MAX_ATOMS: usize = 20_000;
 
 /// The most points along one axis.
 pub const MAX_POINTS: usize = 200;
+
+/// The most atoms a relaxed scan accepts: every point is a whole constrained minimisation of
+/// up to [`crate::three_d::OPTIMIZE_STEPS`] steps over all atom pairs. Measured per point
+/// (release build, an alkane's dihedral): ~0.2–0.5 s at 32 atoms, 1.2–3.7 s at 100, 5–14 s at
+/// 200 and 13–48 s at 300 (MMFF94–UFF), growing as the square of the atoms; at 500 a point
+/// takes ~0.5–2 min, and a 37-point dihedral scan most of an hour.
+pub const MAX_RELAX_ATOMS: usize = 500;
+
+/// The most points (all axes together) of a relaxed scan: a 10° × 10° map of two dihedrals
+/// (37 × 37 = 1369) fits. Beyond, even a small molecule takes tens of minutes (see
+/// [`MAX_RELAX_ATOMS`]); each point's minimised structure is also kept, for clicking.
+pub const MAX_RELAX_POINTS: usize = 1_500;
 
 /// One scanned parameter and the values it takes.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +112,11 @@ pub struct Scan {
     pub unit: String,
     /// Whether the parameters are the assembly's (else the 3D model's).
     pub assembly: bool,
+    /// Whether every point was minimised with the parameters held (else a single point).
+    pub relaxed: bool,
+    /// One per grid point: whether its minimisation ran out of steps still moving (only ever
+    /// set in a relaxed scan).
+    pub unconverged: Vec<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,7 +147,15 @@ impl Scan {
             force_field,
             unit,
             assembly,
+            relaxed: false,
+            unconverged: vec![false; total],
         }
+    }
+
+    /// Whether point `index` was computed but its minimisation did not converge.
+    pub fn is_unconverged(&self, index: usize) -> bool {
+        self.unconverged.get(index).copied().unwrap_or(false)
+            && self.energies.get(index).is_some_and(Option::is_some)
     }
 
     pub fn total(&self) -> usize {
@@ -191,19 +218,24 @@ impl Scan {
     }
 
     /// The scan as CSV: a header naming each parameter and the energy with their units, then
-    /// one row per computed point in grid order (a failed point's energy is `NaN`).
+    /// one row per computed point in grid order (a failed point's energy is `NaN`). A relaxed
+    /// scan has a last column saying whether each point's minimisation converged.
     pub fn to_csv(&self) -> String {
         let mut out = String::new();
         let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
         for axis in &self.axes {
             let _ = write!(out, "{},", quote(&axis.title()));
         }
-        let _ = writeln!(
+        let _ = write!(
             out,
             "{},{}",
             quote(&format!("E {} ({})", self.force_field, self.unit)),
             quote(&format!("ΔE ({})", self.unit))
         );
+        if self.relaxed {
+            let _ = write!(out, ",{}", quote("converged"));
+        }
+        let _ = writeln!(out);
         let min = self.minimum().map(|m| m.1);
         for (i, e) in self.energies.iter().enumerate() {
             let Some(e) = *e else {
@@ -213,10 +245,14 @@ impl Scan {
                 let _ = write!(out, "{v},");
             }
             if e.is_finite() {
-                let _ = writeln!(out, "{e},{}", e - min.unwrap_or(e));
+                let _ = write!(out, "{e},{}", e - min.unwrap_or(e));
             } else {
-                let _ = writeln!(out, "NaN,NaN");
+                let _ = write!(out, "NaN,NaN");
             }
+            if self.relaxed {
+                let _ = write!(out, ",{}", !self.unconverged[i]);
+            }
+            let _ = writeln!(out);
         }
         out
     }

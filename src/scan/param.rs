@@ -6,9 +6,9 @@ use std::fmt;
 
 use crate::assembly::model::{Design, Step};
 use crate::assembly::place;
-use crate::three_d::Model3d;
 use crate::three_d::edit;
 use crate::three_d::geom::{self, Graph, Vec3};
+use crate::three_d::{Constraint, Model3d};
 
 /// One number of a building step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,6 +276,17 @@ impl Param {
             _ => return Err(ApplyError(t!("scan.error.assembly_param").into())),
         };
         result.map_err(|e| ApplyError(e.to_string()))
+    }
+
+    /// The restraint holding the 3D model's parameter at `value` through an optimisation (none
+    /// for the assembly's).
+    pub fn restraint(&self, value: f64) -> Option<Constraint> {
+        match *self {
+            Param::Bond(atoms) => Some(Constraint::Distance(atoms, value)),
+            Param::Angle(atoms) => Some(Constraint::Angle(atoms, value)),
+            Param::Dihedral(atoms) => Some(Constraint::Torsion(atoms, value)),
+            _ => None,
+        }
     }
 
     /// A sensible default range around `current`: ±1 Å for a length (positive), the full turn

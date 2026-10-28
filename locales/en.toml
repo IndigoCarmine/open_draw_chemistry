@@ -1196,6 +1196,22 @@ minimum = "Minimum: E = {energy} {unit} at {values}"
 plot_help = "Click a point (cell) to apply its parameter values to the structure (undoable). Scroll to zoom, drag to pan, double-click to reset the view"
 # Joins "parameter = value" items in a list (note the space after the comma).
 values_separator = ", "
+# Checkbox: minimise everything but the scanned parameters at every point (a relaxed scan).
+relax = "Relax the other degrees of freedom"
+relax_tip = "At every point, hold the scanned parameters (and the restraints set in the 3D view) and optimize everything else, then take the energy of the optimized structure. Each point starts from its neighbor's optimized structure. Much slower than a single-point scan"
+relax_assembly_tip = "Relaxing is available for the 3D model's bond lengths, angles and dihedrals only, not for the assembly"
+# Replaces "summary" when relaxing; {total}: number of grid points; {atoms}: number of atoms; {unit}: energy unit.
+summary_relaxed = "Points: {total} · atoms: {atoms} · optimized at each point with the scanned parameters held ({unit})"
+relax_model_only = "Only a scan of the 3D model can be relaxed"
+# {atoms}: atoms in the structure; {max}: the most a relaxed scan accepts.
+relax_too_many_atoms = "Too many atoms to relax ({atoms}). A relaxed scan takes at most {max} atoms"
+# {points}: grid points asked for; {max}: the most a relaxed scan accepts.
+relax_too_many_points = "Too many points to relax ({points}). A relaxed scan takes at most {max} points"
+relax_conflict = "OpenBabel cannot hold a bond angle and a dihedral together while optimizing (the dihedral would not be held). Scan or restrain only one of them"
+# Shown when some relaxed points ran out of optimization steps before converging.
+unconverged_points = { one = "{n} point did not converge within the optimization steps (ringed in the plot)", other = "{n} points did not converge within the optimization steps (ringed in the plot)" }
+# Tooltip line of a point whose optimization did not converge.
+unconverged = "Not converged (optimization ran out of steps)"
 
 [scan.progress]
 # Progress bar text; {elapsed} is a duration such as "12.3 s".
