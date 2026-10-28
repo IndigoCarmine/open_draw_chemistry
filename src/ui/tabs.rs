@@ -45,7 +45,8 @@ pub fn tab_strip(ui: &mut egui::Ui, docs: &[Document], active: usize, out: &mut 
                 ui.add_space(4.0);
             }
             if ui
-                .add(egui::Button::new(RichText::new("＋").size(14.0)).frame(false)) // i18n-allow: a symbol, not text
+                // An ASCII "+": the full-width one needs a CJK font, which non-CJK UIs may lack.
+                .add(egui::Button::new(RichText::new("+").size(16.0)).frame(false))
                 .on_hover_text(t!("tabs.new_document"))
                 .clicked()
             {
