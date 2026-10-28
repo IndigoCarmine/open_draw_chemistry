@@ -2,10 +2,11 @@
 //! several (copies of the same monomer included), for the distance, angle or dihedral between
 //! them. Read only: nothing here changes the design.
 //!
-//! A picked atom is remembered by where it comes from — its monomer, its copy ([`Origin`]) and
-//! its place in the monomer — not by its index in the build, so when the design changes and
-//! the assembly is rebuilt the same atom is found again (or found gone) even though the
-//! indices have moved. The arithmetic is the 3D view's ([`Measure`]).
+//! A picked atom is remembered by where it comes from — its monomer (by its id), its copy
+//! ([`Origin`]) and its place in the monomer — not by its index in the build, so when the
+//! design changes and the assembly is rebuilt the same atom is found again (or found gone)
+//! even though the indices have moved: molecules and monomers removed before it, its copy
+//! detached to be moved by hand, undo and redo. The arithmetic is the 3D view's ([`Measure`]).
 
 use super::build::Built;
 use super::model::{Design, Origin};
@@ -14,8 +15,8 @@ use crate::three_d::edit::{MAX_PICKED, Measure};
 /// One atom of the assembly, named so that it survives a rebuild.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AtomRef {
-    /// The monomer it is an atom of.
-    pub component: usize,
+    /// The monomer it is an atom of, by its id ([`Design::component_id`]).
+    pub component: u64,
     /// Which copy of the monomer.
     pub origin: Origin,
     /// Its index among the monomer's atoms.
@@ -27,7 +28,7 @@ impl AtomRef {
     pub fn of(design: &Design, built: &Built, a: usize) -> Option<Self> {
         let &m = built.molecule_of_atom.get(a)?;
         Some(Self {
-            component: *built.component_of_molecule.get(m)?,
+            component: design.component_id(*built.component_of_molecule.get(m)?),
             origin: design.origin_of(m)?,
             atom: a - built.molecule_start[m],
         })
@@ -36,7 +37,8 @@ impl AtomRef {
     /// Its index in `built` (built from `design`), if the assembly still has it.
     pub fn index(&self, design: &Design, built: &Built) -> Option<usize> {
         let m = design.molecule_of(self.origin)?;
-        if built.component_of_molecule.get(m) != Some(&self.component) {
+        let component = design.component_index(self.component)?;
+        if built.component_of_molecule.get(m) != Some(&component) {
             return None;
         }
         let atoms = built.molecule_atoms(m);
@@ -110,7 +112,7 @@ pub fn measure(built: &Built, atoms: &[usize]) -> Option<Measure> {
 mod tests {
     use super::*;
     use crate::assembly::build::build;
-    use crate::assembly::math::Rigid;
+    use crate::assembly::math::{self, Rigid};
     use crate::assembly::model::{Component, Instance, Ring, Step};
     use crate::three_d::{Atom3d, Bond3d};
 
@@ -334,9 +336,155 @@ mod tests {
         };
         assert!((d - (30.0f64 - 0.24).hypot(0.93)).abs() < 1e-9, "{d}");
         // The monomer loses its last atom: the picked H is gone, the O stays.
-        design.components[0].atoms.pop();
-        design.components[0].bonds.pop();
+        let mut smaller = design.clone();
+        smaller.components[0].atoms.pop();
+        smaller.components[0].bonds.pop();
+        let built = build(&smaller, 3).unwrap();
+        assert_eq!(pick.clone().follow(&smaller, &built), vec![0]);
+        // The molecule before it is deleted: the H is found again, a molecule lower.
+        assert!(design.remove_molecule(1));
+        let built = build(&design, 4).unwrap();
+        assert_eq!(pick.follow(&design, &built), vec![0, 5]);
+        assert!(math::distance(built.atoms[5].pos, [29.76, 0.93, 0.0]) < 1e-9);
+        // It is deleted itself: its H goes.
+        assert!(design.remove_molecule(1));
+        let built = build(&design, 5).unwrap();
+        assert_eq!(pick.follow(&design, &built), vec![0]);
+    }
+    /// Three hand-placed copies A, B, C of one monomer: deleting A shifts B and C down the list,
+    /// yet a pick on B stays on B (not on C) and a pick on A goes (not onto B). Undo — the
+    /// design as it was — finds A and B again.
+    #[test]
+    fn a_pick_stays_on_its_hand_placed_molecule_when_one_before_it_goes() {
+        let mut design = Design {
+            components: vec![water()],
+            manual: vec![
+                placed(0, [10.0, 0.0, 0.0]),
+                placed(0, [20.0, 0.0, 0.0]),
+                placed(0, [30.0, 0.0, 0.0]),
+            ],
+            ..Default::default()
+        };
+        let before = design.clone();
+        let built = build(&design, 1).unwrap();
+        // Molecule 0 is the base at the origin; A, B, C are 1, 2, 3: A's O and B's O.
+        let (a, b) = (3, 6);
+        assert_eq!(built.atoms[b].pos, [20.0, 0.0, 0.0]);
+        let mut pick = picked(&design, &built, &[a, b]);
+        assert!(design.remove_molecule(1));
+        let built = build(&design, 2).unwrap();
+        let atoms = pick.follow(&design, &built);
+        assert_eq!(atoms.len(), 1, "A's atom is let go");
+        assert_eq!(built.atoms[atoms[0]].pos, [20.0, 0.0, 0.0], "still B's O");
+        // Deleting C, after B, changes nothing; deleting B lets it go.
+        let mut kept = pick.clone();
+        let mut design_c = design.clone();
+        assert!(design_c.remove_molecule(2));
+        let built_c = build(&design_c, 3).unwrap();
+        let atoms = kept.follow(&design_c, &built_c);
+        assert_eq!(built_c.atoms[atoms[0]].pos, [20.0, 0.0, 0.0]);
+        assert!(design.remove_molecule(1));
+        let built = build(&design, 4).unwrap();
+        assert!(
+            pick.follow(&design, &built).is_empty(),
+            "B's atom goes with B"
+        );
+
+        // Undo of deleting A: both picks are found again where they were.
+        let built = build(&before, 5).unwrap();
+        let mut pick = picked(&before, &built, &[a, b]);
+        let mut after = before.clone();
+        assert!(after.remove_molecule(1));
+        let built_after = build(&after, 6).unwrap();
+        assert_eq!(pick.follow(&after, &built_after).len(), 1);
+        assert_eq!(pick.follow(&before, &built), vec![b]);
+        // A molecule added after a deletion is a new one: no pick moves onto it.
+        let mut pick = picked(&after, &built_after, &[built_after.atoms.len() - 3]);
+        assert!(after.remove_molecule(2));
+        after.manual.push(placed(0, [40.0, 0.0, 0.0]));
+        let built_after = build(&after, 7).unwrap();
+        assert!(pick.follow(&after, &built_after).is_empty());
+    }
+
+    /// Removing a monomer: the picks on the others' molecules stay on the same atoms, those on
+    /// its own go — none moves to the monomer that takes its place in the list, the base's
+    /// successor included.
+    #[test]
+    fn removing_a_monomer_keeps_the_others_picks_and_drops_its_own() {
+        let dot = || component("dot", &[("C", [0.0, 0.0, 0.0])]);
+        let mut design = Design {
+            components: vec![water(), dot(), dot()],
+            manual: vec![
+                placed(1, [10.0, 0.0, 0.0]),
+                placed(2, [20.0, 0.0, 0.0]),
+                placed(0, [30.0, 0.0, 0.0]),
+            ],
+            ..Default::default()
+        };
+        let built = build(&design, 1).unwrap();
+        // The base water's O, the first dot, the second dot, the hand-placed water's H.
+        let mut pick = picked(&design, &built, &[0, 3, 4, 6]);
+        design.remove_component(1);
+        let built = build(&design, 2).unwrap();
+        let atoms = pick.follow(&design, &built);
+        let places: Vec<_> = atoms.iter().map(|&a| built.atoms[a].pos).collect();
+        let expected = [[0.0; 3], [20.0, 0.0, 0.0], [30.96, 0.0, 0.0]];
+        assert_eq!(
+            places.len(),
+            3,
+            "the first dot's pick goes, the others stay"
+        );
+        for (p, e) in places.iter().zip(expected) {
+            assert!(math::distance(*p, e) < 1e-9, "{p:?} is not {e:?}");
+        }
+        // Removing the base: the steps now copy the dot, whose atom 0 is not the water's O.
+        design.remove_component(0);
+        assert_eq!(design.base, 0);
         let built = build(&design, 3).unwrap();
+        assert_eq!(built.atoms[0].element, "C");
+        let atoms = pick.follow(&design, &built);
+        assert_eq!(atoms.len(), 1);
+        assert_eq!(built.atoms[atoms[0]].pos, [20.0, 0.0, 0.0]);
+    }
+
+    /// A copy of the steps detached to be moved by hand is the same molecule: its picks stay
+    /// on the same atoms, a click on one of them lets it go, and undoing the detach keeps them.
+    #[test]
+    fn detaching_a_copy_keeps_its_picks() {
+        let mut design = Design {
+            components: vec![water()],
+            steps: vec![ring(6, 5.0)],
+            ..Default::default()
+        };
+        let before = design.clone();
+        let built = build(&design, 1).unwrap();
+        // An O of copy 0 and an H of copy 2.
+        let (o, h) = (0, 7);
+        let h_at = built.atoms[h].pos;
+        let mut pick = picked(&design, &built, &[o, h]);
+        let moved = design.detach(2).unwrap();
+        let built = build(&design, 2).unwrap();
+        let atoms = pick.follow(&design, &built);
+        assert_eq!(atoms, vec![0, built.molecule_start[moved] + 1]);
+        assert!(math::distance(built.atoms[atoms[1]].pos, h_at) < 1e-9);
+        // Moving it by hand moves the pick with it.
+        design.manual[0].transform = design.manual[0]
+            .transform
+            .then(&Rigid::translation([0.0, 0.0, 3.0]));
+        let built = build(&design, 3).unwrap();
+        let atoms = pick.follow(&design, &built);
+        assert!((built.atoms[atoms[1]].pos[2] - (h_at[2] + 3.0)).abs() < 1e-9);
+        // The detached atom clicked again is the picked one, let go.
+        let mut again = pick.clone();
+        again.click(AtomRef::of(&design, &built, atoms[1]).unwrap());
+        assert_eq!(again.follow(&design, &built), vec![0]);
+        // Undo of the detach: the same atoms in the steps' copy.
+        let built = build(&before, 4).unwrap();
+        assert_eq!(pick.clone().follow(&before, &built), vec![o, h]);
+        // Deleting the detached molecule lets its atom go.
+        let m = design.manual_molecule(0);
+        assert!(design.remove_molecule(m));
+        let built = build(&design, 5).unwrap();
         assert_eq!(pick.follow(&design, &built), vec![0]);
     }
 }

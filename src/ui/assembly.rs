@@ -22,7 +22,7 @@ use style::Look;
 
 use super::Command;
 use super::viewport3d::{
-    Frame3d, Hit, Scene, Style3d, Viewport3d, element_color, exclusive_groups,
+    CellImages, Frame3d, Hit, Scene, Style3d, Viewport3d, element_color, exclusive_groups,
 };
 use crate::assembly::measure::{self, AtomRef, MeasurePick};
 use crate::assembly::model::{Array, Lattice, Ring, Stack, helix_radius};
@@ -260,7 +260,11 @@ pub fn viewer_area(
     }
     orient_prompt(ui, &doc.assembly, view);
     if !view.is_orienting() && !doc.assembly.is_empty() {
-        measure_bar(ui, view);
+        let images_hidden = doc
+            .assembly
+            .built()
+            .is_ok_and(|built| hides_images(view, &built));
+        measure_bar(ui, view, images_hidden);
     }
 
     let message = if doc.assembly.is_empty() {
@@ -319,8 +323,9 @@ fn orient_prompt(ui: &mut egui::Ui, state: &AssemblyState, view: &mut AssemblyVi
     }
 }
 
-/// Over the viewer: the measuring switch and, while measuring, what to click.
-fn measure_bar(ui: &mut egui::Ui, view: &mut AssemblyView) {
+/// Over the viewer: the measuring switch and, while measuring, what to click (and that the
+/// crystal's periodic images are hidden, when they are).
+fn measure_bar(ui: &mut egui::Ui, view: &mut AssemblyView, images_hidden: bool) {
     let mut on = view.is_measuring();
     ui.horizontal(|ui| {
         ui.add_space(12.0);
@@ -336,6 +341,13 @@ fn measure_bar(ui: &mut egui::Ui, view: &mut AssemblyView) {
                     .size(12.0)
                     .color(PICK_STROKE),
             );
+            if images_hidden {
+                ui.label(
+                    RichText::new(t!("assembly.measure.images_hidden"))
+                        .size(12.0)
+                        .color(dark::MUTED),
+                );
+            }
         }
     });
     if on != view.is_measuring() {
@@ -452,14 +464,15 @@ fn viewer(
         || atom_colors(&built, color),
     );
     // A crystal: the unit cell's outline and periodic images of the whole build (clicking an
-    // image selects the molecule it is a copy of: the renderer reports primary indices).
+    // image selects the molecule it is a copy of: the renderer reports primary indices; while
+    // measuring there are none, see `shown_images`).
     viewport.set_cell(
         built
             .crystal
             .as_ref()
             .filter(|_| view.crystal.show_cell)
             .map(|c| c.cell.vectors()),
-        built.cell.map(|c| (c.vectors(), view.crystal.images)),
+        shown_images(view.measure.is_some(), &view.crystal, &built),
     );
     let measuring = view.measure.is_some();
     let picked = measured(&mut view.measure, state, &built);
@@ -509,6 +522,19 @@ fn viewer(
     if let Some(hit) = frame.primary {
         click(state, view, &built, hit);
     }
+}
+
+/// The periodic images drawn around `built`'s crystal. None while measuring: the renderer
+/// reports a click on an image as the atom it repeats, so a measurement would silently use
+/// that atom's place instead of the image's — only the atoms themselves can be picked.
+fn shown_images(measuring: bool, display: &CrystalDisplay, built: &Built) -> Option<CellImages> {
+    let images = if measuring { [1; 3] } else { display.images };
+    built.cell.map(|c| (c.vectors(), images))
+}
+
+/// Whether measuring hides periodic images that would otherwise be drawn around `built`.
+fn hides_images(view: &AssemblyView, built: &Built) -> bool {
+    view.is_measuring() && built.cell.is_some() && view.crystal.images.iter().any(|&n| n > 1)
 }
 
 /// A click in the viewer on `hit` of `built`: while measuring it picks atoms (a bond, its two
@@ -1193,18 +1219,7 @@ fn apply(change: Change, doc: &mut Document, model_name: &str, view: &mut Assemb
             }
         }
         Change::RemoveComponent(i) => {
-            state.edit(|d| {
-                d.components.remove(i);
-                d.manual.retain(|m| m.component != i);
-                for m in &mut d.manual {
-                    if m.component > i {
-                        m.component -= 1;
-                    }
-                }
-                if d.base > i || d.base >= d.components.len() {
-                    d.base = d.base.saturating_sub(1);
-                }
-            });
+            state.edit(|d| d.remove_component(i));
             view.orient = None;
             view.renaming = None;
         }
@@ -1887,6 +1902,7 @@ fn info_section(ui: &mut egui::Ui, state: &mut AssemblyState, ink: &Ink) {
 mod tests {
     use super::*;
     use crate::assembly::Design;
+    use crate::assembly::model::Instance;
     use crate::three_d::{Atom3d, Bond3d};
 
     fn water() -> Component {
@@ -2049,6 +2065,86 @@ mod tests {
         // Orienting picks as before.
         pick_orient_atom(&mut state, &mut view, 1);
         assert_eq!(view.orient.as_ref().unwrap().atoms, vec![1]);
+    }
+
+    /// The renderer reports a click on a periodic image as the atom it repeats, so measuring
+    /// shows the crystal without its images: every atom that can be clicked is where it is
+    /// measured. They come back when measuring stops.
+    #[test]
+    fn measuring_hides_the_periodic_images() {
+        let mut state = AssemblyState::with_design(Design {
+            components: vec![water()],
+            steps: vec![Step::new_lattice()],
+            ..Default::default()
+        });
+        let built = state.built().unwrap();
+        let cell = built.cell.expect("a crystal").vectors();
+        let mut view = AssemblyView::default();
+        view.crystal.images = [3, 1, 2];
+        assert_eq!(
+            shown_images(view.is_measuring(), &view.crystal, &built),
+            Some((cell, [3, 1, 2]))
+        );
+        assert!(!hides_images(&view, &built));
+        view.set_measuring(true);
+        assert_eq!(
+            shown_images(view.is_measuring(), &view.crystal, &built),
+            Some((cell, [1, 1, 1]))
+        );
+        assert!(hides_images(&view, &built), "the bar says so");
+        // Without images to hide there is nothing to say.
+        view.crystal.images = [1, 1, 1];
+        assert!(!hides_images(&view, &built));
+        view.crystal.images = [3, 1, 2];
+        view.set_measuring(false);
+        assert_eq!(
+            shown_images(view.is_measuring(), &view.crystal, &built),
+            Some((cell, [3, 1, 2]))
+        );
+        // No crystal, no images either way.
+        let plain = ring_of_water().built().unwrap();
+        view.set_measuring(true);
+        assert_eq!(
+            shown_images(view.is_measuring(), &view.crystal, &plain),
+            None
+        );
+        assert!(!hides_images(&view, &plain));
+    }
+
+    /// Removing a monomer from the panel keeps the picks on the other monomers' molecules and
+    /// drops those on its own.
+    #[test]
+    fn removing_a_monomer_drops_only_its_picks() {
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        let mut dot = water();
+        dot.name = "dot".into();
+        dot.atoms.truncate(1);
+        dot.bonds.clear();
+        doc.assembly = AssemblyState::with_design(Design {
+            components: vec![water(), dot.clone(), dot],
+            manual: vec![
+                Instance {
+                    component: 1,
+                    transform: crate::assembly::math::Rigid::translation([10.0, 0.0, 0.0]),
+                },
+                Instance {
+                    component: 2,
+                    transform: crate::assembly::math::Rigid::translation([20.0, 0.0, 0.0]),
+                },
+            ],
+            ..Default::default()
+        });
+        let mut view = AssemblyView::default();
+        view.set_measuring(true);
+        let built = doc.assembly.built().unwrap();
+        for a in [0, 3, 4] {
+            click(&mut doc.assembly, &mut view, &built, Hit::Atom(a));
+        }
+        apply(Change::RemoveComponent(1), &mut doc, "", &mut view);
+        let built = doc.assembly.built().unwrap();
+        let picked = measured_atoms(&doc.assembly, &mut view, &built);
+        let places: Vec<_> = picked.iter().map(|&a| built.atoms[a].pos).collect();
+        assert_eq!(places, vec![[0.0; 3], [20.0, 0.0, 0.0]]);
     }
 
     #[test]

@@ -132,6 +132,7 @@ mod tests {
                 transform: Rigid::translation([1.0, 2.0, 3.0]),
             }],
             excluded: vec![3],
+            ..Default::default()
         };
         let text = to_string(&design);
         assert!(text.contains("\"version\": 2"));
@@ -145,6 +146,45 @@ mod tests {
         save(&path, &design).unwrap();
         assert_eq!(open(&path).unwrap(), design);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The ids that keep picks on their molecules ([`crate::assembly::model::Ids`]) are saved
+    /// once something has been removed, and a file without them — an older one — opens with
+    /// the molecules named by their places.
+    #[test]
+    fn ids_are_saved_and_older_files_open_without_them() {
+        use crate::assembly::model::Origin;
+        let atom = Atom3d {
+            element: "C".into(),
+            pos: [0.0; 3],
+        };
+        let component = Component {
+            name: "c".into(),
+            atoms: vec![atom],
+            bonds: Vec::new(),
+            orient: None,
+        };
+        let placed = |x| Instance {
+            component: 0,
+            transform: Rigid::translation([x, 0.0, 0.0]),
+        };
+        let old = r#"{"version": 2, "components": [{"name": "c", "atoms": [{"element": "C", "pos": [0, 0, 0]}], "bonds": []}], "manual": [{"component": 0, "transform": {"rot": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "trans": [5, 0, 0]}}]}"#;
+        let design = from_str(old).unwrap();
+        assert_eq!(design.manual.len(), 1);
+        assert_eq!(design.molecule_of(Origin::Manual(0)), Some(1));
+        // Nothing removed yet: nothing more is written than before.
+        assert!(!to_string(&design).contains("ids"));
+
+        let mut design = Design {
+            components: vec![component],
+            manual: vec![placed(1.0), placed(2.0), placed(3.0)],
+            ..Default::default()
+        };
+        let third = design.origin_of(3).unwrap();
+        assert!(design.remove_molecule(1));
+        let back = from_str(&to_string(&design)).unwrap();
+        assert_eq!(back, design);
+        assert_eq!(back.molecule_of(third), Some(2));
     }
 
     #[test]

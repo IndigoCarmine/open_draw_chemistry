@@ -1342,3 +1342,5 @@ copy_tip = "Copy the atoms and the value"
 # Shown in the panel's footer after the copy button.
 copied = "Measurement copied"
 clear = "Clear"
+# While measuring a crystal: its periodic images are not drawn (clicks on them could not be told from the atoms they repeat).
+images_hidden = "Periodic images are hidden while measuring"

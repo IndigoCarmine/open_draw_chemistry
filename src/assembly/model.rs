@@ -464,10 +464,61 @@ pub struct Instance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Origin {
     /// A copy the steps make, by its index among all their copies (the excluded ones counted,
-    /// as [`Design::excluded`] names them).
+    /// as [`Design::excluded`] names them). Detached into a hand-placed molecule, it is that
+    /// molecule.
     Step(usize),
-    /// A hand-placed molecule, by its index in [`Design::manual`].
-    Manual(usize),
+    /// A hand-placed molecule, by its id in [`Design::manual`] (see [`Ids`]).
+    Manual(u64),
+}
+
+/// Ids that stay with the items of a list (the monomers, the hand-placed molecules) while
+/// items before them are removed — unlike their indices, which shift.
+///
+/// Items are named by their index until one is removed: an item past the assigned ids has
+/// the id `next + (its index - assigned.len())`, so appending an item (which the app may do
+/// to the list directly) changes no item's id. Removing one, through [`Ids::remove`], first
+/// gives every item its id for good. A design never edited that way, an old file's included,
+/// needs none stored. An id is never handed out twice within a design's history: `next` only
+/// grows.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ids {
+    /// The ids of the first items, in order.
+    assigned: Vec<u64>,
+    /// The id of the first item past them.
+    next: u64,
+}
+
+impl Ids {
+    fn is_unused(&self) -> bool {
+        self.assigned.is_empty() && self.next == 0
+    }
+
+    /// The id of item `k`.
+    pub fn id(&self, k: usize) -> u64 {
+        match k.checked_sub(self.assigned.len()) {
+            None => self.assigned[k],
+            Some(past) => self.next + past as u64,
+        }
+    }
+
+    /// The item with id `id` in a list of `len` items, if it is still there.
+    pub fn index(&self, id: u64, len: usize) -> Option<usize> {
+        let k = match self.assigned.iter().position(|&a| a == id) {
+            Some(k) => k,
+            None => self.assigned.len() + usize::try_from(id.checked_sub(self.next)?).ok()?,
+        };
+        (k < len).then_some(k)
+    }
+
+    /// Note that item `k` of a list of `len` is removed.
+    fn remove(&mut self, len: usize, k: usize) {
+        while self.assigned.len() < len {
+            self.assigned.push(self.next);
+            self.next += 1;
+        }
+        self.assigned.remove(k);
+    }
 }
 
 /// Everything that determines the assembly: what is saved, and what undo restores.
@@ -485,6 +536,18 @@ pub struct Design {
     /// (counting the excluded ones), sorted. The index stays when the steps change, so it then
     /// names whichever copy has that place; indices past the steps' count are ignored.
     pub excluded: Vec<usize>,
+    /// The ids of [`Design::components`]. Remove a component with
+    /// [`Design::remove_component`] so they stay right.
+    #[serde(skip_serializing_if = "Ids::is_unused")]
+    pub component_ids: Ids,
+    /// The ids of [`Design::manual`]. Remove a hand-placed molecule with
+    /// [`Design::remove_molecule`] so they stay right.
+    #[serde(skip_serializing_if = "Ids::is_unused")]
+    pub manual_ids: Ids,
+    /// The hand-placed molecules detached from the steps ([`Design::detach`]): each one's id
+    /// and the step copy it was, by [`Design::excluded`]'s index.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub detached: Vec<(u64, usize)>,
 }
 
 impl Design {
@@ -697,48 +760,107 @@ impl Design {
     }
 
     /// Which copy molecule `m` of the build is, by a name that survives the design changing
-    /// around it (see [`Origin`]).
+    /// around it (see [`Origin`]). A molecule detached from the steps keeps the name of the
+    /// copy it was, so it is the same before and after [`Design::detach`] (and its undo).
     pub fn origin_of(&self, m: usize) -> Option<Origin> {
-        self.manual_index(m)
-            .map(Origin::Manual)
-            .or_else(|| self.step_copy_index(m).map(Origin::Step))
+        if let Some(k) = self.manual_index(m) {
+            let id = self.manual_ids.id(k);
+            return Some(match self.detached.iter().find(|&&(d, _)| d == id) {
+                Some(&(_, copy)) => Origin::Step(copy),
+                None => Origin::Manual(id),
+            });
+        }
+        self.step_copy_index(m).map(Origin::Step)
     }
 
     /// The molecule of the build that `origin` is, if the design still makes it.
     pub fn molecule_of(&self, origin: Origin) -> Option<usize> {
         match origin {
             Origin::Step(c) => {
+                if let Some(&(id, _)) = self.detached.iter().find(|&&(_, from)| from == c) {
+                    return self.molecule_of(Origin::Manual(id));
+                }
                 if c >= self.all_step_copies() || self.excluded.binary_search(&c).is_ok() {
                     return None;
                 }
                 Some(c - self.excluded.iter().take_while(|&&e| e < c).count())
             }
-            Origin::Manual(k) => (k < self.manual.len()).then(|| self.manual_molecule(k)),
+            Origin::Manual(id) => self
+                .manual_ids
+                .index(id, self.manual.len())
+                .map(|k| self.manual_molecule(k)),
         }
     }
 
+    /// The id of component `i` (see [`Ids`]).
+    pub fn component_id(&self, i: usize) -> u64 {
+        self.component_ids.id(i)
+    }
+
+    /// The component with id `id`, if the design still has it.
+    pub fn component_index(&self, id: u64) -> Option<usize> {
+        self.component_ids.index(id, self.components.len())
+    }
+
     /// Turn molecule `m`, made by the steps, into a hand-placed one where it is, so it can be
-    /// moved on its own: the steps leave it out and [`Design::manual`] gains it. Returns its
-    /// new molecule index, or `None` when `m` is not a step's molecule.
+    /// moved on its own: the steps leave it out and [`Design::manual`] gains it, remembering
+    /// which copy it was (so [`Origin::Step`] still finds it). Returns its new molecule index,
+    /// or `None` when `m` is not a step's molecule.
     pub fn detach(&mut self, m: usize) -> Option<usize> {
         let copy = self.step_copy_index(m)?;
         let instance = self.step_copies().swap_remove(copy);
         self.exclude(copy);
         self.manual.push(instance);
-        Some(self.manual_molecule(self.manual.len() - 1))
+        let k = self.manual.len() - 1;
+        self.detached.push((self.manual_ids.id(k), copy));
+        Some(self.manual_molecule(k))
     }
 
     /// Remove molecule `m`: a hand-placed one is deleted, a step's is left out of the steps.
     /// Returns whether there was such a molecule.
     pub fn remove_molecule(&mut self, m: usize) -> bool {
         if let Some(k) = self.manual_index(m) {
-            self.manual.remove(k);
+            self.remove_manual(k);
             true
         } else if let Some(copy) = self.step_copy_index(m) {
             self.exclude(copy);
             true
         } else {
             false
+        }
+    }
+
+    /// Delete hand-placed molecule `k`.
+    fn remove_manual(&mut self, k: usize) {
+        let id = self.manual_ids.id(k);
+        self.manual_ids.remove(self.manual.len(), k);
+        self.manual.remove(k);
+        self.detached.retain(|&(d, _)| d != id);
+    }
+
+    /// Remove component `i` and the hand-placed molecules of it. When it is the base, the
+    /// steps copy the one before it (or the next, for the first).
+    pub fn remove_component(&mut self, i: usize) {
+        if i >= self.components.len() {
+            return;
+        }
+        self.component_ids.remove(self.components.len(), i);
+        self.components.remove(i);
+        let mut k = 0;
+        while k < self.manual.len() {
+            if self.manual[k].component == i {
+                self.remove_manual(k);
+            } else {
+                k += 1;
+            }
+        }
+        for m in &mut self.manual {
+            if m.component > i {
+                m.component -= 1;
+            }
+        }
+        if self.base > i || self.base >= self.components.len() {
+            self.base = self.base.saturating_sub(1);
         }
     }
 
@@ -1036,6 +1158,7 @@ mod tests {
             steps: vec![Step::new_ring(), Step::new_stack()],
             manual: Vec::new(),
             excluded: Vec::new(),
+            ..Default::default()
         }
     }
 
