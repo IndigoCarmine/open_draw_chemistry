@@ -106,11 +106,20 @@ extended-description = "Draw chemical structures and reaction schemes; read and 
 section = "science"
 priority = "optional"
 # eframe dlopens its GL/X11/Wayland libraries rather than linking them, so `$auto`
-# only ever detects libc. Without listing them the package installs cleanly and
-# then fails to start on a minimal system.
+# does not detect them. Without listing them the package installs cleanly and
+# then fails to start on a minimal system. (`$auto` does find what the binary and the
+# bundled OpenBabel link: libc, libstdc++, zlib, libxml2.)
 depends = "$auto, libxkbcommon0, libwayland-client0, libegl1, libgl1, libx11-6, libxcursor1, libxi6, libxrandr2"
+# The app and its private OpenBabel come from the tree scripts/stage-linux.sh lays out in
+# target/deb-root (the binary's rpath, $ORIGIN/../lib/open-draw-chemistry, reaches the
+# libraries in /usr/lib/open-draw-chemistry). The release workflow
+# also creates target/deb-root/DEBIAN, which tells dpkg-shlibdeps (behind `$auto`) that the
+# bundled libraries belong to this package rather than lacking a package of their own.
 assets = [
-    ["target/release/open_draw_chemistry", "usr/bin/", "755"],
+    ["target/deb-root/usr/bin/open_draw_chemistry", "usr/bin/", "755"],
+    ["target/deb-root/usr/lib/open-draw-chemistry/*.so.*", "usr/lib/open-draw-chemistry/", "644"],
+    ["target/deb-root/usr/lib/open-draw-chemistry/openbabel/*.so", "usr/lib/open-draw-chemistry/openbabel/", "644"],
+    ["target/deb-root/usr/share/open-draw-chemistry/openbabel/*", "usr/share/open-draw-chemistry/openbabel/", "644"],
     ["installer/linux/open-draw-chemistry.desktop", "usr/share/applications/", "644"],
     ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/open-draw-chemistry.png", "644"],
 ]

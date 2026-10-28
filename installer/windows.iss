@@ -5,8 +5,10 @@
 ; Override the version at build time (this is what CI does):
 ;   iscc /DMyAppVersion=1.2.3 installer\windows.iss
 ;
-; Expects the release binary at target\release\open_draw_chemistry.exe,
-; so run `cargo build --release` first. Output lands in dist\.
+; Installs the folder scripts/stage-windows.sh lays out (target\stage\windows: the
+; executable, OpenBabel's DLLs, plugins and data, and the app-local Visual C++ runtime), so run
+; `cargo build --release`, `bash scripts/fetch-openbabel.sh` and `bash scripts/stage-windows.sh`
+; first. Override the folder with /DStageDir=... Output lands in dist\.
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
@@ -16,6 +18,10 @@
 #define MyAppPublisher "IndigoCarmine"
 #define MyAppURL "https://github.com/IndigoCarmine/open_draw_chemistry"
 #define MyAppExeName "open_draw_chemistry.exe"
+
+#ifndef StageDir
+  #define StageDir "..\target\stage\windows"
+#endif
 
 ; "x64compatible" (native x64 + ARM64 running x64 code) is preferred, but it only
 ; exists on Inno Setup 6.3+; older compilers error on it, so fall back to "x64".
@@ -60,15 +66,15 @@ Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; The staged app (scripts/stage-windows.sh), the same files as the portable zip: the executable;
+; OpenBabel (3D generation, SMILES, 3D files) -- its DLLs and .obf plugins beside the executable,
+; since OpenBabel finds the plugins beside openbabel-3.dll, and its data at {app}\data, which is
+; where openbabel_rs looks in an installed application; and msvcp140, vcruntime140 and
+; vcruntime140_1.dll, the Visual C++ runtime deployed app-local, so that neither a clean machine
+; nor a per-user (non-admin) install needs vc_redist.x64.exe.
+Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\resources\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
-; OpenBabel, for 3D generation (scripts/fetch-openbabel.sh unpacks it): the DLLs and .obf
-; plugins beside the executable, the data at {app}\data, which is where openbabel_rs looks in an
-; installed application. Skipped when the app was built without the `openbabel` feature.
-Source: "..\third_party\openbabel-prebuilt\bin\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "..\third_party\openbabel-prebuilt\bin\*.obf"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "..\third_party\openbabel-prebuilt\bin\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"

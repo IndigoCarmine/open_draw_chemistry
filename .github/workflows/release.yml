@@ -45,25 +45,37 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      # The executable needs OpenBabel beside it (its DLLs, its .obf plugins and its data
+      # directory) and the Visual C++ runtime (msvcp140 & co., deployed app-local), so the
+      # portable build is a zip of this folder rather than a lone .exe; the installer installs
+      # the same folder. See scripts/stage-windows.sh.
+      - name: Stage the app
+        shell: bash
+        run: bash scripts/stage-windows.sh target/stage/windows
+
+      # The staged app must find its own OpenBabel, not the build tree's: hide the latter and
+      # ask the app to read a file, generate 3D models, write a SMILES and export.
+      - name: Check the staged app's OpenBabel
+        shell: bash
+        run: |
+          mv third_party/openbabel-prebuilt third_party/openbabel-prebuilt.hidden
+          PATH=/c/Windows/System32:/c/Windows target/stage/windows/${BIN_NAME}.exe --check-openbabel
+          mv third_party/openbabel-prebuilt.hidden third_party/openbabel-prebuilt
+
       - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
           # Inno Setup 6 is preinstalled on the windows-latest runner image.
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc "/DMyAppVersion=${{ steps.version.outputs.value }}" installer\windows.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # The executable needs OpenBabel beside it (its DLLs, its .obf plugins and its data
-      # directory), so the portable build is a zip rather than a lone .exe.
       - name: Stage artifacts
         shell: bash
         run: |
           mkdir -p out
           portable="${APP_NAME}-${{ steps.version.outputs.value }}-windows-x64"
-          ob=third_party/openbabel-prebuilt/bin
-          mkdir -p "$portable"
-          cp "target/release/${BIN_NAME}.exe" "$portable/"
-          cp "$ob"/*.dll "$ob"/*.obf "$portable/"
-          cp -r "$ob/data" "$portable/data"
+          cp -r target/stage/windows "$portable"
           7z a "out/$portable.zip" "$portable"
           cp dist/*.exe out/
 
@@ -102,13 +114,21 @@ jobs:
           cargo install cargo-bundle --locked
           brew install create-dmg
 
-      # Without OpenBabel (no 3D generation): openbabel_rs has no x86_64-apple-darwin prebuilt
-      # for the universal binary's Intel slice, and the .app does not yet bundle the OpenBabel
-      # dylib, plugins and data the aarch64 slice would load.
+      # Each architecture links the OpenBabel prebuilt made for it, so each build gets its own
+      # (OPENBABEL_SYS_PREBUILT_DIR overrides the host default in .cargo/config.toml).
+      - name: Fetch prebuilt OpenBabel (both architectures)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/fetch-openbabel.sh x86_64-apple-darwin "$RUNNER_TEMP/openbabel-x86_64"
+          bash scripts/fetch-openbabel.sh aarch64-apple-darwin "$RUNNER_TEMP/openbabel-aarch64"
+
       - name: Build (both architectures)
         run: |
-          cargo build --release --no-default-features --target x86_64-apple-darwin
-          cargo build --release --no-default-features --target aarch64-apple-darwin
+          OPENBABEL_SYS_PREBUILT_DIR="$RUNNER_TEMP/openbabel-x86_64" \
+            cargo build --release --target x86_64-apple-darwin
+          OPENBABEL_SYS_PREBUILT_DIR="$RUNNER_TEMP/openbabel-aarch64" \
+            cargo build --release --target aarch64-apple-darwin
 
       - name: Bundle .app
         env:
@@ -116,25 +136,41 @@ jobs:
         run: |
           # cargo-bundle reads [package.metadata.bundle] from Cargo.toml and
           # generates Info.plist and the Resources/ layout for us. It only ever
-          # bundles one architecture, so we swap in a universal binary after.
-          cargo bundle --release --no-default-features --target aarch64-apple-darwin
+          # bundles one architecture (the same environment as its build above, so
+          # nothing is rebuilt); scripts/bundle-macos.sh then swaps in the universal
+          # binary and adds OpenBabel.
+          OPENBABEL_SYS_PREBUILT_DIR="$RUNNER_TEMP/openbabel-aarch64" \
+            cargo bundle --release --target aarch64-apple-darwin
 
           APP="target/aarch64-apple-darwin/release/bundle/osx/Open DrawChemistry.app"
-          lipo -create -output "${APP}/Contents/MacOS/${BIN_NAME}" \
-            "target/x86_64-apple-darwin/release/${BIN_NAME}" \
-            "target/aarch64-apple-darwin/release/${BIN_NAME}"
-          lipo -info "${APP}/Contents/MacOS/${BIN_NAME}"
 
           # cargo-bundle takes the version from Cargo.toml; the tag is the real
           # source of truth, so overwrite both version keys with it.
           plutil -replace CFBundleVersion -string "${VERSION}" "${APP}/Contents/Info.plist"
           plutil -replace CFBundleShortVersionString -string "${VERSION}" "${APP}/Contents/Info.plist"
 
-          # Sign AFTER replacing the binary -- doing it earlier would be undone by
-          # the lipo swap. Ad-hoc signing is the minimum Apple Silicon needs to
-          # launch the app at all; it is not notarisation.
-          codesign --force --deep --sign - "${APP}"
-          codesign --verify --verbose "${APP}"
+          # The universal executable, OpenBabel's universal dylibs and plugins in
+          # Contents/Frameworks, its data in Contents/Resources, the rpath, and the
+          # ad-hoc signatures (the minimum Apple Silicon needs to launch the app at
+          # all; it is not notarisation) -- signed last, after every modification.
+          bash scripts/bundle-macos.sh "${APP}" \
+            "target/x86_64-apple-darwin/release/${BIN_NAME}" \
+            "target/aarch64-apple-darwin/release/${BIN_NAME}" \
+            "$RUNNER_TEMP/openbabel-x86_64" "$RUNNER_TEMP/openbabel-aarch64"
+
+      # The bundled app must find its own OpenBabel, not the build machine's: hide the latter
+      # and ask each slice to read a file, generate 3D models, write a SMILES and export.
+      - name: Check the bundle's OpenBabel
+        run: |
+          APP="target/aarch64-apple-darwin/release/bundle/osx/Open DrawChemistry.app"
+          mv "$RUNNER_TEMP/openbabel-x86_64" "$RUNNER_TEMP/openbabel-x86_64.hidden"
+          mv "$RUNNER_TEMP/openbabel-aarch64" "$RUNNER_TEMP/openbabel-aarch64.hidden"
+          arch -arm64 "${APP}/Contents/MacOS/${BIN_NAME}" --check-openbabel
+          if arch -x86_64 /usr/bin/true 2> /dev/null; then
+            arch -x86_64 "${APP}/Contents/MacOS/${BIN_NAME}" --check-openbabel
+          else
+            echo "::warning::Rosetta is not available; the x86_64 slice was not run"
+          fi
 
       - name: Build .dmg
         env:
@@ -153,10 +189,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          APP="target/aarch64-apple-darwin/release/bundle/osx/Open DrawChemistry.app"
           mkdir -p out
           mv "${APP_NAME}-${VERSION}-macos-universal.dmg" out/
-          cp "${APP}/Contents/MacOS/${BIN_NAME}" "out/${APP_NAME}-${VERSION}-macos-universal"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -196,35 +230,62 @@ jobs:
             libgtk-3-dev \
             libssl-dev \
             desktop-file-utils \
-            file
+            file \
+            patchelf
 
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deb
 
-      # Without OpenBabel (no 3D generation) until the .deb and AppImage bundle libopenbabel,
-      # its plugins and its data: the linked library is found through an rpath into the build
-      # tree, which an installed package does not have.
+      # 3D generation links OpenBabel from the prebuilt attached to the openbabel_rs release.
+      - name: Fetch prebuilt OpenBabel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/fetch-openbabel.sh
+
       - name: Build
-        run: cargo build --release --no-default-features
+        run: cargo build --release
+
+      # The .deb and the AppImage carry the app with its own OpenBabel (libopenbabel, libinchi,
+      # the plugins and the data) under usr/lib/open-draw-chemistry and
+      # usr/share/open-draw-chemistry, the binary's rpath pointing there relative to itself.
+      # See scripts/stage-linux.sh. The DEBIAN directory marks target/deb-root as the
+      # package's tree for dpkg-shlibdeps (see [package.metadata.deb] in Cargo.toml).
+      - name: Stage the app
+        run: |
+          bash scripts/stage-linux.sh target/deb-root
+          mkdir -p target/deb-root/DEBIAN
+          bash scripts/stage-linux.sh AppDir
+
+      # The staged app must find its own OpenBabel, not the build tree's: hide the latter and
+      # ask the app to read a file, generate 3D models, write a SMILES and export (it exits
+      # before opening a window).
+      - name: Check the staged app's OpenBabel
+        run: |
+          mv third_party/openbabel-prebuilt third_party/openbabel-prebuilt.hidden
+          target/deb-root/usr/bin/${BIN_NAME} --check-openbabel
+          AppDir/usr/bin/${BIN_NAME} --check-openbabel
+          mv third_party/openbabel-prebuilt.hidden third_party/openbabel-prebuilt
 
       - name: Build .deb
         env:
           VERSION: ${{ steps.version.outputs.value }}
         # --deb-version keeps the package version in step with the git tag
         # without having to rewrite Cargo.toml.
-        run: cargo deb --no-build --deb-version "${VERSION}"
+        run: |
+          cargo deb --no-build --deb-version "${VERSION}"
+          dpkg-deb --info target/debian/*.deb
+          dpkg-deb --contents target/debian/*.deb | grep -e open_draw_chemistry -e openbabel | head -n 20
 
       - name: Build AppImage
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
+          # AppDir/usr already holds the app and its OpenBabel (staged above).
           APPDIR=AppDir
-          mkdir -p "${APPDIR}/usr/bin" \
-                   "${APPDIR}/usr/share/applications" \
+          mkdir -p "${APPDIR}/usr/share/applications" \
                    "${APPDIR}/usr/share/icons/hicolor/512x512/apps"
 
-          cp "target/release/${BIN_NAME}" "${APPDIR}/usr/bin/"
           cp installer/linux/AppRun "${APPDIR}/AppRun"
           chmod +x "${APPDIR}/AppRun"
 
@@ -252,7 +313,6 @@ jobs:
           mkdir -p out
           mv ./*.AppImage out/
           cp target/debian/*.deb out/
-          cp "target/release/${BIN_NAME}" "out/${APP_NAME}-${VERSION}-linux-x86_64"
 
       - uses: actions/upload-artifact@v4
         with:
