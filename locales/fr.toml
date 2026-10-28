@@ -728,6 +728,7 @@ step_ring = "Anneau"
 step_stack = "Empilement / hélice"
 step_array = "Réseau"
 step_lattice = "Cristal"
+step_transform = "Déplacer / Tourner"
 
 [assembly.model.ring]
 count = "Nombre"
@@ -758,6 +759,16 @@ offset = "Espacement"
 offset_tip = "Déplace la i-ème de i × espacement"
 rotation = "Rotation"
 rotation_tip = "Tourne la i-ème de i × angle autour de l'origine avant de la déplacer (autour de x, puis y, puis z)"
+
+[assembly.model.transform]
+offset = "Déplacement"
+offset_tip = "Déplace tout ce qui est construit jusqu’ici de cette quantité, après la rotation"
+rotation = "Rotation"
+rotation_tip = "Tourne tout ce qui est construit jusqu’ici autour du pivot (autour de x, puis y, puis z) avant de le déplacer"
+pivot = "Pivot"
+pivot_tip = "Le point autour duquel tourne la rotation"
+pivot_centroid = "Centroïde"
+pivot_origin = "Origine"
 
 [assembly.model.lattice]
 space_group = "Groupe d'espace"
@@ -850,6 +861,9 @@ enabled_tip = "Utilisée (cliquer pour l'ignorer)"
 disabled_tip = "Ignorée (cliquer pour l'utiliser)"
 
 [assembly.pipeline.summary]
+rotated_centroid = "tourné autour du centroïde"
+rotated_origin = "tourné autour de l’origine"
+unmoved = "aucun déplacement"
 copies = { one = "{n} copie", many = "{n} de copies", other = "{n} copies" }
 rotated = "tournées"
 slip = "décalage {value}Å"
@@ -868,6 +882,7 @@ array_tip = "Aligne tout ce qui précède avec un espacement et une rotation fix
 ring_tip = "Dispose les molécules sur un cercle autour de l'axe z (une rosette)"
 stack_tip = "Empile tout ce qui précède selon z. La torsion et le décalage en font une hélice"
 lattice_tip = "Prend tout ce qui précède comme unité asymétrique, construit la maille élémentaire à partir des paramètres de maille et des opérations de symétrie du groupe d'espace, puis la répète"
+transform_tip = "Déplace et tourne une fois tout ce qui est construit jusqu’ici, sans le copier"
 lattice_exists = "Il y a déjà une étape Cristal"
 
 [assembly.symop.system]

@@ -728,6 +728,7 @@ step_ring = "Ring"
 step_stack = "Stapel / Helix"
 step_array = "Reihe"
 step_lattice = "Kristall"
+step_transform = "Verschieben / Drehen"
 
 [assembly.model.ring]
 count = "Anzahl"
@@ -758,6 +759,16 @@ offset = "Abstand"
 offset_tip = "Verschiebt das i-te um i × Abstand"
 rotation = "Drehung"
 rotation_tip = "Dreht das i-te vor dem Verschieben um i × Winkel um den Ursprung (um x, dann y, dann z)"
+
+[assembly.model.transform]
+offset = "Verschiebung"
+offset_tip = "Verschiebt alles bisher Gebaute nach dem Drehen um diesen Betrag"
+rotation = "Drehung"
+rotation_tip = "Dreht alles bisher Gebaute um den Drehpunkt (um x, dann y, dann z), bevor es verschoben wird"
+pivot = "Drehpunkt"
+pivot_tip = "Der Punkt, um den gedreht wird"
+pivot_centroid = "Schwerpunkt"
+pivot_origin = "Ursprung"
 
 [assembly.model.lattice]
 space_group = "Raumgruppe"
@@ -850,6 +861,9 @@ enabled_tip = "Aktiv (klicken zum Überspringen)"
 disabled_tip = "Übersprungen (klicken zum Aktivieren)"
 
 [assembly.pipeline.summary]
+rotated_centroid = "um Schwerpunkt gedreht"
+rotated_origin = "um Ursprung gedreht"
+unmoved = "keine Bewegung"
 copies = { one = "{n} Kopie", other = "{n} Kopien" }
 rotated = "gedreht"
 slip = "Versatz {value}Å"
@@ -868,6 +882,7 @@ array_tip = "Reiht alles Bisherige mit festem Abstand und fester Drehung auf"
 ring_tip = "Ordnet die Moleküle auf einem Kreis um die z-Achse an (Rosette)"
 stack_tip = "Stapelt alles Bisherige entlang z. Drehung und Versatz ergeben eine Helix"
 lattice_tip = "Nimmt alles Bisherige als asymmetrische Einheit, baut die Elementarzelle aus den Gitterkonstanten und den Symmetrieoperationen der Raumgruppe und wiederholt sie"
+transform_tip = "Verschiebt und dreht alles bisher Gebaute einmal, ohne es zu kopieren"
 lattice_exists = "Es gibt bereits einen Kristallschritt"
 
 [assembly.symop.system]

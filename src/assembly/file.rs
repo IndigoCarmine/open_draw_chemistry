@@ -15,8 +15,8 @@ pub const EXTENSION: &str = "odasm";
 ///
 /// 2 added the crystal step (`Lattice`, with its operations as `x,y,z` text). Version 1 files
 /// read unchanged; an older app opening a version 2 file says it is newer instead of calling
-/// it damaged.
-pub const VERSION: u32 = 2;
+/// it damaged. 3 added the move/rotate step (`Transform`) the same way.
+pub const VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 struct FileContents {
@@ -135,7 +135,7 @@ mod tests {
             ..Default::default()
         };
         let text = to_string(&design);
-        assert!(text.contains("\"version\": 2"));
+        assert!(text.contains("\"version\": 3"));
         let back = from_str(&text).unwrap();
         assert_eq!(back, design);
         assert_eq!(build(&back, 1).unwrap(), build(&design, 1).unwrap());
@@ -198,6 +198,50 @@ mod tests {
         // Missing optional parts default.
         let empty = from_str(r#"{"version": 1}"#).unwrap();
         assert_eq!(empty, Design::default());
+    }
+
+    /// A move/rotate step is saved with its pivot and opens to the same build; a version 2
+    /// file (written before the step existed) still opens.
+    #[test]
+    fn a_transform_step_is_saved_and_older_files_still_open() {
+        use crate::assembly::model::{Pivot, Transform};
+        let design = Design {
+            components: vec![Component {
+                name: "co".into(),
+                atoms: vec![
+                    Atom3d {
+                        element: "C".into(),
+                        pos: [0.0; 3],
+                    },
+                    Atom3d {
+                        element: "O".into(),
+                        pos: [1.13, 0.0, 0.0],
+                    },
+                ],
+                bonds: Vec::new(),
+                orient: None,
+            }],
+            steps: vec![
+                Step::new_ring(),
+                Step::Transform(Transform {
+                    enabled: true,
+                    offset: [1.5, -2.0, 0.25],
+                    euler_deg: [10.0, 20.0, 30.0],
+                    pivot: Pivot::Origin,
+                }),
+                Step::new_transform(),
+            ],
+            ..Default::default()
+        };
+        let text = to_string(&design);
+        let back = from_str(&text).unwrap();
+        assert_eq!(back, design);
+        assert_eq!(build(&back, 1).unwrap(), build(&design, 1).unwrap());
+
+        let old = r#"{"version": 2, "components": [{"name": "c", "atoms": [{"element": "C", "pos": [0, 0, 0]}], "bonds": []}], "steps": [{"Array": {"enabled": true, "n": 3, "offset": [0, 0, 3.5], "euler_deg": [0, 0, 0]}}]}"#;
+        let design = from_str(old).unwrap();
+        assert_eq!(design.steps.len(), 1);
+        assert_eq!(design.molecule_count(), 3);
     }
 
     #[test]

@@ -731,6 +731,7 @@ step_ring = "Anillo"
 step_stack = "Apilamiento / hélice"
 step_array = "Matriz"
 step_lattice = "Cristal"
+step_transform = "Mover / Rotar"
 
 [assembly.model.ring]
 count = "Número"
@@ -761,6 +762,16 @@ offset = "Espaciado"
 offset_tip = "Mueve la i-ésima i × espaciado"
 rotation = "Rotación"
 rotation_tip = "Gira la i-ésima i × ángulo alrededor del origen antes de moverla (alrededor de x, luego y, luego z)"
+
+[assembly.model.transform]
+offset = "Desplazamiento"
+offset_tip = "Mueve todo lo construido hasta ahora esta cantidad, después de girarlo"
+rotation = "Rotación"
+rotation_tip = "Gira todo lo construido hasta ahora alrededor del pivote (sobre x, luego y, luego z) antes de moverlo"
+pivot = "Pivote"
+pivot_tip = "El punto alrededor del cual gira la rotación"
+pivot_centroid = "Centroide"
+pivot_origin = "Origen"
 
 [assembly.model.lattice]
 space_group = "Grupo espacial"
@@ -853,6 +864,9 @@ enabled_tip = "En uso (clic para omitir)"
 disabled_tip = "Omitido (clic para usar)"
 
 [assembly.pipeline.summary]
+rotated_centroid = "girado sobre el centroide"
+rotated_origin = "girado sobre el origen"
+unmoved = "sin mover"
 copies = { one = "{n} copia", other = "{n} copias" }
 rotated = "girado"
 slip = "despl. {value}Å"
@@ -871,6 +885,7 @@ array_tip = "Alinea todo lo anterior con un espaciado y una rotación fijos"
 ring_tip = "Dispone las moléculas en una circunferencia alrededor del eje z (una roseta)"
 stack_tip = "Apila todo lo anterior a lo largo de z. El giro y el desplazamiento lo convierten en una hélice"
 lattice_tip = "Toma todo lo anterior como unidad asimétrica, construye la celda unidad a partir de las constantes de celda y las operaciones de simetría del grupo espacial, y la repite"
+transform_tip = "Mueve y gira una vez todo lo construido hasta ahora, sin copiarlo"
 lattice_exists = "Ya hay un paso de cristal"
 
 [assembly.symop.system]

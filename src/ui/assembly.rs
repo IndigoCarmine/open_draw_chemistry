@@ -25,7 +25,7 @@ use super::viewport3d::{
     CellImages, Frame3d, Hit, Scene, Style3d, Viewport3d, element_color, exclusive_groups,
 };
 use crate::assembly::measure::{self, AtomRef, MeasurePick};
-use crate::assembly::model::{Array, Lattice, Ring, Stack, helix_radius};
+use crate::assembly::model::{Array, Lattice, Pivot, Ring, Stack, Transform, helix_radius};
 use crate::assembly::symop::{self, SymOp};
 use crate::assembly::{AssemblyExport, AssemblyState, Built, Component, Step};
 use crate::document::Document;
@@ -1683,6 +1683,47 @@ fn step_params(ui: &mut egui::Ui, step: &mut Step, ink: &Ink) -> bool {
                 t!("assembly.model.array.rotation_tip"),
             );
         }
+        Step::Transform(Transform {
+            offset,
+            euler_deg,
+            pivot,
+            ..
+        }) => {
+            changed |= vector(
+                ui,
+                t!("assembly.model.transform.offset"),
+                offset,
+                0.05,
+                " Å",
+                t!("assembly.model.transform.offset_tip"),
+            );
+            changed |= vector(
+                ui,
+                t!("assembly.model.transform.rotation"),
+                euler_deg,
+                0.5,
+                "°",
+                t!("assembly.model.transform.rotation_tip"),
+            );
+            changed |= field_row(
+                ui,
+                t!("assembly.model.transform.pivot"),
+                t!("assembly.model.transform.pivot_tip"),
+                |ui| {
+                    let mut changed = false;
+                    for (value, name) in [
+                        (
+                            Pivot::Centroid,
+                            t!("assembly.model.transform.pivot_centroid"),
+                        ),
+                        (Pivot::Origin, t!("assembly.model.transform.pivot_origin")),
+                    ] {
+                        changed |= ui.selectable_value(pivot, value, name).changed();
+                    }
+                    changed
+                },
+            );
+        }
         Step::Lattice(_) => unreachable!("edited by lattice_params"),
     }
     changed
@@ -2351,6 +2392,18 @@ mod tests {
         let mut off = steps[1].clone();
         *off.enabled_mut() = false;
         assert_eq!(pipeline::count_text(&off, 7, 7), "飛ばす → 7 分子");
+
+        // A move copies nothing: no factor, and the count stays.
+        let mut transform = Step::new_transform();
+        assert_eq!(pipeline::summary(&transform), "移動なし");
+        assert_eq!(pipeline::count_text(&transform, 7, 7), "→ 7 分子");
+        if let Step::Transform(t) = &mut transform {
+            t.offset = [0.0, 0.0, 2.5];
+            t.euler_deg = [0.0, 90.0, 0.0];
+        }
+        assert_eq!(pipeline::summary(&transform), "z 2.50Å · 重心まわりに回転");
+        let doc = doc_with(vec![array(7, 3.2), transform, Step::new_ring()]);
+        assert_eq!(doc.assembly.design.running_counts(), vec![7, 7, 42]);
         assert_eq!(formula(&water()), "H2O");
     }
 
@@ -2425,6 +2478,7 @@ mod tests {
             Step::new_ring(),
             Step::new_stack(),
             Step::new_lattice(),
+            Step::new_transform(),
         ]);
         doc.assembly.edit(|d| d.components.push(water()));
         let mut view = AssemblyView::default();
@@ -2435,6 +2489,7 @@ mod tests {
             (PanelTab::Build, Some(1)),
             (PanelTab::Build, Some(2)),
             (PanelTab::Build, Some(3)),
+            (PanelTab::Build, Some(4)),
             (PanelTab::Display, None),
         ] {
             view.tab = tab;

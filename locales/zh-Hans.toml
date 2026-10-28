@@ -747,6 +747,7 @@ step_ring = "环状"
 step_stack = "堆叠 / 螺旋"
 step_array = "阵列"
 step_lattice = "晶体"
+step_transform = "移动・旋转"
 
 # Parameter labels are in a narrow column (keep short).
 [assembly.model.ring]
@@ -778,6 +779,16 @@ offset = "间距"
 offset_tip = "将第 i 个移动 i × 间距"
 rotation = "旋转"
 rotation_tip = "移动前将第 i 个绕原点旋转 i × 角度（依次绕 x、y、z）"
+
+[assembly.model.transform]
+offset = "移动"
+offset_tip = "旋转后将此前构建的整体移动这么多"
+rotation = "旋转"
+rotation_tip = "将此前构建的整体绕中心旋转（依次绕 x、y、z 轴），然后再移动"
+pivot = "中心"
+pivot_tip = "旋转所绕的点"
+pivot_centroid = "重心"
+pivot_origin = "原点"
 
 [assembly.model.lattice]
 space_group = "空间群"
@@ -871,6 +882,9 @@ disabled_tip = "已跳过（点击使用）"
 
 # Very short texts in a step card's one-line summary.
 [assembly.pipeline.summary]
+rotated_centroid = "绕重心旋转"
+rotated_origin = "绕原点旋转"
+unmoved = "未移动"
 copies = "{n} 份"
 rotated = "旋转"
 slip = "错位 {value}Å"
@@ -889,6 +903,7 @@ array_tip = "将目前为止的全部内容按固定间距和旋转排列"
 ring_tip = "将分子沿绕 z 轴的圆排列（玫瑰花结）"
 stack_tip = "将目前为止的全部内容沿 z 方向堆叠。加上扭转和错位即成螺旋"
 lattice_tip = "将目前为止的全部内容作为不对称单元，根据晶胞参数和空间群的对称操作构建晶胞并重复"
+transform_tip = "将此前构建的整体移动并旋转一次，不复制"
 lattice_exists = "已有晶体步骤"
 
 [assembly.symop.system]

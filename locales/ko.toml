@@ -750,6 +750,7 @@ step_ring = "고리"
 step_stack = "적층 / 나선"
 step_array = "배열"
 step_lattice = "결정"
+step_transform = "이동・회전"
 
 # Parameter labels are in a narrow column (keep short).
 [assembly.model.ring]
@@ -781,6 +782,16 @@ offset = "간격"
 offset_tip = "i번째를 i × 간격만큼 이동합니다"
 rotation = "회전"
 rotation_tip = "이동하기 전에 i번째를 원점을 중심으로 i × 각도만큼 회전합니다(x, y, z 순)"
+
+[assembly.model.transform]
+offset = "이동"
+offset_tip = "회전한 뒤 지금까지 만든 전체를 이만큼 옮깁니다"
+rotation = "회전"
+rotation_tip = "지금까지 만든 전체를 중심을 기준으로 회전합니다(x → y → z 축 순). 이동은 그 다음"
+pivot = "중심"
+pivot_tip = "회전의 중심점"
+pivot_centroid = "무게중심"
+pivot_origin = "원점"
 
 [assembly.model.lattice]
 space_group = "공간군"
@@ -874,6 +885,9 @@ disabled_tip = "건너뜀(클릭하면 사용)"
 
 # Very short texts in a step card's one-line summary.
 [assembly.pipeline.summary]
+rotated_centroid = "무게중심 기준 회전"
+rotated_origin = "원점 기준 회전"
+unmoved = "이동 없음"
 copies = "{n}개"
 rotated = "회전"
 slip = "어긋남 {value}Å"
@@ -892,6 +906,7 @@ array_tip = "지금까지의 전체를 일정한 간격과 회전으로 늘어�
 ring_tip = "분자를 z 축 둘레의 원 위에 배치합니다(로제트)"
 stack_tip = "지금까지의 전체를 z 방향으로 쌓습니다. 비틀림과 어긋남을 주면 나선이 됩니다"
 lattice_tip = "지금까지의 전체를 비대칭 단위로 삼아 격자 상수와 공간군의 대칭 연산으로 단위 세포를 만들고 반복합니다"
+transform_tip = "지금까지 만든 전체를 복제하지 않고 한 번 옮기고 회전합니다"
 lattice_exists = "결정 단계가 이미 있습니다"
 
 [assembly.symop.system]
