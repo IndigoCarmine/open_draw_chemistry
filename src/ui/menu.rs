@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use egui::vec2;
 
+use super::appearance::{self, Appearance};
 use super::icons::{self, Frame, Icon};
 use super::{Command, ViewMode};
 use crate::i18n::Lang;
@@ -30,6 +31,8 @@ pub struct MenuState<'a> {
     pub can_create_assembly: bool,
     /// The UI language, ticked in the language menu.
     pub language: Lang,
+    /// What the 書式 menu acts on; `None` without a document.
+    pub selection: Option<appearance::Selection>,
 }
 
 /// The languages to choose from, each by its own name, the current one ticked: the 表示 menu's
@@ -65,7 +68,12 @@ pub fn language_button(ui: &mut egui::Ui, current: Lang, out: &mut Vec<Command>)
         .show(|ui| language_list(ui, current, out));
 }
 
-pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>) {
+pub fn menu_bar(
+    ui: &mut egui::Ui,
+    state: &MenuState<'_>,
+    appearance: &mut Appearance,
+    out: &mut Vec<Command>,
+) {
     egui::MenuBar::new().ui(ui, |ui| {
         icons::brand(ui);
         ui.add_space(10.0);
@@ -242,6 +250,10 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
                     }
                 });
             });
+        });
+
+        ui.menu_button(t!("menu.format.title"), |ui| {
+            appearance::items(ui, appearance, state.selection, out);
         });
 
         ui.menu_button(t!("menu.reaction.title"), |ui| {

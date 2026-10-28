@@ -10,6 +10,7 @@ use crate::assembly::AssemblyExport;
 use crate::io::Export;
 use crate::three_d::{Export3d, ForceField};
 
+pub mod appearance;
 pub mod assembly;
 pub mod fragments;
 pub mod icons;
@@ -147,6 +148,17 @@ pub enum Command {
     BracketShape(chembuider_rs::molecule::BracketShape),
     /// Open the パラメータスキャン window.
     OpenScan,
+    /// 環を塗りつぶす: fill the rings of the selection with this colour (straight RGBA).
+    FillRing([u8; 4]),
+    /// 塗りつぶしを解除: remove the ring fills of the selection.
+    ClearRingFill,
+    /// Give the selected bonds this line colour (`None`: the style's).
+    LineColor(Option<[u8; 4]>),
+    /// Give the selected atom labels and texts this colour (`None`: the style's).
+    TextColor(Option<[u8; 4]>),
+    /// Give the structures the selection touches (or every structure) this drop shadow, or
+    /// none.
+    Shadow(Option<chembuider_rs::molecule::Shadow>),
 }
 
 #[cfg(test)]

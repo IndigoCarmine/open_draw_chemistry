@@ -184,6 +184,9 @@ bracket_sru = "Enclose in brackets (repeating unit)"
 # Submenu: bracket type and shape.
 bracket_kind = "Bracket type and shape"
 
+[menu.format]
+title = "Format"
+
 [menu.reaction]
 title = "Reaction"
 add_arrow = "Add reaction arrow"
@@ -1424,3 +1427,47 @@ copied = "Measurement copied"
 clear = "Clear"
 # While measuring a crystal: its periodic images are not drawn (clicks on them could not be told from the atoms they repeat).
 images_hidden = "Periodic images are hidden while measuring"
+
+# The Format menu (also in the canvas menu): ring fills, line and text colors, shadows.
+[format]
+# Submenu: pick a color and fill the selected rings (ChemDraw's ring shading).
+fill_ring = "Fill ring"
+fill_ring_hint = "Fills the rings of the selected atoms or bonds"
+# Shown in place of the ring items while no atom or bond is selected.
+ring_needs_selection = "Select the atoms or bonds of a ring to fill or clear it"
+fill = "Fill"
+clear_fill = "Clear ring fill"
+line_color = "Line color"
+line_color_hint = "For the selected bonds"
+text_color = "Text color"
+text_color_hint = "For the selected atom labels and texts"
+apply_color = "Apply color"
+default_color = "Default color"
+shadow = "Shadow"
+# What a shadow applies to, shown at the top of the shadow submenu.
+shadow_scope_all = "For every structure (nothing is selected)"
+shadow_scope_selection = "For the structures in the selection"
+# Only texts or other page objects are selected: they cast no shadow.
+shadow_scope_none = "Select atoms or bonds of a structure, or nothing for every structure"
+# Checkbox: whether the structures cast a drop shadow.
+shadow_on = "Cast a shadow"
+shadow_opacity = "Opacity"
+shadow_offset_x = "Offset X"
+shadow_offset_y = "Offset Y"
+shadow_blur = "Blur"
+# Tooltip of the offset and blur fields.
+shadow_length_tip = "In drawing units: a bond is 1.5"
+shadow_apply = "Apply shadow"
+
+[format.status]
+ring_filled = "Filled the ring"
+no_ring = "Select the atoms or bonds of a ring to fill it"
+fill_cleared = "Cleared the ring fill"
+no_fill = "No filled ring in the selection"
+line_color_set = "Changed the line color"
+no_bonds = "Select bonds to change their line color"
+text_color_set = "Changed the text color"
+no_texts = "Select atom labels or texts to change their color"
+shadow_set = "Set the shadow"
+shadow_removed = "Removed the shadow"
+shadow_unchanged = "The shadow did not change"
