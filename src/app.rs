@@ -1217,9 +1217,9 @@ impl eframe::App for OpenDrawApp {
             // The drawing tools only act on the canvas, which the other views replace.
             if view.is_drawing() {
                 egui::Panel::left("palette")
-                    .frame(bar(visuals.panel_fill, 8, 10))
+                    .frame(bar(visuals.panel_fill, 0, 0).inner_margin(ui::palette::PALETTE_MARGIN))
                     .resizable(false)
-                    .exact_size(112.0)
+                    .exact_size(ui::palette::PALETTE_WIDTH)
                     .show(ui, |ui| {
                         ui::palette::palette(
                             ui,

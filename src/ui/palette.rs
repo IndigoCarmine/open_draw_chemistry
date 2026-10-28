@@ -8,6 +8,29 @@ use egui::vec2;
 use super::icons::{self, Frame, Icon};
 use super::{Command, periodic_table};
 
+/// Shared scale for the drawing palette; popup contents retain their normal size.
+pub const PALETTE_SCALE: f32 = 2.0 / 3.0;
+const BASE_WIDTH: f32 = 112.0;
+const BASE_CELL_HEIGHT: f32 = 44.0;
+const BASE_BUTTON_HEIGHT: f32 = 34.0;
+const BASE_GAP: f32 = 4.0;
+const BASE_MARGIN_X: f32 = 8.0;
+const BASE_MARGIN_Y: f32 = 10.0;
+// The original 44-point cell used a 20-point icon (44 * 0.46, rounded).
+const BASE_ICON_SIZE: f32 = 20.0;
+const BASE_ELEMENT_FONT: f32 = 14.0;
+const BASE_LABEL_FONT: f32 = 13.0;
+const BASE_HEADING_FONT: f32 = 11.0;
+const BASE_HEADING_SPACE: f32 = 6.0;
+pub const PALETTE_WIDTH: f32 = BASE_WIDTH * PALETTE_SCALE;
+pub const PALETTE_MARGIN: egui::Margin = egui::Margin::symmetric(
+    (BASE_MARGIN_X * PALETTE_SCALE).round() as i8,
+    (BASE_MARGIN_Y * PALETTE_SCALE).round() as i8,
+);
+const CELL_HEIGHT: f32 = BASE_CELL_HEIGHT * PALETTE_SCALE;
+const BUTTON_HEIGHT: f32 = BASE_BUTTON_HEIGHT * PALETTE_SCALE;
+const GAP: f32 = BASE_GAP * PALETTE_SCALE;
+
 /// Elements offered as buttons; anything else is picked from the 周期表… popup.
 pub const ELEMENTS: [&str; 10] = ["C", "H", "N", "O", "S", "P", "F", "Cl", "Br", "I"];
 
@@ -338,82 +361,107 @@ pub fn palette(
     custom_element: &mut String,
     out: &mut Vec<Command>,
 ) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        let gap = 4.0;
-        let cell = vec2((ui.available_width() - gap) / 2.0, 44.0);
+    let popup_style = ui.style().clone();
+    ui.scope(|ui| {
+        let spacing = ui.spacing_mut();
+        spacing.button_padding *= PALETTE_SCALE;
+        spacing.interact_size *= PALETTE_SCALE;
+        spacing.item_spacing *= PALETTE_SCALE;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let gap = GAP;
+            let cell = vec2((ui.available_width() - gap) / 2.0, CELL_HEIGHT);
 
-        heading(ui, t!("palette.heading.draw"));
-        egui::Grid::new("palette_tools")
-            .num_columns(2)
-            .spacing([gap, gap])
-            .show(ui, |ui| {
-                for (i, (icon, action)) in BUTTONS.into_iter().enumerate() {
-                    let planned = action == Action::Planned;
-                    let name = button_name(icon);
-                    let tip = if planned {
-                        t!("palette.tool.planned", name = name)
-                    } else {
-                        name.to_owned()
-                    };
-                    let selected = is_selected(editor, action);
-                    let response =
-                        icons::icon_button(ui, icon, cell, Frame::Tile, selected, !planned, &tip);
-                    if action == Action::BracketMenu {
-                        egui::Popup::menu(&response)
-                            .align(egui::RectAlign::RIGHT_START)
-                            .gap(6.0)
-                            .show(|ui| {
-                                if bracket_menu(ui, out) {
-                                    ui.close();
-                                }
-                            });
-                    } else if response.clicked() {
-                        match action {
-                            Action::Command(command) => out.push(command.command()),
-                            _ => apply(editor, action),
+            heading(ui, t!("palette.heading.draw"));
+            egui::Grid::new("palette_tools")
+                .num_columns(2)
+                .spacing([gap, gap])
+                .show(ui, |ui| {
+                    for (i, (icon, action)) in BUTTONS.into_iter().enumerate() {
+                        let planned = action == Action::Planned;
+                        let name = button_name(icon);
+                        let tip = if planned {
+                            t!("palette.tool.planned", name = name)
+                        } else {
+                            name.to_owned()
+                        };
+                        let selected = is_selected(editor, action);
+                        let response = icons::icon_button_with_glyph(
+                            ui,
+                            icon,
+                            (cell, (BASE_ICON_SIZE * PALETTE_SCALE).round()),
+                            Frame::Tile,
+                            selected,
+                            !planned,
+                            &tip,
+                        );
+                        if action == Action::BracketMenu {
+                            egui::Popup::menu(&response)
+                                .align(egui::RectAlign::RIGHT_START)
+                                .gap(6.0)
+                                .show(|ui| {
+                                    ui.set_style(popup_style.clone());
+                                    if bracket_menu(ui, out) {
+                                        ui.close();
+                                    }
+                                });
+                        } else if response.clicked() {
+                            match action {
+                                Action::Command(command) => out.push(command.command()),
+                                _ => apply(editor, action),
+                            }
+                        }
+                        if i % 2 == 1 {
+                            ui.end_row();
                         }
                     }
-                    if i % 2 == 1 {
-                        ui.end_row();
-                    }
-                }
-            });
+                });
 
-        heading(ui, t!("palette.heading.elements"));
-        egui::Grid::new("palette_elements")
-            .num_columns(2)
-            .spacing([gap, gap])
-            .show(ui, |ui| {
-                for (i, symbol) in ELEMENTS.into_iter().enumerate() {
-                    let selected = editor.current_element == symbol;
-                    let text = egui::RichText::new(symbol).size(14.0);
-                    if ui
-                        .add_sized(cell, egui::Button::selectable(selected, text))
-                        .clicked()
-                    {
-                        set_element(editor, symbol);
+            heading(ui, t!("palette.heading.elements"));
+            egui::Grid::new("palette_elements")
+                .num_columns(2)
+                .spacing([gap, gap])
+                .show(ui, |ui| {
+                    for (i, symbol) in ELEMENTS.into_iter().enumerate() {
+                        let selected = editor.current_element == symbol;
+                        let text =
+                            egui::RichText::new(symbol).size(BASE_ELEMENT_FONT * PALETTE_SCALE);
+                        if ui
+                            .add_sized(cell, egui::Button::selectable(selected, text))
+                            .clicked()
+                        {
+                            set_element(editor, symbol);
+                        }
+                        if i % 2 == 1 {
+                            ui.end_row();
+                        }
                     }
-                    if i % 2 == 1 {
-                        ui.end_row();
-                    }
-                }
-            });
-        ui.add_space(gap);
-        periodic_table_button(ui, editor, custom_element);
+                });
+            ui.add_space(gap);
+            periodic_table_button(ui, editor, custom_element, &popup_style);
+        });
     });
 }
 
 /// 周期表…: a periodic table to pick any element from, opening to the right over the canvas,
 /// with a field below it for typing a symbol. Escape or a click outside closes it.
-fn periodic_table_button(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custom: &mut String) {
-    let button = egui::Button::new(t!("palette.periodic_table.button"))
-        .min_size(vec2(ui.available_width(), 34.0));
+fn periodic_table_button(
+    ui: &mut egui::Ui,
+    editor: &mut ChemStructEditor,
+    custom: &mut String,
+    popup_style: &std::sync::Arc<egui::Style>,
+) {
+    let button = egui::Button::new(
+        egui::RichText::new(t!("palette.periodic_table.button"))
+            .size(BASE_LABEL_FONT * PALETTE_SCALE),
+    )
+    .min_size(vec2(ui.available_width(), BUTTON_HEIGHT));
     let response = ui.add(button);
     egui::Popup::menu(&response)
         .align(egui::RectAlign::RIGHT_START)
         .gap(6.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
+            ui.set_style(popup_style.clone());
             ui.spacing_mut().item_spacing.y = 6.0;
             if let Some(symbol) = periodic_table::table(ui, &editor.current_element) {
                 set_element(editor, symbol);
@@ -440,9 +488,13 @@ fn periodic_table_button(ui: &mut egui::Ui, editor: &mut ChemStructEditor, custo
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(6.0);
+    ui.add_space(BASE_HEADING_SPACE * PALETTE_SCALE);
     let color = crate::theme::muted(ui.visuals().dark_mode);
-    ui.label(egui::RichText::new(text).size(11.0).color(color));
+    ui.label(
+        egui::RichText::new(text)
+            .size(BASE_HEADING_FONT * PALETTE_SCALE)
+            .color(color),
+    );
 }
 
 /// Atoms the bond tool places from now on are `symbol`.
@@ -466,6 +518,85 @@ pub fn is_element_symbol(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn palette_content_fits_the_narrow_panel() {
+        let ctx = egui::Context::default();
+        ctx.all_styles_mut(|style| style.debug.show_unaligned = false);
+        let mut editor = ChemStructEditor::default();
+        let mut panel = egui::Rect::NOTHING;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(800.0, 1200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                panel = egui::Panel::left("test_palette")
+                    .exact_size(PALETTE_WIDTH)
+                    .frame(egui::Frame::new().inner_margin(PALETTE_MARGIN))
+                    .show(ui, |ui| {
+                        palette(ui, &mut editor, &mut String::new(), &mut Vec::new())
+                    })
+                    .response
+                    .rect;
+            },
+        );
+        output.textures_delta.clear();
+        assert!((panel.width() - PALETTE_WIDTH).abs() < 1.0);
+        let mut cells = Vec::new();
+        let mut targets = Vec::new();
+        for clipped in &output.shapes {
+            let bounds = clipped.shape.visual_bounding_rect();
+            if let egui::epaint::Shape::Rect(rect) = &clipped.shape
+                && (rect.rect.height() - CELL_HEIGHT).abs() < 1.0
+            {
+                cells.push(rect.rect);
+                targets.push(rect.rect);
+            }
+            if let egui::epaint::Shape::Rect(rect) = &clipped.shape
+                && (rect.rect.height() - BUTTON_HEIGHT).abs() < 1.0
+            {
+                targets.push(rect.rect);
+            }
+            if bounds.is_positive() {
+                assert!(
+                    panel.expand(1.0).contains_rect(bounds),
+                    "shape outside panel: {bounds:?}"
+                );
+            }
+        }
+        assert_eq!(cells.len(), BUTTONS.len() + ELEMENTS.len());
+        assert_eq!(targets.len(), cells.len() + 1);
+        for cell in &cells {
+            assert!(
+                (cell.width() - (PALETTE_WIDTH - 2.0 * f32::from(PALETTE_MARGIN.left) - GAP) / 2.0)
+                    .abs()
+                    < 1.0
+            );
+        }
+        // All glyphs and button labels fit their full-cell interaction targets.
+        for clipped in &output.shapes {
+            let bounds = clipped.shape.visual_bounding_rect();
+            if targets.iter().any(|cell| cell.intersects(bounds)) {
+                assert!(
+                    targets
+                        .iter()
+                        .any(|cell| cell.expand(0.5).contains_rect(bounds)),
+                    "content outside cell: {bounds:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn palette_dimensions_are_two_thirds() {
+        assert!((PALETTE_WIDTH - 112.0 * 2.0 / 3.0).abs() < 0.001);
+        assert!((CELL_HEIGHT - 44.0 * 2.0 / 3.0).abs() < 0.001);
+        assert!((BUTTON_HEIGHT - 34.0 * 2.0 / 3.0).abs() < 0.001);
+    }
 
     #[test]
     fn element_symbols_are_recognised() {
