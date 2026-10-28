@@ -482,23 +482,41 @@ impl Design {
     /// How many copies the steps make, counting the excluded ones. Saturates instead of
     /// overflowing on absurd step counts.
     fn all_step_copies(&self) -> usize {
+        if self.components.get(self.base).is_none() {
+            return 0;
+        }
+        self.running_counts().last().copied().unwrap_or(1)
+    }
+
+    /// How many copies there are after each step (one entry per step, the excluded copies
+    /// counted): what the panel shows between the steps. A disabled step, or a lattice step
+    /// that cannot be built, leaves the count as it was. Without a base component every entry
+    /// is zero. Saturates instead of overflowing.
+    pub fn running_counts(&self) -> Vec<usize> {
+        if self.components.get(self.base).is_none() {
+            return vec![0; self.steps.len()];
+        }
         // A lattice step drops symmetry copies that coincide (special positions), so its
-        // `copies()` is only an upper bound: count what it really makes.
+        // `copies()` is only an upper bound: count what the steps really make.
         if self
             .steps
             .iter()
             .any(|s| s.enabled() && matches!(s, Step::Lattice(_)))
         {
-            return self.step_copies().len();
+            let mut counts = vec![0; self.steps.len()];
+            self.trace_step_copies(|i, n| counts[i] = n);
+            return counts;
         }
-        if self.components.get(self.base).is_some() {
-            self.steps
-                .iter()
-                .filter(|s| s.enabled())
-                .fold(1usize, |n, s| n.saturating_mul(s.copies()))
-        } else {
-            0
-        }
+        let mut n = 1usize;
+        self.steps
+            .iter()
+            .map(|s| {
+                if s.enabled() {
+                    n = n.saturating_mul(s.copies());
+                }
+                n
+            })
+            .collect()
     }
 
     /// How many molecules the steps make, the excluded ones left out.
@@ -554,6 +572,15 @@ impl Design {
     /// last step's copies outermost), with the crystal the last enabled lattice step made.
     /// Lattice steps that cannot be built ([`Design::lattice_error`]) are skipped.
     fn step_copies_with_crystal(&self) -> (Vec<Instance>, Option<Crystal>) {
+        self.trace_step_copies(|_, _| {})
+    }
+
+    /// [`Design::step_copies_with_crystal`], telling `after` how many copies there are after
+    /// each step, by the step's index (disabled steps included).
+    fn trace_step_copies(
+        &self,
+        mut after: impl FnMut(usize, usize),
+    ) -> (Vec<Instance>, Option<Crystal>) {
         let mut set = Vec::new();
         let mut crystal = None;
         if self.components.get(self.base).is_some() {
@@ -562,9 +589,14 @@ impl Design {
                 transform: Rigid::IDENTITY,
             });
             let mut shapes = None;
-            for step in self.steps.iter().filter(|s| s.enabled()) {
+            for (i, step) in self.steps.iter().enumerate() {
+                if !step.enabled() {
+                    after(i, set.len());
+                    continue;
+                }
                 if let Step::Lattice(lattice) = step {
                     if lattice.check().is_err() {
+                        after(i, set.len());
                         continue;
                     }
                     let shapes = shapes.get_or_insert_with(|| self.shapes());
@@ -583,6 +615,7 @@ impl Design {
                         z: unit.len(),
                         asymmetric: std::mem::replace(&mut set, next),
                     });
+                    after(i, set.len());
                     continue;
                 }
                 let transforms = step.transforms();
@@ -596,6 +629,7 @@ impl Design {
                     }
                 }
                 set = next;
+                after(i, set.len());
             }
         }
         (set, crystal)
@@ -994,6 +1028,40 @@ mod tests {
         let o = inst[6].transform.apply([0.0; 3]);
         assert!(math::distance(o, [5.0, 0.0, 3.5]) < 1e-9, "{o:?}");
         assert_eq!(Design::default().molecule_count(), 0);
+    }
+
+    #[test]
+    fn running_counts_follow_each_step() {
+        let mut d = design_with_two_steps();
+        assert_eq!(d.running_counts(), vec![6, 60]);
+        *d.steps[0].enabled_mut() = false;
+        assert_eq!(
+            d.running_counts(),
+            vec![1, 10],
+            "a disabled step keeps the count"
+        );
+        *d.steps[0].enabled_mut() = true;
+
+        // A crystal counts the molecules it really makes, and the steps before it multiply.
+        let p21c = crate::assembly::symop::PRESETS
+            .iter()
+            .find(|p| p.name == "P2₁/c")
+            .unwrap();
+        let mut lattice = Step::new_lattice();
+        if let Step::Lattice(l) = &mut lattice {
+            l.symops = p21c.symops();
+            l.reps = [2, 1, 1];
+        }
+        d.steps = vec![Step::new_ring(), lattice];
+        let counts = d.running_counts();
+        assert_eq!(counts[0], 6);
+        assert_eq!(counts[1], d.instances().len());
+        assert_eq!(counts[1], d.step_molecule_count());
+        assert!(counts[1] <= 6 * 4 * 2);
+
+        // No monomer: nothing anywhere.
+        d.components.clear();
+        assert_eq!(d.running_counts(), vec![0, 0]);
     }
 
     #[test]

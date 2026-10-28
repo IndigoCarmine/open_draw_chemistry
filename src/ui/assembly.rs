@@ -10,11 +10,14 @@
 //! pick its atoms.
 
 mod contacts;
+mod pipeline;
 mod place;
+mod style;
 
 use eframe::egui_wgpu::RenderState;
 use egui::{Color32, DragValue, Pos2, RichText, Stroke, vec2};
 use serde::{Deserialize, Serialize};
+use style::Look;
 
 use super::Command;
 use super::viewport3d::{
@@ -93,6 +96,18 @@ struct OrientPick {
 /// What the three picked atoms become, in order.
 const ORIENT_ROLES: [&str; 3] = ["原点", "+x 軸", "xy 平面"];
 
+/// The right panel's tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PanelTab {
+    /// 表示: how the assembly is shown, what it holds, exporting.
+    Display,
+    /// 構築: the monomers, the steps and the hand placement. Last, as serde requires of the
+    /// catch-all.
+    #[default]
+    #[serde(other)]
+    Build,
+}
+
 /// The assembly view's state shared by every document: the viewer and the display options
 /// (remembered between runs), and the orientation being picked.
 #[derive(Default, Serialize, Deserialize)]
@@ -103,6 +118,13 @@ pub struct AssemblyView {
     pub crystal: CrystalDisplay,
     /// Which hydrogen bonds and π-stacks are drawn.
     pub interactions: super::interactions::ShowInteractions,
+    /// The panel's tab.
+    pub tab: PanelTab,
+    /// The step whose card shows its parameters (one at most).
+    pub expanded: Option<usize>,
+    /// The monomer whose name is being edited, and whether its field still has to take focus.
+    #[serde(skip)]
+    renaming: Option<(usize, bool)>,
     #[serde(skip)]
     viewport: Option<Viewport3d>,
     #[serde(skip)]
@@ -575,13 +597,6 @@ impl Ink {
     }
 }
 
-fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(6.0);
-    let heading = ui.visuals().widgets.noninteractive.fg_stroke.color;
-    ui.label(RichText::new(title).size(12.0).color(heading));
-    ui.separator();
-}
-
 /// A structural change to the design, applied once the panel has let go of it.
 enum Change {
     AddModel,
@@ -590,10 +605,16 @@ enum Change {
     ClearOrient(usize),
     AddStep(Step),
     RemoveStep(usize),
+    /// Move the step at the first index to the second (the others close up).
     MoveStep(usize, usize),
+    /// Insert a copy of the step right after it.
+    DuplicateStep(usize),
+    /// Switch the step on or off.
+    ToggleStep(usize),
 }
 
-/// The right panel in the assembly view.
+/// The right panel in the assembly view: the heading and the tabs, the tab's contents
+/// (scrolling), and a footer with the counts and undo / redo.
 pub fn panel(
     ui: &mut egui::Ui,
     doc: Option<&mut Document>,
@@ -601,160 +622,246 @@ pub fn panel(
     out: &mut Vec<Command>,
 ) {
     let ink = Ink::of(ui);
+    let look = Look::of(ui);
     ui.spacing_mut().item_spacing.y = 5.0;
-    let heading = ui.visuals().widgets.noninteractive.fg_stroke.color;
-    ui.label(RichText::new("集合体").size(15.0).color(heading));
-    ui.add_space(2.0);
+    ui.label(RichText::new("集合体").size(15.0).strong().color(look.ink));
+    ui.add_space(4.0);
     let Some(doc) = doc else {
         ui.label(ink.muted("文書が開かれていません"));
         return;
     };
+    let tabs = [(PanelTab::Build, "構築"), (PanelTab::Display, "表示")];
+    if let Some(tab) = style::tabs(ui, &look, view.tab, &tabs) {
+        view.tab = tab;
+    }
     let model_name = model_name(doc);
     let has_model = doc.three_d.model().is_some();
-    let state = &mut doc.assembly;
     let mut changes = Vec::new();
 
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(state.can_undo(), egui::Button::new("↶ 元に戻す").small())
-            .on_hover_text("集合体の編集を元に戻す（Ctrl+Z）")
-            .clicked()
-        {
-            history(state, view, false);
-        }
-        if ui
-            .add_enabled(state.can_redo(), egui::Button::new("↷ やり直し").small())
-            .on_hover_text("元に戻した編集をやり直す（Ctrl+Y）")
-            .clicked()
-        {
-            history(state, view, true);
-        }
-    });
-
-    section(ui, "単量体");
-    components_section(ui, state, view, &ink, &mut changes);
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled(has_model, egui::Button::new("今の 3D モデルを追加"))
-            .on_hover_text("この文書の 3D モデルを単量体として加えます")
-            .on_disabled_hover_text("3D モデルがありません。先に「2D から 3D を生成」してください")
-            .clicked()
-        {
-            changes.push(Change::AddModel);
-        }
-        if ui
-            .add_enabled(three_d::AVAILABLE, egui::Button::new("ファイルから追加…"))
-            .on_hover_text("MOL2・PDB・XYZ・MOL・SDF の 3D 構造を単量体として加えます")
-            .on_disabled_hover_text(
-                "3D 形式の読み込みには OpenBabel が必要です（この版にはありません）",
-            )
-            .clicked()
-        {
-            out.push(Command::AssemblyAddFile);
-        }
-    });
-
-    section(ui, "手順");
-    steps_section(ui, state, &ink, &mut changes);
-
-    section(ui, "配置");
-    place::section(ui, state, view, &ink);
-
-    section(ui, "表示");
-    ui.horizontal_wrapped(|ui| {
-        egui::ComboBox::from_id_salt("assembly_style")
-            .selected_text(view.style.label())
-            .show_ui(ui, |ui| {
-                for style in Style3d::ALL {
-                    ui.selectable_value(&mut view.style, style, style.label());
+    egui::Panel::bottom("assembly_footer")
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+            top: 6,
+            ..egui::Margin::ZERO
+        }))
+        .resizable(false)
+        .show(ui, |ui| footer(ui, &mut doc.assembly, view, &look, &ink));
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let state = &mut doc.assembly;
+            match view.tab {
+                PanelTab::Build => {
+                    build_tab(ui, state, view, &look, &ink, has_model, out, &mut changes);
                 }
-            });
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.label(ink.muted("色"));
-        for mode in ColorMode::ALL {
-            ui.selectable_value(&mut view.color, mode, mode.label());
-        }
-    });
-    let has_crystal = state.built().is_ok_and(|b| b.crystal.is_some());
-    crystal_display(ui, &mut view.crystal, has_crystal, &ink);
-    contacts::toggles(ui, &mut view.interactions);
-    if ui
-        .add_enabled(view.viewport.is_some(), egui::Button::new("視点をリセット"))
-        .on_hover_text("何もない所をダブルクリックでも")
-        .clicked()
-        && let Some(viewport) = &mut view.viewport
-    {
-        viewport.reset_view();
-    }
-
-    section(ui, "情報");
-    info_section(ui, state, &ink);
-    place::clash_info(ui, state, view, &ink);
-    contacts::info(ui, state, view, &ink);
-
-    section(ui, "書き出し");
-    let can_export = state.built().is_ok_and(|b| !b.is_empty());
-    ui.horizontal_wrapped(|ui| {
-        for export in AssemblyExport::ALL
-            .into_iter()
-            .chain(AssemblyExport::CRYSTAL)
-        {
-            let enabled = can_export && (!export.needs_crystal() || has_crystal);
-            if ui
-                .add_enabled(
-                    enabled,
-                    egui::Button::new(format!(".{}", export.extension())),
-                )
-                .on_hover_text(if export.needs_crystal() {
-                    format!(
-                        "{} に書き出す（格子定数・対称操作・非対称単位の分率座標）",
-                        export.description()
-                    )
-                } else {
-                    format!("{} に書き出す", export.description())
-                })
-                .on_disabled_hover_text(if !can_export {
-                    "書き出す集合体がありません"
-                } else {
-                    "CIF には結晶の手順が必要です（手順の「結晶」を追加してください）"
-                })
-                .clicked()
-            {
-                out.push(Command::AssemblyExport(export));
+                PanelTab::Display => display_tab(ui, state, view, &look, &ink, out),
             }
-        }
-    });
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled(!state.is_empty(), egui::Button::new("集合体を保存…"))
-            .on_hover_text(
-                "単量体と手順を .odasm ファイルに保存します（開くと同じ集合体になります）",
-            )
-            .clicked()
-        {
-            out.push(Command::AssemblySave);
-        }
-        if ui
-            .button("集合体を開く…")
-            .on_hover_text(
-                ".odasm ファイルを開いて、この文書の集合体と置き換えます（元に戻せます）",
-            )
-            .clicked()
-        {
-            out.push(Command::AssemblyOpen);
-        }
-    });
-
-    if let Some((text, problem)) = &view.report {
-        let color = if *problem { ink.warn } else { ink.muted };
-        ui.add_space(4.0);
-        ui.label(RichText::new(text).size(11.0).color(color));
-    }
+            ui.add_space(8.0);
+        });
 
     for change in changes {
         apply(change, doc, &model_name, view);
     }
+}
+
+/// The 構築 tab: the monomers, the steps' pipeline and the box adding one, and the hand
+/// placement.
+#[allow(clippy::too_many_arguments)]
+fn build_tab(
+    ui: &mut egui::Ui,
+    state: &mut AssemblyState,
+    view: &mut AssemblyView,
+    look: &Look,
+    ink: &Ink,
+    has_model: bool,
+    out: &mut Vec<Command>,
+    changes: &mut Vec<Change>,
+) {
+    style::caption(ui, look, "単量体");
+    components_section(ui, state, view, look, has_model, out, changes);
+    if !state.is_empty() {
+        ui.add_space(8.0);
+        pipeline::pipeline(ui, state, view, look, ink, changes);
+        ui.add_space(8.0);
+        pipeline::add_box(ui, look, state, changes);
+    }
+    style::caption(ui, look, "配置");
+    style::card(ui, look, false, 0.0, |ui| {
+        place::section(ui, state, view, ink)
+    });
+}
+
+/// The 表示 tab: how the assembly is shown, what it holds, and writing it out.
+fn display_tab(
+    ui: &mut egui::Ui,
+    state: &mut AssemblyState,
+    view: &mut AssemblyView,
+    look: &Look,
+    ink: &Ink,
+    out: &mut Vec<Command>,
+) {
+    let has_crystal = state.built().is_ok_and(|b| b.crystal.is_some());
+    style::caption(ui, look, "表示");
+    style::card(ui, look, false, 0.0, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(ink.muted("スタイル"));
+            egui::ComboBox::from_id_salt("assembly_style")
+                .selected_text(view.style.label())
+                .show_ui(ui, |ui| {
+                    for style in Style3d::ALL {
+                        ui.selectable_value(&mut view.style, style, style.label());
+                    }
+                });
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.label(ink.muted("色"));
+            for mode in ColorMode::ALL {
+                ui.selectable_value(&mut view.color, mode, mode.label());
+            }
+        });
+        crystal_display(ui, &mut view.crystal, has_crystal, ink);
+        if ui
+            .add_enabled(view.viewport.is_some(), egui::Button::new("視点をリセット"))
+            .on_hover_text("何もない所をダブルクリックでも")
+            .clicked()
+            && let Some(viewport) = &mut view.viewport
+        {
+            viewport.reset_view();
+        }
+    });
+
+    style::caption(ui, look, "相互作用");
+    style::card(ui, look, false, 0.0, |ui| {
+        contacts::toggles(ui, &mut view.interactions);
+    });
+
+    style::caption(ui, look, "情報");
+    style::card(ui, look, false, 0.0, |ui| {
+        info_section(ui, state, ink);
+        place::clash_info(ui, state, view, ink);
+        contacts::info(ui, state, view, ink);
+    });
+
+    style::caption(ui, look, "書き出し");
+    style::card(ui, look, false, 0.0, |ui| {
+        let can_export = state.built().is_ok_and(|b| !b.is_empty());
+        ui.horizontal_wrapped(|ui| {
+            for export in AssemblyExport::ALL
+                .into_iter()
+                .chain(AssemblyExport::CRYSTAL)
+            {
+                let enabled = can_export && (!export.needs_crystal() || has_crystal);
+                if ui
+                    .add_enabled(
+                        enabled,
+                        egui::Button::new(format!(".{}", export.extension())),
+                    )
+                    .on_hover_text(if export.needs_crystal() {
+                        format!(
+                            "{} に書き出す（格子定数・対称操作・非対称単位の分率座標）",
+                            export.description()
+                        )
+                    } else {
+                        format!("{} に書き出す", export.description())
+                    })
+                    .on_disabled_hover_text(if !can_export {
+                        "書き出す集合体がありません"
+                    } else {
+                        "CIF には結晶の手順が必要です（手順の「結晶」を追加してください）"
+                    })
+                    .clicked()
+                {
+                    out.push(Command::AssemblyExport(export));
+                }
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(!state.is_empty(), egui::Button::new("集合体を保存…"))
+                .on_hover_text(
+                    "単量体と手順を .odasm ファイルに保存します（開くと同じ集合体になります）",
+                )
+                .clicked()
+            {
+                out.push(Command::AssemblySave);
+            }
+            if ui
+                .button("集合体を開く…")
+                .on_hover_text(
+                    ".odasm ファイルを開いて、この文書の集合体と置き換えます（元に戻せます）",
+                )
+                .clicked()
+            {
+                out.push(Command::AssemblyOpen);
+            }
+        });
+    });
+}
+
+/// The footer under both tabs: the last report, the molecule, atom and bond counts, and undo /
+/// redo.
+fn footer(
+    ui: &mut egui::Ui,
+    state: &mut AssemblyState,
+    view: &mut AssemblyView,
+    look: &Look,
+    ink: &Ink,
+) {
+    if let Some((text, problem)) = &view.report {
+        let color = if *problem { ink.warn } else { ink.muted };
+        ui.label(RichText::new(text).size(11.0).color(color));
+    }
+    let (molecules, atoms, bonds) = match state.built() {
+        Ok(b) => (
+            b.molecule_count().to_string(),
+            b.atoms.len().to_string(),
+            b.bonds.len().to_string(),
+        ),
+        Err(_) => (
+            state.design.molecule_count().to_string(),
+            state.design.atom_count().to_string(),
+            "—".to_owned(),
+        ),
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        for (k, (n, unit)) in [(molecules, "分子"), (atoms, "原子"), (bonds, "結合")]
+            .into_iter()
+            .enumerate()
+        {
+            if k > 0 {
+                ui.add_space(8.0);
+            }
+            ui.label(RichText::new(n).size(12.5).strong().color(look.ink));
+            ui.label(look.muted(unit));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            use super::icons::Icon;
+            let redo = style::tool(
+                ui,
+                look,
+                Icon::Redo,
+                "元に戻した編集をやり直す（Ctrl+Y）",
+                state.can_redo(),
+                false,
+                false,
+            );
+            if redo.clicked() {
+                history(state, view, true);
+            }
+            let undo = style::tool(
+                ui,
+                look,
+                Icon::Undo,
+                "集合体の編集を元に戻す（Ctrl+Z）",
+                state.can_undo(),
+                false,
+                false,
+            );
+            if undo.clicked() {
+                history(state, view, false);
+            }
+        });
+    });
 }
 
 /// The name a monomer made from the document's 3D model gets: the file's name, or the
@@ -767,6 +874,35 @@ pub fn model_name(doc: &Document) -> String {
         .or_else(|| doc.three_d.model().map(|m| m.formula.clone()))
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "monomer".to_owned())
+}
+
+/// A monomer's molecular formula in Hill order (C, H, then the rest alphabetically; all
+/// alphabetically without carbon), e.g. "C10H8".
+fn formula(c: &Component) -> String {
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    for a in &c.atoms {
+        *counts.entry(a.element.as_str()).or_default() += 1;
+    }
+    let mut order: Vec<&str> = Vec::new();
+    if counts.contains_key("C") {
+        order.push("C");
+        if counts.contains_key("H") {
+            order.push("H");
+        }
+    }
+    let rest: Vec<&str> = counts
+        .keys()
+        .copied()
+        .filter(|e| !order.contains(e))
+        .collect();
+    order.extend(rest);
+    order
+        .iter()
+        .map(|e| match counts[e] {
+            1 => (*e).to_owned(),
+            n => format!("{e}{n}"),
+        })
+        .collect()
 }
 
 fn apply(change: Change, doc: &mut Document, model_name: &str, view: &mut AssemblyView) {
@@ -800,89 +936,187 @@ fn apply(change: Change, doc: &mut Document, model_name: &str, view: &mut Assemb
                 }
             });
             view.orient = None;
+            view.renaming = None;
         }
         Change::SetBase(i) => state.edit(|d| d.base = i),
         Change::ClearOrient(i) => state.edit(|d| d.components[i].orient = None),
-        Change::AddStep(step) => state.edit(|d| d.steps.push(step)),
+        Change::AddStep(step) => {
+            let at = state.edit(|d| {
+                d.steps.push(step);
+                d.steps.len() - 1
+            });
+            view.expanded = Some(at);
+        }
         Change::RemoveStep(i) => {
             state.edit(|d| d.steps.remove(i));
+            view.expanded = match view.expanded {
+                Some(e) if e == i => None,
+                Some(e) if e > i => Some(e - 1),
+                e => e,
+            };
         }
-        Change::MoveStep(from, to) => state.edit(|d| d.steps.swap(from, to)),
+        Change::MoveStep(from, to) => {
+            if from == to || from.max(to) >= state.design.steps.len() {
+                return;
+            }
+            state.edit(|d| {
+                let step = d.steps.remove(from);
+                d.steps.insert(to, step);
+            });
+            view.expanded = view
+                .expanded
+                .map(|e| pipeline::index_after_move(e, from, to));
+        }
+        Change::DuplicateStep(i) => {
+            if let Some(step) = state.design.steps.get(i).cloned() {
+                state.edit(|d| d.steps.insert(i + 1, step));
+                view.expanded = Some(i + 1);
+            }
+        }
+        Change::ToggleStep(i) => {
+            if i < state.design.steps.len() {
+                state.edit(|d| {
+                    let on = d.steps[i].enabled_mut();
+                    *on = !*on;
+                });
+            }
+        }
     }
 }
 
+/// The monomers, one card each with its actions in a 「…」 menu; with none, how to add one.
 fn components_section(
     ui: &mut egui::Ui,
     state: &mut AssemblyState,
     view: &mut AssemblyView,
-    ink: &Ink,
+    look: &Look,
+    has_model: bool,
+    out: &mut Vec<Command>,
     changes: &mut Vec<Change>,
 ) {
     if state.design.components.is_empty() {
-        ui.label(
-            ink.muted("単量体がありません。3D モデルを追加するか、ファイルから読み込んでください"),
-        );
+        let inner = egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label(look.muted(
+                    "単量体がありません。3D モデルを追加するか、ファイルから読み込んでください",
+                ));
+                ui.horizontal_wrapped(|ui| {
+                    add_buttons(ui, has_model, out, changes);
+                });
+            });
+        style::dashed_box(ui, inner.response.rect, look.line);
         return;
     }
     let several = state.design.components.len() > 1;
     let base = state.design.base;
     let mut renamed = false;
+    let mut stop_renaming = false;
     for (i, c) in state.design.components.iter_mut().enumerate() {
         ui.push_id(("component", i), |ui| {
-            ui.horizontal(|ui| {
-                if several
-                    && ui
-                        .radio(base == i, "")
-                        .on_hover_text("手順で複製する単量体にする")
-                        .clicked()
-                {
-                    changes.push(Change::SetBase(i));
-                }
-                renamed |= ui
-                    .add(egui::TextEdit::singleline(&mut c.name).desired_width(110.0))
-                    .on_hover_text(
-                        "単量体の名前。先頭の英数字 3 文字が PDB・MOL2 の残基名になります",
-                    )
-                    .changed();
-                ui.label(ink.muted(format!("{} 原子", c.atoms.len())));
-                if ui
-                    .small_button("✕")
-                    .on_hover_text("この単量体を削除")
-                    .clicked()
-                {
-                    changes.push(Change::RemoveComponent(i));
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                match c.orient {
-                    Some([a, b, o]) => {
-                        ui.label(ink.muted(format!(
-                            "向き：原子 {}・{}・{}",
-                            a + 1,
-                            b + 1,
-                            o + 1
-                        )));
-                        if ui
-                            .small_button("解除")
-                            .on_hover_text("向き合わせをやめ、読み込んだままの座標を使う")
-                            .clicked()
-                        {
-                            changes.push(Change::ClearOrient(i));
+            style::card(ui, look, false, 0.0, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_min_height(24.0);
+                    match &mut view.renaming {
+                        Some((k, focus)) if *k == i => {
+                            let field = ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut c.name)
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(130.0),
+                                )
+                                .on_hover_text(
+                                    "単量体の名前。先頭の英数字 3 文字が PDB・MOL2 の残基名になります（Enter で確定）",
+                                );
+                            if std::mem::take(focus) {
+                                field.request_focus();
+                            } else if field.lost_focus() {
+                                stop_renaming = true;
+                            }
+                            renamed |= field.changed();
+                        }
+                        _ => {
+                            let name = ui
+                                .add(
+                                    egui::Label::new(
+                                        RichText::new(&c.name)
+                                            .monospace()
+                                            .size(13.0)
+                                            .color(look.ink),
+                                    )
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                                )
+                                .on_hover_text(format!(
+                                    "{} 原子（ダブルクリックで名前を変更）",
+                                    c.atoms.len()
+                                ));
+                            if name.double_clicked() {
+                                view.renaming = Some((i, true));
+                            }
                         }
                     }
-                    None => {
-                        ui.label(ink.muted("向き：そのまま"));
+                    if several && base == i {
+                        ui.label(RichText::new("基準").size(10.5).color(look.accent))
+                            .on_hover_text("手順で複製する単量体");
                     }
-                }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let more = style::tool(
+                            ui,
+                            look,
+                            super::icons::Icon::More,
+                            "単量体の操作",
+                            true,
+                            false,
+                            false,
+                        );
+                        egui::Popup::menu(&more).show(|ui| {
+                            add_buttons(ui, has_model, out, changes);
+                            ui.separator();
+                            let picking = view.orient.as_ref().is_some_and(|o| o.component == i);
+                            if ui
+                                .add_enabled(!picking, egui::Button::new("3 原子で向き合わせ"))
+                                .on_hover_text(
+                                    "ビューアで原子を 3 つ順にクリックします。1 つ目を原点に、2 つ目を +x 軸上に、3 つ目を xy 平面（y < 0 側）に置きます。\n環状の手順では 1 つ目の原子が円の上に乗り、分子は +x（外向き）に伸びます",
+                                )
+                                .clicked()
+                            {
+                                view.start_orienting(i);
+                            }
+                            if ui
+                                .add_enabled(c.orient.is_some(), egui::Button::new("向き合わせを解除"))
+                                .on_hover_text("向き合わせをやめ、読み込んだままの座標を使う")
+                                .clicked()
+                            {
+                                changes.push(Change::ClearOrient(i));
+                            }
+                            if ui.button("名前を変更").clicked() {
+                                view.renaming = Some((i, true));
+                            }
+                            if ui
+                                .add_enabled(several && base != i, egui::Button::new("基準の単量体にする"))
+                                .on_hover_text("手順で複製する単量体にする")
+                                .clicked()
+                            {
+                                changes.push(Change::SetBase(i));
+                            }
+                            ui.separator();
+                            if ui.button("削除").on_hover_text("この単量体を削除").clicked() {
+                                changes.push(Change::RemoveComponent(i));
+                            }
+                        });
+                        let formula = formula(c);
+                        if formula != c.name {
+                            ui.label(look.mono(formula, look.muted));
+                        }
+                    });
+                });
                 let picking = view.orient.as_ref().is_some_and(|o| o.component == i);
-                if ui
-                    .add_enabled(!picking, egui::Button::new("3 原子で向き合わせ").small())
-                    .on_hover_text(
-                        "ビューアで原子を 3 つ順にクリックします。1 つ目を原点に、2 つ目を +x 軸上に、3 つ目を xy 平面（y < 0 側）に置きます。\n環状の手順では 1 つ目の原子が円の上に乗り、分子は +x（外向き）に伸びます",
-                    )
-                    .clicked()
-                {
-                    view.start_orienting(i);
+                if picking {
+                    ui.label(RichText::new("向き合わせ中：ビューアで原子をクリック").size(11.0).color(look.accent));
+                } else if let Some([a, b, o]) = c.orient {
+                    ui.label(look.muted(format!("向き：原子 {}・{}・{}", a + 1, b + 1, o + 1)));
                 }
             });
         });
@@ -890,105 +1124,69 @@ fn components_section(
     if renamed {
         state.touch();
     }
+    if stop_renaming {
+        view.renaming = None;
+    }
 }
 
-fn steps_section(
+/// 今の 3D モデルを追加 and ファイルから追加….
+fn add_buttons(
     ui: &mut egui::Ui,
-    state: &mut AssemblyState,
-    ink: &Ink,
+    has_model: bool,
+    out: &mut Vec<Command>,
     changes: &mut Vec<Change>,
 ) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(ink.muted("追加"));
-        if ui
-            .button("環状")
-            .on_hover_text("分子を z 軸まわりの円に並べます（ロゼット）")
-            .clicked()
-        {
-            changes.push(Change::AddStep(Step::new_ring()));
-        }
-        if ui
-            .button("積層・らせん")
-            .on_hover_text("それまでの全体を z 方向に積み重ねます。ねじれとずれでらせんになります")
-            .clicked()
-        {
-            changes.push(Change::AddStep(Step::new_stack()));
-        }
-        if ui
-            .button("配列")
-            .on_hover_text("それまでの全体を一定の間隔と回転で並べます")
-            .clicked()
-        {
-            changes.push(Change::AddStep(Step::new_array()));
-        }
-        let has_lattice = state
-            .design
-            .steps
-            .iter()
-            .any(|s| matches!(s, Step::Lattice(_)));
-        if ui
-            .add_enabled(!has_lattice, egui::Button::new("結晶"))
-            .on_hover_text(
-                "それまでの全体を非対称単位として、格子定数と空間群の対称操作で単位胞を作り、繰り返します",
-            )
-            .on_disabled_hover_text("結晶の手順はすでにあります")
-            .clicked()
-        {
-            changes.push(Change::AddStep(Step::new_lattice()));
-        }
-    });
-    if state.design.steps.is_empty() {
-        ui.label(ink.muted(
-            "手順がありません。手順は上から順に適用され、それぞれがそれまでの全体を複製します",
-        ));
-        return;
+    if ui
+        .add_enabled(has_model, egui::Button::new("今の 3D モデルを追加"))
+        .on_hover_text("この文書の 3D モデルを単量体として加えます")
+        .on_disabled_hover_text("3D モデルがありません。先に「2D から 3D を生成」してください")
+        .clicked()
+    {
+        changes.push(Change::AddModel);
     }
-    let count = state.design.steps.len();
-    let mut changed = false;
-    for (i, step) in state.design.steps.iter_mut().enumerate() {
-        ui.push_id(("step", i), |ui| {
-            egui::Frame::group(ui.style())
-                .inner_margin(egui::Margin::same(6))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        changed |= ui
-                            .checkbox(step.enabled_mut(), "")
-                            .on_hover_text("この手順を使う（外すと飛ばします）")
-                            .changed();
-                        ui.label(RichText::new(format!("{}. {}", i + 1, step.label())).strong());
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .small_button("✕")
-                                .on_hover_text("この手順を削除")
-                                .clicked()
-                            {
-                                changes.push(Change::RemoveStep(i));
-                            }
-                            if ui
-                                .add_enabled(i + 1 < count, egui::Button::new("↓").small())
-                                .on_hover_text("後ろへ")
-                                .clicked()
-                            {
-                                changes.push(Change::MoveStep(i, i + 1));
-                            }
-                            if ui
-                                .add_enabled(i > 0, egui::Button::new("↑").small())
-                                .on_hover_text("前へ")
-                                .clicked()
-                            {
-                                changes.push(Change::MoveStep(i, i - 1));
-                            }
-                        });
-                    });
-                    ui.add_enabled_ui(step.enabled(), |ui| {
-                        changed |= step_params(ui, step, ink);
-                    });
-                });
-        });
+    if ui
+        .add_enabled(three_d::AVAILABLE, egui::Button::new("ファイルから追加…"))
+        .on_hover_text("MOL2・PDB・XYZ・MOL・SDF の 3D 構造を単量体として加えます")
+        .on_disabled_hover_text(
+            "3D 形式の読み込みには OpenBabel が必要です（この版にはありません）",
+        )
+        .clicked()
+    {
+        out.push(Command::AssemblyAddFile);
     }
-    if changed {
-        state.touch();
-    }
+}
+
+/// Width of the parameters' label column.
+const LABEL_WIDTH: f32 = 56.0;
+const FIELD_HEIGHT: f32 = 22.0;
+
+/// One parameter row: the label, then `field` filling the rest of the width.
+fn field_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    tip: &str,
+    field: impl FnOnce(&mut egui::Ui) -> bool,
+) -> bool {
+    ui.horizontal(|ui| {
+        let muted = theme::muted(ui.visuals().dark_mode);
+        ui.allocate_ui_with_layout(
+            vec2(LABEL_WIDTH, FIELD_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(LABEL_WIDTH);
+                ui.label(RichText::new(label).size(12.0).color(muted))
+                    .on_hover_text(tip);
+            },
+        );
+        field(ui)
+    })
+    .inner
+}
+
+/// The width of each of `n` fields sharing the rest of the row.
+fn share(ui: &egui::Ui, n: usize) -> f32 {
+    let gaps = ui.spacing().item_spacing.x * (n.saturating_sub(1)) as f32;
+    ((ui.available_width() - gaps) / n as f32).max(30.0)
 }
 
 /// A labelled number with a tooltip; returns whether it changed.
@@ -1001,9 +1199,9 @@ fn number(
     suffix: &str,
     tip: &str,
 ) -> bool {
-    ui.label(label).on_hover_text(tip);
-    let changed = ui
-        .add(
+    field_row(ui, label, tip, |ui| {
+        ui.add_sized(
+            vec2(share(ui, 1), FIELD_HEIGHT),
             DragValue::new(value)
                 .speed(speed)
                 .range(range)
@@ -1011,19 +1209,19 @@ fn number(
                 .suffix(suffix),
         )
         .on_hover_text(tip)
-        .changed();
-    ui.end_row();
-    changed
+        .changed()
+    })
 }
 
 fn count(ui: &mut egui::Ui, label: &str, value: &mut u32, tip: &str) -> bool {
-    ui.label(label).on_hover_text(tip);
-    let changed = ui
-        .add(DragValue::new(value).speed(0.1).range(1..=10_000))
+    field_row(ui, label, tip, |ui| {
+        ui.add_sized(
+            vec2(share(ui, 1), FIELD_HEIGHT),
+            DragValue::new(value).speed(0.1).range(1..=10_000),
+        )
         .on_hover_text(tip)
-        .changed();
-    ui.end_row();
-    changed
+        .changed()
+    })
 }
 
 fn vector(
@@ -1034,24 +1232,24 @@ fn vector(
     suffix: &str,
     tip: &str,
 ) -> bool {
-    ui.label(label).on_hover_text(tip);
-    let mut changed = false;
-    ui.horizontal(|ui| {
+    field_row(ui, label, tip, |ui| {
+        let width = share(ui, 3);
+        let mut changed = false;
         for (axis, v) in ["x", "y", "z"].iter().zip(value.iter_mut()) {
             changed |= ui
-                .add(
+                .add_sized(
+                    vec2(width, FIELD_HEIGHT),
                     DragValue::new(v)
                         .speed(speed)
-                        .max_decimals(3)
+                        .max_decimals(2)
                         .prefix(format!("{axis} "))
                         .suffix(suffix),
                 )
                 .on_hover_text(tip)
                 .changed();
         }
-    });
-    ui.end_row();
-    changed
+        changed
+    })
 }
 
 /// The step's parameters. Returns whether any changed.
@@ -1060,111 +1258,115 @@ fn step_params(ui: &mut egui::Ui, step: &mut Step, ink: &Ink) -> bool {
         return lattice_params(ui, lattice, ink);
     }
     let mut changed = false;
-    egui::Grid::new("params")
-        .num_columns(2)
-        .spacing(vec2(8.0, 4.0))
-        .show(ui, |ui| match step {
-            Step::Ring(Ring {
+    ui.spacing_mut().item_spacing.y = 4.0;
+    match step {
+        Step::Ring(Ring {
+            n,
+            radius,
+            tilt_deg,
+            ..
+        }) => {
+            changed |= count(
+                ui,
+                "個数",
                 n,
+                "環に並べる分子の数。i 番目は z 軸まわりに 360°/個数 × i 回した位置に置かれます",
+            );
+            changed |= number(
+                ui,
+                "半径",
                 radius,
+                0.05,
+                0.0..=1000.0,
+                " Å",
+                "分子の原点（向き合わせの 1 つ目の原子）が乗る円の半径。小さすぎると重なり、大きすぎると水素結合が届きません",
+            );
+            changed |= number(
+                ui,
+                "傾き",
                 tilt_deg,
-                ..
-            }) => {
-                changed |= count(
-                    ui,
-                    "個数",
-                    n,
-                    "環に並べる分子の数。i 番目は z 軸まわりに 360°/個数 × i 回した位置に置かれます",
-                );
-                changed |= number(
-                    ui,
-                    "半径",
-                    radius,
-                    0.05,
-                    0.0..=1000.0,
-                    " Å",
-                    "分子の原点（向き合わせの 1 つ目の原子）が乗る円の半径。小さすぎると重なり、大きすぎると水素結合が届きません",
-                );
-                changed |= number(
-                    ui,
-                    "傾き",
-                    tilt_deg,
-                    0.5,
-                    -180.0..=180.0,
-                    "°",
-                    "円に置く前に分子を y 軸まわりに傾ける角度。0 なら分子は環の面（xy 平面）に寝たまま",
-                );
-            }
-            Step::Stack(Stack {
-                n,
+                0.5,
+                -180.0..=180.0,
+                "°",
+                "円に置く前に分子を y 軸まわりに傾ける角度。0 なら分子は環の面（xy 平面）に寝たまま",
+            );
+        }
+        Step::Stack(Stack {
+            n,
+            rise,
+            twist_deg,
+            slip,
+            ..
+        }) => {
+            changed |= count(ui, "層数", n, "積み重ねる層（ディスク）の数");
+            changed |= number(
+                ui,
+                "層間距離",
                 rise,
+                0.02,
+                -1000.0..=1000.0,
+                " Å",
+                "層と層の z 方向の間隔。π スタックならおよそ 3.4〜3.5 Å",
+            );
+            changed |= number(
+                ui,
+                "ねじれ",
                 twist_deg,
+                0.5,
+                -360.0..=360.0,
+                "°",
+                "1 層ごとに z 軸まわりに回す角度。正なら +z から見て反時計回り。\n周期的につなげるなら 層数 × ねじれ が 360°/環の個数 の倍数になるようにします",
+            );
+            changed |= number(
+                ui,
+                "ずれ",
                 slip,
-                ..
-            }) => {
-                changed |= count(ui, "層数", n, "積み重ねる層（ディスク）の数");
-                changed |= number(
-                    ui,
-                    "層間距離",
-                    rise,
-                    0.02,
-                    -1000.0..=1000.0,
-                    " Å",
-                    "層と層の z 方向の間隔。π スタックならおよそ 3.4〜3.5 Å",
-                );
-                changed |= number(
-                    ui,
-                    "ねじれ",
-                    twist_deg,
-                    0.5,
-                    -360.0..=360.0,
-                    "°",
-                    "1 層ごとに z 軸まわりに回す角度。正なら +z から見て反時計回り。\n周期的につなげるなら 層数 × ねじれ が 360°/環の個数 の倍数になるようにします",
-                );
-                changed |= number(
-                    ui,
-                    "ずれ",
-                    slip,
-                    0.02,
-                    -100.0..=100.0,
-                    " Å",
-                    "隣り合う層の横方向のずれ。0 でなければ、層はらせん軸（z 軸）のまわりを\n半径 (ずれ/2) / sin(ねじれ/2) の円に沿って進みます。ねじれが 0 なら x 方向にまっすぐずれます",
-                );
-                let radius = helix_radius(*slip, *twist_deg);
-                ui.label(ink.muted("らせん半径"));
-                ui.label(ink.muted(match radius {
-                    Some(r) => format!("{:.3} Å", r.abs()),
-                    None if *slip != 0.0 => "—（ねじれ 0：まっすぐずれる）".to_owned(),
-                    None => "—（ずれなし）".to_owned(),
-                }));
-                ui.end_row();
-            }
-            Step::Array(Array {
-                n,
+                0.02,
+                -100.0..=100.0,
+                " Å",
+                "隣り合う層の横方向のずれ。0 でなければ、層はらせん軸（z 軸）のまわりを\n半径 (ずれ/2) / sin(ねじれ/2) の円に沿って進みます。ねじれが 0 なら x 方向にまっすぐずれます",
+            );
+            let radius = helix_radius(*slip, *twist_deg);
+            field_row(
+                ui,
+                "らせん半径",
+                "ずれとねじれから決まります",
+                |ui| {
+                    ui.label(ink.muted(match radius {
+                        Some(r) => format!("{:.3} Å", r.abs()),
+                        None if *slip != 0.0 => "—（ねじれ 0：まっすぐずれる）".to_owned(),
+                        None => "—（ずれなし）".to_owned(),
+                    }));
+                    false
+                },
+            );
+        }
+        Step::Array(Array {
+            n,
+            offset,
+            euler_deg,
+            ..
+        }) => {
+            changed |= count(ui, "個数", n, "並べる数（1 つ目はそのままの位置）");
+            changed |= vector(
+                ui,
+                "間隔",
                 offset,
+                0.05,
+                " Å",
+                "i 番目を i × 間隔 だけ動かします",
+            );
+            changed |= vector(
+                ui,
+                "回転",
                 euler_deg,
-                ..
-            }) => {
-                changed |= count(ui, "個数", n, "並べる数（1 つ目はそのままの位置）");
-                changed |= vector(
-                    ui,
-                    "間隔",
-                    offset,
-                    0.05,
-                    " Å",
-                    "i 番目を i × 間隔 だけ動かします",
-                );
-                changed |= vector(
-                    ui,
-                    "回転",
-                    euler_deg,
-                    0.5,
-                    "°",
-                    "i 番目を原点まわりに i × 角度 回してから動かします（x → y → z 軸の順）",
-                );
-            }
-            Step::Lattice(_) => unreachable!("edited by lattice_params"),
-        });
+                0.5,
+                "°",
+                "i 番目を原点まわりに i × 角度 回してから動かします（x → y → z 軸の順）",
+            );
+        }
+        Step::Lattice(_) => unreachable!("edited by lattice_params"),
+    }
     changed
 }
 
@@ -1214,46 +1416,46 @@ fn lattice_params(ui: &mut egui::Ui, l: &mut Lattice, ink: &Ink) -> bool {
             ui.label(ink.muted(p.system));
         }
     });
-    egui::Grid::new("cell")
-        .num_columns(2)
-        .spacing(vec2(8.0, 4.0))
-        .show(ui, |ui| {
-            let c = &mut l.cell;
-            for (name, value) in [("a", &mut c.a), ("b", &mut c.b), ("c", &mut c.c)] {
-                changed |= number(
-                    ui,
-                    name,
-                    value,
-                    0.02,
-                    0.1..=1000.0,
-                    " Å",
-                    "単位胞の稜の長さ。a は x 軸に沿い、b は xy 平面にあります",
-                );
+    ui.spacing_mut().item_spacing.y = 4.0;
+    {
+        let c = &mut l.cell;
+        for (name, value) in [("a", &mut c.a), ("b", &mut c.b), ("c", &mut c.c)] {
+            changed |= number(
+                ui,
+                name,
+                value,
+                0.02,
+                0.1..=1000.0,
+                " Å",
+                "単位胞の稜の長さ。a は x 軸に沿い、b は xy 平面にあります",
+            );
+        }
+        for (name, value, tip) in [
+            ("α", &mut c.alpha, "b と c のなす角"),
+            ("β", &mut c.beta, "a と c のなす角"),
+            ("γ", &mut c.gamma, "a と b のなす角"),
+        ] {
+            changed |= number(ui, name, value, 0.1, 1.0..=179.0, "°", tip);
+        }
+        let tip = "単位胞を a・b・c 方向にいくつ並べるか";
+        changed |= field_row(ui, "繰り返し", tip, |ui| {
+            let width = share(ui, 3);
+            let mut changed = false;
+            for (axis, n) in ["a", "b", "c"].iter().zip(l.reps.iter_mut()) {
+                changed |= ui
+                    .add_sized(
+                        vec2(width, FIELD_HEIGHT),
+                        DragValue::new(n)
+                            .speed(0.05)
+                            .range(1..=100)
+                            .prefix(format!("{axis} ")),
+                    )
+                    .on_hover_text(tip)
+                    .changed();
             }
-            for (name, value, tip) in [
-                ("α", &mut c.alpha, "b と c のなす角"),
-                ("β", &mut c.beta, "a と c のなす角"),
-                ("γ", &mut c.gamma, "a と b のなす角"),
-            ] {
-                changed |= number(ui, name, value, 0.1, 1.0..=179.0, "°", tip);
-            }
-            let tip = "単位胞を a・b・c 方向にいくつ並べるか";
-            ui.label("繰り返し").on_hover_text(tip);
-            ui.horizontal(|ui| {
-                for (axis, n) in ["a", "b", "c"].iter().zip(l.reps.iter_mut()) {
-                    changed |= ui
-                        .add(
-                            DragValue::new(n)
-                                .speed(0.05)
-                                .range(1..=100)
-                                .prefix(format!("{axis} ")),
-                        )
-                        .on_hover_text(tip)
-                        .changed();
-                }
-            });
-            ui.end_row();
+            changed
         });
+    }
 
     ui.label("対称操作").on_hover_text(
         "1 行に 1 つ、x,y,z 形式で（例: -x,y+1/2,-z+1/2）。CIF の _space_group_symop の行をそのまま貼り付けても読めます。x,y,z を必ず含めてください",
@@ -1326,15 +1528,7 @@ fn info_section(ui: &mut egui::Ui, state: &mut AssemblyState, ink: &Ink) {
                 .num_columns(2)
                 .spacing(vec2(16.0, 3.0))
                 .show(ui, |ui| {
-                    ui.label(ink.muted("分子数"));
-                    ui.label(built.molecule_count().to_string());
-                    ui.end_row();
-                    ui.label(ink.muted("原子数"));
-                    ui.label(built.atoms.len().to_string());
-                    ui.end_row();
-                    ui.label(ink.muted("結合数"));
-                    ui.label(built.bonds.len().to_string());
-                    ui.end_row();
+                    // The counts are in the footer; a crystal adds its cell here.
                     if let Some(crystal) = &built.crystal {
                         ui.label(ink.muted("単位胞"))
                             .on_hover_text("単位胞の体積");
@@ -1538,5 +1732,140 @@ mod tests {
         let undone = ops_buffer(Some(typing), &p21c.symops());
         assert_eq!(undone.text, symop::format_list(&p21c.symops()));
         assert_eq!(ops_buffer(None, &p1).text, "x,y,z");
+    }
+
+    fn array(n: u32, z: f64) -> Step {
+        Step::Array(Array {
+            enabled: true,
+            n,
+            offset: [0.0, 0.0, z],
+            euler_deg: [0.0; 3],
+        })
+    }
+
+    fn doc_with(steps: Vec<Step>) -> Document {
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        doc.assembly.edit(|d| {
+            d.components.push(water());
+            d.steps = steps;
+        });
+        doc
+    }
+
+    #[test]
+    fn the_pipeline_shows_each_steps_count_and_summary() {
+        let steps = vec![array(7, 3.2), Step::new_ring()];
+        let doc = doc_with(steps.clone());
+        let counts = doc.assembly.design.running_counts();
+        assert_eq!(counts, vec![7, 42]);
+        assert_eq!(
+            pipeline::count_text(&steps[0], 1, counts[0]),
+            "× 7 → 7 分子"
+        );
+        assert_eq!(
+            pipeline::count_text(&steps[1], counts[0], counts[1]),
+            "× 6 → 42 分子"
+        );
+        assert_eq!(pipeline::summary(&steps[0]), "7個 · z 3.20Å");
+        assert_eq!(pipeline::summary(&steps[1]), "6個 · r 5.00Å");
+        assert_eq!(pipeline::summary(&Step::new_lattice()), "P1 · 1×1×1");
+        let mut off = steps[1].clone();
+        *off.enabled_mut() = false;
+        assert_eq!(pipeline::count_text(&off, 7, 7), "飛ばす → 7 分子");
+        assert_eq!(formula(&water()), "H2O");
+    }
+
+    #[test]
+    fn a_dropped_card_moves_its_step_as_one_undo_step() {
+        // Dropping in the gap a card is next to does not move it.
+        assert_eq!(pipeline::drop_target(1, 1), None);
+        assert_eq!(pipeline::drop_target(1, 2), None);
+        assert_eq!(pipeline::drop_target(0, 3), Some(2));
+        assert_eq!(pipeline::drop_target(2, 0), Some(0));
+        let cards: Vec<egui::Rect> = (0..3)
+            .map(|k| egui::Rect::from_min_size(egui::pos2(0.0, 50.0 * k as f32), vec2(100.0, 40.0)))
+            .collect();
+        assert_eq!(pipeline::gap_at(&cards, 5.0), 0);
+        assert_eq!(pipeline::gap_at(&cards, 30.0), 1);
+        assert_eq!(pipeline::gap_at(&cards, 500.0), 3);
+
+        let mut doc = doc_with(vec![array(2, 3.0), Step::new_ring(), Step::new_stack()]);
+        let mut view = AssemblyView {
+            expanded: Some(0),
+            ..Default::default()
+        };
+        let before = doc.assembly.design.steps.clone();
+        apply(Change::MoveStep(0, 2), &mut doc, "m", &mut view);
+        let labels: Vec<_> = doc.assembly.design.steps.iter().map(Step::label).collect();
+        assert_eq!(labels, ["環状", "積層・らせん", "配列"]);
+        assert_eq!(view.expanded, Some(2), "the open card moves with its step");
+        assert!(doc.assembly.undo());
+        assert_eq!(doc.assembly.design.steps, before, "one undo step");
+        assert_eq!(pipeline::index_after_move(1, 0, 2), 0);
+        assert_eq!(pipeline::index_after_move(1, 2, 0), 2);
+        assert_eq!(pipeline::index_after_move(0, 2, 1), 0);
+    }
+
+    #[test]
+    fn duplicate_delete_and_toggle_are_undoable() {
+        let mut doc = doc_with(vec![array(2, 3.0), Step::new_ring()]);
+        let mut view = AssemblyView::default();
+        let start = doc.assembly.design.steps.clone();
+
+        apply(Change::DuplicateStep(0), &mut doc, "m", &mut view);
+        assert_eq!(doc.assembly.design.steps.len(), 3);
+        assert_eq!(doc.assembly.design.steps[1], start[0]);
+        assert_eq!(view.expanded, Some(1));
+        assert_eq!(doc.assembly.design.running_counts(), vec![2, 4, 24]);
+
+        apply(Change::ToggleStep(1), &mut doc, "m", &mut view);
+        assert!(!doc.assembly.design.steps[1].enabled());
+        assert_eq!(doc.assembly.design.running_counts(), vec![2, 2, 12]);
+
+        apply(Change::RemoveStep(1), &mut doc, "m", &mut view);
+        assert_eq!(doc.assembly.design.steps, start);
+        assert_eq!(view.expanded, None, "the open card was deleted");
+
+        // Undo walks back through delete, toggle and duplicate one at a time.
+        assert!(doc.assembly.undo());
+        assert!(!doc.assembly.design.steps[1].enabled());
+        assert!(doc.assembly.undo());
+        assert!(doc.assembly.design.steps[1].enabled());
+        assert_eq!(doc.assembly.design.steps.len(), 3);
+        assert!(doc.assembly.undo());
+        assert_eq!(doc.assembly.design.steps, start);
+    }
+
+    /// Both tabs, with every card open in turn (the crystal's included), draw headless.
+    #[test]
+    fn both_tabs_draw_headless_with_each_card_open() {
+        let ctx = egui::Context::default();
+        let mut doc = doc_with(vec![
+            array(7, 3.2),
+            Step::new_ring(),
+            Step::new_stack(),
+            Step::new_lattice(),
+        ]);
+        doc.assembly.edit(|d| d.components.push(water()));
+        let mut view = AssemblyView::default();
+        let mut commands = Vec::new();
+        for (tab, expanded) in [
+            (PanelTab::Build, None),
+            (PanelTab::Build, Some(0)),
+            (PanelTab::Build, Some(1)),
+            (PanelTab::Build, Some(2)),
+            (PanelTab::Build, Some(3)),
+            (PanelTab::Display, None),
+        ] {
+            view.tab = tab;
+            view.expanded = expanded;
+            view.renaming = Some((1, true));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                panel(ui, Some(&mut doc), &mut view, &mut commands);
+            });
+            output.textures_delta.clear();
+            assert_eq!(view.expanded, expanded);
+        }
+        assert!(commands.is_empty());
     }
 }

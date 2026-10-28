@@ -28,6 +28,14 @@ pub fn title(view: ViewMode) -> &'static str {
 /// Draws the expanded panel with `contents`, which start with their own heading (the button
 /// sits beside it). Returns `true` when its collapse button was clicked.
 pub fn properties(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) -> bool {
+    properties_unscrolled(ui, |ui| {
+        egui::ScrollArea::vertical().show(ui, contents);
+    })
+}
+
+/// [`properties`] for contents that lay out the whole panel themselves, scrolling what they
+/// need to (the 集合体 panel keeps its tabs and footer in place).
+pub fn properties_unscrolled(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) -> bool {
     // The button sits in the top-right corner, beside the contents' own heading. It is added
     // after the content so that it is on top of it for clicks.
     let max = ui.max_rect();
@@ -35,7 +43,7 @@ pub fn properties(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) -> bo
         egui::pos2(max.right() - BUTTON, max.top() - 2.0),
         Vec2::splat(BUTTON),
     );
-    egui::ScrollArea::vertical().show(ui, contents);
+    contents(ui);
     let mut corner = ui.new_child(UiBuilder::new().max_rect(button_rect));
     collapse_button(&mut corner, Icon::ChevronsRight, "パネルを畳む")
 }
