@@ -92,8 +92,80 @@ pub struct ScanWindow {
     force_field: Option<ForceField>,
     /// Show the energy relative to the lowest point (ΔE).
     relative: bool,
+    colors: ColorRange,
     /// The last problem or confirmation, and whether it is a problem.
     message: Option<(String, bool)>,
+}
+
+#[derive(Debug)]
+struct ColorRange {
+    auto: bool,
+    lo: f64,
+    hi: f64,
+}
+
+impl Default for ColorRange {
+    fn default() -> Self {
+        Self {
+            auto: true,
+            lo: 0.0,
+            hi: 1.0,
+        }
+    }
+}
+
+impl ScanWindow {
+    fn set_relative(&mut self, relative: bool) {
+        if self.relative != relative {
+            self.relative = relative;
+            self.colors.auto = true;
+        }
+    }
+}
+
+/// Preserve the automatic data range; sanitize manual input before plotting.
+fn color_range(auto_lo: f64, auto_hi: f64, manual: Option<(f64, f64)>) -> (f64, f64) {
+    let automatic = || {
+        if auto_lo.is_finite() {
+            (
+                auto_lo,
+                if auto_hi > auto_lo {
+                    auto_hi
+                } else {
+                    auto_lo + 1.0
+                },
+            )
+        } else {
+            (0.0, 1.0)
+        }
+    };
+    let Some((lo, hi)) = manual else {
+        return automatic();
+    };
+    if !lo.is_finite() || !hi.is_finite() {
+        return automatic();
+    }
+    if hi > lo {
+        (lo, hi)
+    } else {
+        // At large magnitudes adding one can round back to lo.
+        let hi = (lo + 1.0).max(lo.next_up());
+        if hi.is_finite() {
+            (lo, hi)
+        } else {
+            (lo.next_down(), lo)
+        }
+    }
+}
+
+fn heatmap_color(value: f64, lo: f64, hi: f64) -> Color32 {
+    if value == PENDING {
+        Color32::TRANSPARENT
+    } else if value.is_nan() {
+        FAILED
+    } else {
+        viridis(((value - lo) / (hi - lo)).clamp(0.0, 1.0))
+    }
 }
 
 /// Keep every document's scan collecting its points, also while the window is closed; keeps
@@ -446,7 +518,9 @@ fn results(
     }
 
     ui.horizontal_wrapped(|ui| {
-        ui.checkbox(&mut win.relative, t!("scan.window.relative"));
+        let mut relative = win.relative;
+        ui.checkbox(&mut relative, t!("scan.window.relative"));
+        win.set_relative(relative);
         if ui
             .add_enabled(
                 run.scan.done() > 0,
@@ -470,7 +544,7 @@ fn results(
         ));
     }
 
-    let clicked = plot(ui, &run.scan, win.relative);
+    let clicked = plot(ui, &run.scan, win.relative, &mut win.colors);
     ui.label(muted(ui, t!("scan.window.plot_help")));
     let index = clicked?;
     let message = apply_point(doc, index);
@@ -656,7 +730,7 @@ fn cells(values: &[f64]) -> (f64, f64, bool) {
 }
 
 /// The plot of `scan`. Returns the point clicked, if any.
-fn plot(ui: &mut egui::Ui, scan: &Scan, relative: bool) -> Option<usize> {
+fn plot(ui: &mut egui::Ui, scan: &Scan, relative: bool, colors: &mut ColorRange) -> Option<usize> {
     if scan.axes.is_empty() || scan.total() == 0 {
         return None;
     }
@@ -667,7 +741,7 @@ fn plot(ui: &mut egui::Ui, scan: &Scan, relative: bool) -> Option<usize> {
         scan.unit
     );
     if scan.is_2d() {
-        heatmap(ui, scan, relative, &y_title)
+        heatmap(ui, scan, relative, &y_title, colors)
     } else {
         curve(ui, scan, relative, &y_title)
     }
@@ -783,7 +857,13 @@ fn curve(ui: &mut egui::Ui, scan: &Scan, relative: bool, y_title: &str) -> Optio
 
 /// A two-parameter scan: a heatmap (first parameter across, second up), a colour bar, and the
 /// lowest cell marked.
-fn heatmap(ui: &mut egui::Ui, scan: &Scan, relative: bool, z_title: &str) -> Option<usize> {
+fn heatmap(
+    ui: &mut egui::Ui,
+    scan: &Scan,
+    relative: bool,
+    z_title: &str,
+    colors: &mut ColorRange,
+) -> Option<usize> {
     let (ax, ay) = (&scan.axes[0], &scan.axes[1]);
     let (nx, ny) = (ax.values.len(), ay.values.len());
     let (x0, dx, x_rev) = cells(&ax.values);
@@ -803,11 +883,34 @@ fn heatmap(ui: &mut egui::Ui, scan: &Scan, relative: bool, z_title: &str) -> Opt
     let finite = || values.iter().copied().filter(|v| v.is_finite());
     let lo = finite().fold(f64::INFINITY, f64::min);
     let hi = finite().fold(f64::NEG_INFINITY, f64::max);
-    let (lo, hi) = if lo.is_finite() {
-        (lo, if hi > lo { hi } else { lo + 1.0 })
-    } else {
-        (0.0, 1.0)
-    };
+    // Show the actual extrema in Auto, even for a constant-valued scan whose
+    // plotting range needs the one-unit padding.
+    let auto_range = if lo.is_finite() { (lo, hi) } else { (0.0, 1.0) };
+    if colors.auto {
+        (colors.lo, colors.hi) = auto_range;
+    }
+    // Above the map and its colour bar so edits affect both in this frame.
+    ui.horizontal_wrapped(|ui| {
+        ui.checkbox(&mut colors.auto, t!("scan.window.color_auto"));
+        if colors.auto {
+            (colors.lo, colors.hi) = auto_range;
+        }
+        ui.label(t!("scan.window.color_min"));
+        let min_changed = ui
+            .add(egui::DragValue::new(&mut colors.lo).speed(0.1))
+            .changed();
+        ui.label(t!("scan.window.color_max"));
+        let max_changed = ui
+            .add(egui::DragValue::new(&mut colors.hi).speed(0.1))
+            .changed();
+        if min_changed || max_changed {
+            colors.auto = false;
+        }
+    });
+    let (lo, hi) = color_range(lo, hi, (!colors.auto).then_some((colors.lo, colors.hi)));
+    if !colors.auto {
+        (colors.lo, colors.hi) = (lo, hi);
+    }
     let min_cell = scan.minimum().map(|(index, _)| {
         let v = scan.values_at(index);
         [v[0], v[1]]
@@ -827,15 +930,7 @@ fn heatmap(ui: &mut egui::Ui, scan: &Scan, relative: bool, z_title: &str) -> Opt
             .tile_size(dx as f32, dy as f32)
             .show_labels(false)
             .range(lo, hi)
-            .custom_mapping(Box::new(move |v| {
-                if v == PENDING {
-                    Color32::TRANSPARENT
-                } else if v.is_nan() {
-                    FAILED
-                } else {
-                    viridis((v - lo) / (hi - lo))
-                }
-            }));
+            .custom_mapping(Box::new(move |v| heatmap_color(v, lo, hi)));
         let response = Plot::new("scan_heatmap")
             .set_margin_fraction(vec2(0.02, 0.02))
             .width(width)
@@ -968,6 +1063,54 @@ mod tests {
     use super::*;
     use crate::scan::ScanAxis;
     use crate::three_d::{self, Atom3d, Bond3d, Model3d};
+
+    #[test]
+    fn color_ranges_preserve_auto_and_validate_manual() {
+        assert_eq!(color_range(-3.0, 7.0, None), (-3.0, 7.0));
+        assert_eq!(color_range(4.0, 4.0, None), (4.0, 5.0));
+        assert_eq!(color_range(4.0, 2.0, None), (4.0, 5.0));
+        assert_eq!(
+            color_range(f64::INFINITY, f64::NEG_INFINITY, None),
+            (0.0, 1.0)
+        );
+        for bounds in [
+            (2.0, 8.0),
+            (2.0, 2.0),
+            (2.0, -5.0),
+            (f64::NAN, 1.0),
+            (f64::MAX, f64::MAX),
+        ] {
+            let (lo, hi) = color_range(-3.0, 7.0, Some(bounds));
+            assert!(lo < hi, "{lo} {hi}");
+        }
+        assert_eq!(color_range(-3.0, 7.0, Some((2.0, 8.0))), (2.0, 8.0));
+    }
+
+    #[test]
+    fn manual_colors_clamp_and_preserve_missing_points() {
+        for v in [-10.0, 2.0] {
+            assert_eq!(heatmap_color(v, 2.0, 8.0), viridis(0.0));
+        }
+        for v in [8.0, 20.0] {
+            assert_eq!(heatmap_color(v, 2.0, 8.0), viridis(1.0));
+        }
+        assert_eq!(heatmap_color(PENDING, 2.0, 8.0), Color32::TRANSPARENT);
+        assert_eq!(heatmap_color(f64::NAN, 2.0, 8.0), FAILED);
+    }
+
+    #[test]
+    fn changing_energy_baseline_resets_color_auto() {
+        let mut win = ScanWindow::default();
+        assert!(win.colors.auto);
+        win.colors.auto = false;
+        win.set_relative(false);
+        assert!(!win.colors.auto);
+        win.set_relative(true);
+        assert!(win.colors.auto);
+        win.colors.auto = false;
+        win.set_relative(false);
+        assert!(win.colors.auto);
+    }
 
     fn chain_model() -> Model3d {
         let pos = [

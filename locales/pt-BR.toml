@@ -897,6 +897,9 @@ no_operations = "Não há operações de simetria (é necessário pelo menos x,y
 no_identity = "Inclua a operação identidade x,y,z"
 
 [scan.window]
+color_auto = "Auto"
+color_min = "Min"
+color_max = "Max"
 title = "Varredura de parâmetros"
 no_document = "Nenhum documento aberto"
 no_view = "Configure uma varredura na visualização 3D (comprimento de ligação, ângulo de ligação, ângulo diedro) ou na visualização de montagem (parâmetros das etapas, moléculas posicionadas manualmente)"
