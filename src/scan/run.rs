@@ -213,6 +213,11 @@ impl Run {
         if let Some(why) = points_refusal(total) {
             return Err(why);
         }
+        // The points and the design's own atoms first: counting every point's atoms takes a
+        // while, more so for a grid far beyond a relaxed scan's.
+        if let Some(why) = relax_refusal(source.atom_count(), total) {
+            return Err(why);
+        }
         let points = grid(axes);
         if let Some(why) = relax_refusal(source.most_atoms(&points), total) {
             return Err(why);
@@ -2182,7 +2187,31 @@ mod energy_tests {
         assert!(message.contains("Too long to relax"), "{message}");
         assert!(message.contains("360 atoms"), "{message}");
         // Without relaxing it runs.
-        assert!(Run::start(source, &[axis], ForceField::Uff).is_ok());
+        assert!(Run::start(source.clone(), std::slice::from_ref(&axis), ForceField::Uff).is_ok());
+
+        // Too many points is told before any point's atoms are counted.
+        let cell_a = Param::Step {
+            step: 1,
+            field: StepField::CellA,
+        };
+        let axes = [
+            axis,
+            Axis {
+                param: cell_a,
+                start: 7.0,
+                end: 9.0,
+                points: MAX_POINTS,
+            },
+        ];
+        let Err(message) =
+            Run::start_relaxed(source, &axes, ForceField::Uff, Relax::new(Vec::new()))
+        else {
+            panic!(
+                "a relaxed scan of {} points started",
+                MAX_POINTS * MAX_POINTS
+            );
+        };
+        assert!(message.contains("Too many points"), "{message}");
     }
 
     /// A point started from a neighbour's shapes that are worse than its rigid structure — and
@@ -2237,6 +2266,173 @@ mod energy_tests {
                 Some(coords.len())
             );
         }
+    }
+
+    /// The lowest held energy from `start`: nonlinear conjugate gradients on the held energy,
+    /// its gradient by finite differences.
+    fn held_reference(
+        evaluator: &mut Evaluator,
+        hold: &dyn Fn(&mut [Vec3]),
+        start: &[Vec3],
+    ) -> (Vec<Vec3>, f64) {
+        let mut f = |x: &[Vec3]| {
+            let mut y = x.to_vec();
+            hold(&mut y);
+            evaluator.energy(&y)
+        };
+        let mut x = start.to_vec();
+        hold(&mut x);
+        let mut fx = f(&x);
+        let mut step = 1e-3;
+        let mut prev_g: Option<Vec<f64>> = None;
+        let mut dir = vec![0.0; x.len() * 3];
+        for it in 0..5000 {
+            let mut g = vec![0.0; x.len() * 3];
+            for k in 0..g.len() {
+                let h = 1e-5;
+                let mut p = x.clone();
+                p[k / 3][k % 3] += h;
+                let fp = f(&p);
+                p[k / 3][k % 3] -= 2.0 * h;
+                let fm = f(&p);
+                g[k] = (fp - fm) / (2.0 * h);
+            }
+            let beta = match &prev_g {
+                Some(pg) if it % 50 != 0 => {
+                    let num: f64 = g.iter().zip(pg).map(|(a, b)| a * (a - b)).sum();
+                    let den: f64 = pg.iter().map(|a| a * a).sum();
+                    (num / den).max(0.0)
+                }
+                _ => 0.0,
+            };
+            for k in 0..g.len() {
+                dir[k] = -g[k] + beta * dir[k];
+            }
+            let slope: f64 = dir.iter().zip(&g).map(|(d, g)| d * g).sum();
+            if slope >= 0.0 {
+                dir = g.iter().map(|v| -v).collect();
+            }
+            let gnorm = g.iter().map(|v| v * v).sum::<f64>().sqrt();
+            if gnorm < 1e-4 {
+                break;
+            }
+            let mut t = step * 2.0;
+            let mut moved = false;
+            for _ in 0..40 {
+                let mut p = x.clone();
+                for k in 0..g.len() {
+                    p[k / 3][k % 3] += t * dir[k];
+                }
+                hold(&mut p);
+                let fp = f(&p);
+                if fp < fx {
+                    x = p;
+                    fx = fp;
+                    step = t;
+                    moved = true;
+                    break;
+                }
+                t *= 0.5;
+            }
+            prev_g = Some(g);
+            if !moved {
+                break;
+            }
+        }
+        (x, fx)
+    }
+
+    /// A benzene tilted `tilt` (degrees) with its centroid `z` Å above another's.
+    fn tilted_pair(tilt: [f64; 3], z: f64) -> Source {
+        let component = benzene();
+        let local = crate::assembly::place::local_positions(&component);
+        let pose = crate::assembly::place::Pose {
+            position: [0.0, 0.0, z],
+            euler_deg: tilt,
+        };
+        let design = Design {
+            components: vec![component],
+            steps: Vec::new(),
+            manual: vec![Instance {
+                component: 0,
+                transform: crate::assembly::place::transform_of(&pose, centroid(&local)),
+            }],
+            ..Default::default()
+        };
+        let z = Param::Pose {
+            index: 0,
+            field: PoseField::Position(2),
+        };
+        Source::assembly(&design, vec![z])
+    }
+
+    /// A benzene tilted 45° and 20° with its centroid 3.6 Å above another's, in close contact:
+    /// the forces between them mostly push the molecules about rigidly, which holding them
+    /// undoes. Relaxed held, it ends converged where fine segments with steps to spare end, and
+    /// at the held minimum — that of conjugate gradients on the held energy itself — to within
+    /// a small tolerance, far below the rigid structure; out of steps, it is marked unconverged.
+    #[test]
+    fn a_held_relaxation_of_molecules_in_close_contact_reaches_the_held_minimum() {
+        let z = 3.6;
+        let source = tilted_pair([45.0, 20.0, 0.0], z);
+        let reference = source.reference().unwrap();
+        let mut evaluator = Evaluator::new(&reference.molfile, ForceField::Uff).unwrap();
+        let never = AtomicBool::new(false);
+        let placed = source.placed_at(&[z]).unwrap();
+        let Point::Coords(rigid) = &placed.point else {
+            panic!("the same atoms")
+        };
+        let hold = |c: &mut [Vec3]| placed.hold(c);
+        let rigid_energy = evaluator.energy(rigid);
+        let steps = Relax::new(Vec::new()).steps;
+        let Relaxation::Done {
+            coords,
+            energy,
+            converged,
+        } = evaluator.relax_held(rigid, steps, &never, &hold)
+        else {
+            panic!("relaxed")
+        };
+        let Relaxation::Done {
+            energy: fine,
+            converged: fine_converged,
+            ..
+        } = evaluator.relax_held_from(rigid, 50_000, &never, &hold, 1)
+        else {
+            panic!("relaxed in single steps")
+        };
+        let (_, minimum) = held_reference(&mut evaluator, &hold, rigid);
+        let (_, lower) = held_reference(&mut evaluator, &hold, &coords);
+        eprintln!(
+            "rigid {rigid_energy:.3} | relaxed {energy:.3} | single steps {fine:.3} | held minimum {minimum:.3}, from the relaxed {lower:.3}"
+        );
+        assert!(converged && fine_converged);
+        assert!(
+            (energy - fine).abs() < 0.1,
+            "{energy} against single steps' {fine}"
+        );
+        assert!(
+            energy - minimum < 0.2 && energy - lower < 0.2,
+            "{energy} above the held minimum {minimum} ({lower} from it)"
+        );
+        assert!(energy < rigid_energy - 400.0, "{energy} {rigid_energy}");
+        assert!(
+            (evaluator.energy(&coords) - energy).abs() < 1e-6,
+            "the held structure's"
+        );
+        let Relaxation::Done {
+            energy: short,
+            converged,
+            ..
+        } = evaluator.relax_held(rigid, 30, &never, &hold)
+        else {
+            panic!("relaxed")
+        };
+        assert!(!converged, "out of steps at {short}");
+        assert!(
+            energy + 1.0 < short && short < rigid_energy,
+            "{short} {energy}"
+        );
     }
 
     /// A relaxed assembly point out of minimiser steps is marked unconverged (its molecules

@@ -168,6 +168,15 @@ impl Evaluator {
 /// flag: a few milliseconds for a small molecule, so cancelling takes effect within one point.
 const RELAX_CHUNK_STEPS: u32 = 50;
 
+/// The fewest minimiser steps a segment of [`Evaluator::relax_held`] is cut down to (of
+/// steepest descent): a relaxation held is converged only once a segment this short, looked
+/// along closer, no longer lowers its energy.
+const SHORTEST_HELD_SEGMENT: u32 = 1;
+
+/// How many times a held step that did not lower the energy is halved, looking for a lower
+/// structure along it, before [`Evaluator::relax_held`] calls the relaxation converged.
+const HELD_STEP_HALVINGS: u32 = 10;
+
 /// Steps between the minimiser's looks at its own convergence within a segment: OpenBabel's
 /// "converged" can only be told from "out of steps" when it stops before a segment's end.
 const RELAX_FRAME_STEPS: u32 = 10;
@@ -254,23 +263,43 @@ impl Evaluator {
         }
     }
 
-    /// Minimise the structure from `coords` with no restraint, for at most `steps`
-    /// conjugate-gradient steps in segments of [`RELAX_CHUNK_STEPS`] (looking at `cancel`
-    /// before each), putting it back after each segment as `hold` puts a structure (an
-    /// assembly's molecules moved rigidly back to their places: [`super::source::Placed::hold`])
-    /// — so what is minimised is everything `hold` leaves free, here the molecules' shapes.
+    /// Minimise the structure from `coords` with no restraint, for at most `steps` minimiser
+    /// steps in segments of at most [`RELAX_CHUNK_STEPS`] (looking at `cancel` before each),
+    /// putting it back after each segment as `hold` puts a structure (an assembly's molecules
+    /// moved rigidly back to their places: [`super::source::Placed::hold`]) — so what is
+    /// minimised is everything `hold` leaves free, here the molecules' shapes.
     ///
     /// The energy is that of the held structure (as `hold` leaves it), and the structure kept
     /// the held one of the lowest energy seen, the start (held) among them: it is never above
-    /// the start's. Converged once a segment, held, no longer lowers the energy by more than
-    /// [`SETTLED_ENERGY`] — not by OpenBabel's own test, which the minimiser never meets while
-    /// `hold` keeps undoing the molecules' rigid moves.
+    /// the start's. The minimiser does not know of `hold`: where the forces between the
+    /// molecules mostly push them about rigidly (close contacts, strong torques), a long
+    /// segment spends its steps on moves `hold` undoes and ends, held, no lower or even higher,
+    /// far above the held minimum. So a segment (of conjugate gradients) that does not lower
+    /// the held energy by more than [`SETTLED_ENERGY`] is run again from the lowest structure
+    /// with half the steps, down to [`SHORTEST_HELD_SEGMENT`]; segments that short are of
+    /// steepest descent — the step along the forces, whose part `hold` keeps lowers the held
+    /// energy when short enough — and one that does not lower the energy is looked along
+    /// closer, [`HELD_STEP_HALVINGS`] times. Converged only once that finds nothing lower
+    /// either — not by OpenBabel's own test, which the minimiser never meets while `hold`
+    /// keeps undoing the molecules' rigid moves.
     pub fn relax_held(
         &mut self,
         coords: &[Vec3],
         steps: u32,
         cancel: &AtomicBool,
         hold: &dyn Fn(&mut [Vec3]),
+    ) -> Relaxation {
+        self.relax_held_from(coords, steps, cancel, hold, RELAX_CHUNK_STEPS)
+    }
+
+    /// [`Evaluator::relax_held`], its segments starting at `longest` steps.
+    pub(super) fn relax_held_from(
+        &mut self,
+        coords: &[Vec3],
+        steps: u32,
+        cancel: &AtomicBool,
+        hold: &dyn Fn(&mut [Vec3]),
+        longest: u32,
     ) -> Relaxation {
         let mut best = coords.to_vec();
         hold(&mut best);
@@ -280,6 +309,7 @@ impl Evaluator {
             return Relaxation::Failed;
         }
         let mut taken = 0;
+        let mut segment = longest.max(SHORTEST_HELD_SEGMENT);
         loop {
             if cancel.load(Ordering::Relaxed) {
                 return Relaxation::Cancelled;
@@ -291,36 +321,75 @@ impl Evaluator {
                     converged: false,
                 };
             }
+            let shortest = segment <= SHORTEST_HELD_SEGMENT;
             let mut config = Minimizer::new(self.force_field.id());
             config
-                .algorithm(Algorithm::ConjugateGradients)
-                .max_steps(RELAX_CHUNK_STEPS.min(steps - taken))
+                .algorithm(if shortest {
+                    Algorithm::SteepestDescent
+                } else {
+                    Algorithm::ConjugateGradients
+                })
+                .max_steps(segment.min(steps - taken))
                 .steps_per_frame(RELAX_FRAME_STEPS);
             let run = self.mol.minimize(&config);
             if matches!(run.stop_reason(), StopReason::Failed) {
                 return Relaxation::Failed;
             }
             taken += run.steps_taken().max(1);
-            let mut coords = self.coords();
+            let free = self.coords();
+            let mut coords = free.clone();
             hold(&mut coords);
-            let energy = self.energy(&coords);
+            let mut energy = self.energy(&coords);
             if energy.is_nan() {
                 return Relaxation::Failed;
+            }
+            // Whether the molecule's atoms are at `coords` (the last energy taken).
+            let mut at_coords = true;
+            if shortest && energy >= lowest - SETTLED_ENERGY {
+                // The step's length suits the moves the minimiser sees, most of which `hold`
+                // undoes: look for a lower structure closer along it.
+                let mut part = 1.0;
+                for _ in 0..HELD_STEP_HALVINGS {
+                    part /= 2.0;
+                    let mut trial: Vec<Vec3> = best
+                        .iter()
+                        .zip(&free)
+                        .map(|(q, p)| std::array::from_fn(|k| q[k] + part * (p[k] - q[k])))
+                        .collect();
+                    hold(&mut trial);
+                    let e = self.energy(&trial);
+                    // An energy costs about what a step does.
+                    taken += 1;
+                    at_coords = e < energy;
+                    if at_coords {
+                        coords = trial;
+                        energy = e;
+                    }
+                    if energy < lowest - SETTLED_ENERGY {
+                        break;
+                    }
+                }
             }
             let settled = energy >= lowest - SETTLED_ENERGY;
             if energy < lowest {
                 best = coords;
                 lowest = energy;
             } else {
-                // Go on from the lowest, not from where this segment ended.
+                at_coords = false;
+            }
+            if !at_coords {
+                // Go on from the lowest, not from wherever the molecule's atoms were left.
                 self.energy(&best);
             }
             if settled {
-                return Relaxation::Done {
-                    coords: best,
-                    energy: lowest,
-                    converged: true,
-                };
+                if shortest {
+                    return Relaxation::Done {
+                        coords: best,
+                        energy: lowest,
+                        converged: true,
+                    };
+                }
+                segment = (segment / 2).max(SHORTEST_HELD_SEGMENT);
             }
         }
     }

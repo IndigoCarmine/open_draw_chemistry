@@ -195,8 +195,9 @@ impl Source {
         let Source::Assembly { design, params, .. } = self else {
             return self.atom_count();
         };
-        let at = |values: &[f64]| {
-            let mut d = design.clone();
+        // One copy, every point writing all the parameters over it.
+        let mut d = design.clone();
+        let mut at = |values: &[f64]| {
             for (p, &v) in params.iter().zip(values) {
                 p.write_design(&mut d, v).ok()?;
             }
