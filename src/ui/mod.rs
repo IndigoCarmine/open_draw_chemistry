@@ -17,6 +17,7 @@ pub mod menu;
 pub mod palette;
 pub mod periodic_table;
 pub mod properties;
+pub mod scan;
 pub mod status;
 pub mod tabs;
 pub mod view3d;
@@ -130,6 +131,8 @@ pub enum Command {
     AssemblyOpen,
     /// Put a reaction (stoichiometry) table under the active document's reaction.
     InsertReactionTable,
+    /// Open the パラメータスキャン window.
+    OpenScan,
 }
 
 #[cfg(test)]

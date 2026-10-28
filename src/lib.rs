@@ -11,6 +11,7 @@ pub mod fragments;
 pub mod io;
 pub mod ole;
 pub mod ole_server;
+pub mod scan;
 pub mod theme;
 pub mod three_d;
 pub mod ui;
