@@ -45,6 +45,8 @@ pub struct OpenDrawApp {
     view3d: ui::view3d::View3d,
     /// The assembly view's viewer and display options (the options are remembered).
     assembly_view: ui::assembly::AssemblyView,
+    /// The text format bar (書式): its recently used fonts are remembered.
+    text_format: ui::text_format::TextFormatBar,
 
     #[serde(skip)]
     docs: Vec<Document>,
@@ -100,6 +102,7 @@ impl Default for OpenDrawApp {
             view: ViewMode::default(),
             view3d: Default::default(),
             assembly_view: Default::default(),
+            text_format: Default::default(),
             docs: Vec::new(),
             active: 0,
             config: Config::default(),
@@ -1004,15 +1007,18 @@ fn japanese_analysis() -> AnalysisPanel {
 }
 
 /// The canvas of the active document, with a menu on right-click: ChemDraw's bond menu on a
-/// bond, and 3D化 for the molecule clicked on (or the selected ones, or the whole drawing).
+/// bond, and 3D化 for the molecule clicked on (or the selected ones, or the whole drawing);
+/// and over it, while there is text to format, the 書式 bar.
 fn editor_canvas(
     ui: &mut egui::Ui,
     doc: &mut Document,
     context_atom: &mut Option<u32>,
+    text_format: &mut ui::text_format::TextFormatBar,
     out: &mut Vec<Command>,
 ) {
     let response = doc.show(ui).response;
     let editor = &mut doc.editor;
+    ui::text_format::show(ui, response.rect, editor, text_format);
     // The pointer is over the menu while it is open, so the atom under it is taken now, the
     // way the editor keeps the bond (see `context_bond`).
     if response.secondary_clicked() {
@@ -1282,7 +1288,13 @@ impl eframe::App for OpenDrawApp {
                     &mut self.assembly_view,
                     render_state,
                 ),
-                Some(doc) => editor_canvas(ui, doc, &mut self.context_atom, &mut commands),
+                Some(doc) => editor_canvas(
+                    ui,
+                    doc,
+                    &mut self.context_atom,
+                    &mut self.text_format,
+                    &mut commands,
+                ),
                 None => welcome(ui, &mut commands),
             }
         });

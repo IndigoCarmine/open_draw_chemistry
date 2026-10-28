@@ -22,6 +22,7 @@ pub mod scan;
 pub mod smiles_row;
 pub mod status;
 pub mod tabs;
+pub mod text_format;
 pub mod view3d;
 pub mod viewport3d;
 
