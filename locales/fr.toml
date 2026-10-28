@@ -894,6 +894,9 @@ no_operations = "Aucune opération de symétrie (au moins x,y,z est nécessaire)
 no_identity = "Incluez l'opération identité x,y,z"
 
 [scan.window]
+color_auto = "Auto"
+color_min = "Min"
+color_max = "Max"
 title = "Balayage de paramètres"
 no_document = "Aucun document ouvert"
 no_view = "Configurez un balayage dans la vue 3D (longueur de liaison, angle de liaison, angle dièdre) ou dans la vue Assemblage (paramètres des étapes, molécules placées à la main)"

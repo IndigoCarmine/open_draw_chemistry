@@ -897,6 +897,9 @@ no_operations = "No hay operaciones de simetría (se necesita al menos x,y,z)"
 no_identity = "Incluye la operación identidad x,y,z"
 
 [scan.window]
+color_auto = "Auto"
+color_min = "Min"
+color_max = "Max"
 title = "Barrido de parámetros"
 no_document = "No hay ningún documento abierto"
 no_view = "Configura un barrido en la vista 3D (longitud de enlace, ángulo de enlace, ángulo diedro) o en la vista de ensamblaje (parámetros de los pasos, moléculas colocadas a mano)"

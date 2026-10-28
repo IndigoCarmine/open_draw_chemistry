@@ -894,6 +894,9 @@ no_operations = "Keine Symmetrieoperationen vorhanden (mindestens x,y,z ist nöt
 no_identity = "Die Identität x,y,z angeben"
 
 [scan.window]
+color_auto = "Auto"
+color_min = "Min"
+color_max = "Max"
 title = "Parameter-Scan"
 no_document = "Kein Dokument geöffnet"
 no_view = "Richten Sie einen Scan in der 3D-Ansicht (Bindungslänge, Bindungswinkel, Diederwinkel) oder in der Aggregat-Ansicht (Schrittparameter, manuell platzierte Moleküle) ein"
