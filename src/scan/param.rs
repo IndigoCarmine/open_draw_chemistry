@@ -22,6 +22,10 @@ pub enum StepField {
     ArrayOffset(usize),
     /// The array's per-copy rotation about x, y or z.
     ArrayEuler(usize),
+    /// The move/rotate step's offset along x, y or z.
+    TransformOffset(usize),
+    /// The move/rotate step's rotation about x, y or z.
+    TransformEuler(usize),
     CellA,
     CellB,
     CellC,
@@ -44,6 +48,10 @@ impl StepField {
                 .chain((0..3).map(ArrayEuler))
                 .collect(),
             Step::Lattice(_) => vec![CellA, CellB, CellC, CellAlpha, CellBeta, CellGamma],
+            Step::Transform(_) => (0..3)
+                .map(TransformOffset)
+                .chain((0..3).map(TransformEuler))
+                .collect(),
         }
     }
 
@@ -55,8 +63,8 @@ impl StepField {
             StackRise => t!("scan.param.stack_rise").into(),
             StackTwist => t!("scan.param.stack_twist").into(),
             StackSlip => t!("scan.param.stack_slip").into(),
-            ArrayOffset(i) => t!("scan.param.array_offset", axis = XYZ[i]),
-            ArrayEuler(i) => t!("scan.param.array_rotation", axis = XYZ[i]),
+            ArrayOffset(i) | TransformOffset(i) => t!("scan.param.array_offset", axis = XYZ[i]),
+            ArrayEuler(i) | TransformEuler(i) => t!("scan.param.array_rotation", axis = XYZ[i]),
             CellA => "a".into(),
             CellB => "b".into(),
             CellC => "c".into(),
@@ -70,7 +78,13 @@ impl StepField {
         use StepField::*;
         matches!(
             self,
-            RingTilt | StackTwist | ArrayEuler(_) | CellAlpha | CellBeta | CellGamma
+            RingTilt
+                | StackTwist
+                | ArrayEuler(_)
+                | TransformEuler(_)
+                | CellAlpha
+                | CellBeta
+                | CellGamma
         )
     }
 
@@ -85,6 +99,8 @@ impl StepField {
             (StackSlip, Step::Stack(s)) => &mut s.slip,
             (ArrayOffset(i), Step::Array(s)) => s.offset.get_mut(i)?,
             (ArrayEuler(i), Step::Array(s)) => s.euler_deg.get_mut(i)?,
+            (TransformOffset(i), Step::Transform(s)) => s.offset.get_mut(i)?,
+            (TransformEuler(i), Step::Transform(s)) => s.euler_deg.get_mut(i)?,
             (CellA, Step::Lattice(l)) => &mut l.cell.a,
             (CellB, Step::Lattice(l)) => &mut l.cell.b,
             (CellC, Step::Lattice(l)) => &mut l.cell.c,
@@ -382,6 +398,7 @@ mod tests {
                 Step::new_stack(),
                 Step::new_array(),
                 Step::new_lattice(),
+                Step::new_transform(),
             ],
             manual: vec![Instance {
                 component: 0,
@@ -397,7 +414,7 @@ mod tests {
     fn every_assembly_parameter_round_trips() {
         let base = design();
         let params = design_params(&base, Some(0));
-        assert_eq!(params.len(), 2 + 3 + 6 + 6 + 6);
+        assert_eq!(params.len(), 2 + 3 + 6 + 6 + 6 + 6);
         for (n, param) in params.iter().enumerate() {
             let mut d = base.clone();
             let value = 37.0 + n as f64 * 0.25;
@@ -412,6 +429,45 @@ mod tests {
             }
             assert!(!param.label(Some(&d), None).is_empty());
         }
+    }
+
+    /// Scanning a move/rotate step's numbers moves the built molecules.
+    #[test]
+    fn a_transform_step_can_be_scanned() {
+        let d = Design {
+            components: vec![component()],
+            steps: vec![Step::new_transform()],
+            ..Default::default()
+        };
+        let params = design_params(&d, None);
+        let fields: Vec<StepField> = params
+            .iter()
+            .map(|p| match p {
+                Param::Step { field, .. } => *field,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                StepField::TransformOffset(0),
+                StepField::TransformOffset(1),
+                StepField::TransformOffset(2),
+                StepField::TransformEuler(0),
+                StepField::TransformEuler(1),
+                StepField::TransformEuler(2),
+            ]
+        );
+        assert_eq!(params[2].unit(), "Å");
+        assert_eq!(params[5].unit(), "°");
+        let origin = |d: &Design| d.instances()[0].transform.apply([0.0; 3]);
+        let mut moved = d.clone();
+        params[2].write_design(&mut moved, 4.0).unwrap();
+        assert!(geom::distance(origin(&moved), [0.0, 0.0, 4.0]) < 1e-9);
+        // Turned 180° about z through the centroid (0.6, 0, 0): the carbon lands at 1.2.
+        params[5].write_design(&mut moved, 180.0).unwrap();
+        assert!(geom::distance(origin(&moved), [1.2, 0.0, 4.0]) < 1e-9);
+        assert_eq!(params[5].read_design(&moved), Some(180.0));
     }
 
     #[test]

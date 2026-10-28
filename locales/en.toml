@@ -927,6 +927,8 @@ step_ring = "Ring"
 step_stack = "Stack / helix"
 step_array = "Array"
 step_lattice = "Crystal"
+# Step name: moves and turns the whole structure once, without copying it.
+step_transform = "Move / Rotate"
 
 [assembly.model.ring]
 # Parameter labels are in a narrow column (about 8 characters)
@@ -961,6 +963,20 @@ offset = "Spacing"
 offset_tip = "Moves the i-th by i × spacing"
 rotation = "Rotation"
 rotation_tip = "Turns the i-th by i × angle about the origin before moving it (about x, then y, then z)"
+
+[assembly.model.transform]
+# Parameter label (narrow): how far the structure is moved
+offset = "Move"
+offset_tip = "Moves everything built so far by this much, after turning it"
+rotation = "Rotation"
+rotation_tip = "Turns everything built so far about the pivot (about x, then y, then z), before moving it"
+# Parameter label (narrow): the point the rotation is about
+pivot = "Pivot"
+pivot_tip = "The point the rotation turns about. The centroid also counts the molecules taken out of the steps (deleted or placed by hand)"
+# Choice of pivot: the centroid of the atoms built so far.
+pivot_centroid = "Centroid"
+# Choice of pivot: the origin of coordinates.
+pivot_origin = "Origin"
 
 [assembly.model.lattice]
 space_group = "Space group"
@@ -1091,6 +1107,12 @@ enabled_tip = "In use (click to skip)"
 disabled_tip = "Skipped (click to use)"
 
 [assembly.pipeline.summary]
+# Very short: the move/rotate step turns the structure about its centroid.
+rotated_centroid = "rotated about centroid"
+# Very short: the move/rotate step turns the structure about the origin.
+rotated_origin = "rotated about origin"
+# Very short: a move/rotate step that neither moves nor turns.
+unmoved = "no move"
 # Very short (a step card's one-line summary): how many copies the step makes.
 copies = { one = "{n} copy", other = "{n} copies" }
 # Very short: the array step also rotates each copy.
@@ -1119,6 +1141,7 @@ array_tip = "Lines up everything so far at a fixed spacing and rotation"
 ring_tip = "Arranges the molecules on a circle around the z axis (a rosette)"
 stack_tip = "Stacks everything so far along z. Twist and slip make it a helix"
 lattice_tip = "Takes everything so far as the asymmetric unit, builds the unit cell from the cell constants and the space group's symmetry operations, and repeats it"
+transform_tip = "Moves and turns everything built so far once, without copying it"
 lattice_exists = "There already is a crystal step"
 
 [assembly.symop.system]
