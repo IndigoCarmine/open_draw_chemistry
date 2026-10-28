@@ -958,6 +958,10 @@ relax_too_many_points = "計算點過多（{points}），無法鬆弛。鬆弛�
 relax_conflict = "OpenBabel 在最佳化時無法同時保持鍵角與二面角（二面角不會被固定）。請只掃描或約束其中之一"
 unconverged_points = "{n} 個點的最佳化未在步數內收斂（圖中以圓圈標示）"
 unconverged = "未收斂（最佳化步數用盡）"
+relax_fixed_both_sides = "{param} 兩側都有在 3D 檢視中固定的原子，不移動其中之一就無法設定該值。要鬆弛此掃描，請解除一側的固定"
+relax_too_much_work = "鬆弛耗時過長：{atoms} 個原子的 {points} 個點約需 {low}–{high}。此規模的鬆弛掃描最多 {max} 個點"
+relax_estimate = "預計時間：{low}–{high}"
+relax_long = "長時間計算：預計 {low}–{high}。在背景執行；取消會在約 {cancel} 內停止，已完成的點保留"
 
 [scan.progress]
 counts = "{done} / {total} 點 · 已經過 {elapsed}"

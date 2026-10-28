@@ -934,6 +934,10 @@ relax_too_many_points = "Trop de points pour relaxer ({points}). Un balayage rel
 relax_conflict = "OpenBabel ne peut pas maintenir à la fois un angle de liaison et un dièdre pendant l'optimisation (le dièdre ne serait pas maintenu). Balayez ou contraignez un seul des deux"
 unconverged_points = { one = "{n} point n'a pas convergé dans le nombre de pas d'optimisation (entouré dans le graphique)", many = "{n} de points n'ont pas convergé dans le nombre de pas d'optimisation (entourés dans le graphique)", other = "{n} points n'ont pas convergé dans le nombre de pas d'optimisation (entourés dans le graphique)" }
 unconverged = "Non convergé (pas d'optimisation épuisés)"
+relax_fixed_both_sides = "Des atomes fixés dans la vue 3D se trouvent des deux côtés de {param} : impossible de le régler sans en déplacer un. Libérez les atomes d'un côté pour relaxer ce balayage"
+relax_too_much_work = "Trop long à relaxer : {points} points de {atoms} atomes prendraient environ {low}–{high}. À cette taille, un balayage relaxé accepte au plus {max} points"
+relax_estimate = "Durée estimée : {low}–{high}"
+relax_long = "Calcul long : estimé à {low}–{high}. Il tourne en arrière-plan ; Annuler l'arrête en environ {cancel} et garde les points faits"
 
 [scan.progress]
 counts = "{done} / {total} points · écoulé {elapsed}"

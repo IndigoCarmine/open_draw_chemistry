@@ -938,6 +938,10 @@ relax_too_many_points = "Pontos demais para relaxar ({points}). Uma varredura re
 relax_conflict = "O OpenBabel não consegue manter um ângulo de ligação e um diedro ao mesmo tempo durante a otimização (o diedro não seria mantido). Varra ou restrinja apenas um deles"
 unconverged_points = { one = "{n} ponto não convergiu dentro dos passos de otimização (circulado no gráfico)", other = "{n} pontos não convergiram dentro dos passos de otimização (circulados no gráfico)" }
 unconverged = "Não convergiu (passos de otimização esgotados)"
+relax_fixed_both_sides = "Há átomos fixados na vista 3D dos dois lados de {param}, então não é possível ajustá-lo sem mover um deles. Libere os átomos de um lado para relaxar esta varredura"
+relax_too_much_work = "Longo demais para relaxar: {points} pontos de {atoms} átomos levariam cerca de {low}–{high}. Neste tamanho, uma varredura relaxada aceita no máximo {max} pontos"
+relax_estimate = "Tempo estimado: {low}–{high}"
+relax_long = "Cálculo longo: estimado em {low}–{high}. Roda em segundo plano; Cancelar o interrompe em cerca de {cancel} e mantém os pontos feitos"
 
 [scan.progress]
 counts = "{done} / {total} pontos · decorrido {elapsed}"

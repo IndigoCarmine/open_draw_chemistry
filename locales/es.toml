@@ -937,6 +937,10 @@ relax_too_many_points = "Demasiados puntos para relajar ({points}). Un escaneo r
 relax_conflict = "OpenBabel no puede mantener a la vez un ángulo de enlace y un diedro al optimizar (el diedro no se mantendría). Escanea o restringe solo uno de ellos"
 unconverged_points = { one = "{n} punto no convergió dentro de los pasos de optimización (marcado con un círculo en el gráfico)", other = "{n} puntos no convergieron dentro de los pasos de optimización (marcados con un círculo en el gráfico)" }
 unconverged = "No convergido (se agotaron los pasos de optimización)"
+relax_fixed_both_sides = "Hay átomos fijados en la vista 3D a ambos lados de {param}, así que no se puede ajustar sin mover uno de ellos. Libera los átomos de un lado para relajar este escaneo"
+relax_too_much_work = "Demasiado largo para relajar: {points} puntos de {atoms} átomos tardarían unos {low}–{high}. Con este tamaño, un escaneo relajado admite como máximo {max} puntos"
+relax_estimate = "Tiempo estimado: {low}–{high}"
+relax_long = "Cálculo largo: estimado {low}–{high}. Se ejecuta en segundo plano; Cancelar lo detiene en unos {cancel} y conserva los puntos hechos"
 
 [scan.progress]
 counts = "{done} / {total} puntos · transcurrido {elapsed}"

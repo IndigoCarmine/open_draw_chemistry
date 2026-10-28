@@ -19,6 +19,7 @@
 //! supercell that was built (its repeats), with no images across the cell's faces.
 
 use std::fmt::Write as _;
+use std::time::Duration;
 
 pub mod energy;
 pub mod param;
@@ -45,9 +46,75 @@ pub const MAX_POINTS: usize = 200;
 pub const MAX_RELAX_ATOMS: usize = 500;
 
 /// The most points (all axes together) of a relaxed scan: a 10° × 10° map of two dihedrals
-/// (37 × 37 = 1369) fits. Beyond, even a small molecule takes tens of minutes (see
-/// [`MAX_RELAX_ATOMS`]); each point's minimised structure is also kept, for clicking.
+/// (37 × 37 = 1369) fits — of a molecule small enough for [`MAX_RELAX_WORK`]. Beyond, even a
+/// small molecule takes tens of minutes (see [`MAX_RELAX_ATOMS`]); each point's minimised
+/// structure is also kept, for clicking.
 pub const MAX_RELAX_POINTS: usize = 1_500;
+
+/// Seconds a relaxed point takes per atom squared, on the fastest and the slowest force field
+/// (MMFF94 and UFF; release build, an alkane's dihedral — see [`MAX_RELAX_ATOMS`] and the
+/// `relaxed_point_timing` report): a point minimises over all atom pairs.
+pub const RELAX_SECONDS_PER_ATOM2: [f64; 2] = [1.2e-4, 5.0e-4];
+
+/// Seconds one minimiser segment (the steps between two looks at the cancel flag) takes per
+/// atom squared at worst: how long Cancel can take to stop a relaxed scan.
+pub const RELAX_SEGMENT_SECONDS_PER_ATOM2: f64 = 2.0e-5;
+
+/// The most work a relaxed scan accepts, in atoms² × points: ~3 h at the slowest rate of
+/// [`RELAX_SECONDS_PER_ATOM2`] (the caps on atoms and points alone would let through 500
+/// atoms × 1500 points, most of two days). A 37 × 37 map fits up to ~120 atoms, a 37-point
+/// dihedral up to the most atoms.
+pub const MAX_RELAX_WORK: f64 = 2.0e7;
+
+/// From this estimated time (at the slowest rate) on, the window warns before a relaxed scan
+/// starts.
+pub const LONG_RELAX: Duration = Duration::from_secs(10 * 60);
+
+/// How long a relaxed scan of `atoms` atoms and `points` points should take: at the fastest
+/// and at the slowest rate of [`RELAX_SECONDS_PER_ATOM2`].
+pub fn relax_estimate(atoms: usize, points: usize) -> [Duration; 2] {
+    let work = relax_work(atoms, points);
+    RELAX_SECONDS_PER_ATOM2.map(|rate| Duration::from_secs_f64(work * rate))
+}
+
+/// How long Cancel can take to stop a relaxed scan of `atoms` atoms: one minimiser segment.
+pub fn relax_cancel_latency(atoms: usize) -> Duration {
+    Duration::from_secs_f64(relax_work(atoms, 1) * RELAX_SEGMENT_SECONDS_PER_ATOM2)
+}
+
+fn relax_work(atoms: usize, points: usize) -> f64 {
+    (atoms as f64).powi(2) * points as f64
+}
+
+/// Why a relaxed scan of `atoms` atoms and `points` points is refused, if it is: more than
+/// [`MAX_RELAX_ATOMS`] atoms, [`MAX_RELAX_POINTS`] points, or [`MAX_RELAX_WORK`] together.
+pub fn relax_refusal(atoms: usize, points: usize) -> Option<String> {
+    if atoms > MAX_RELAX_ATOMS {
+        Some(t!(
+            "scan.window.relax_too_many_atoms",
+            atoms = atoms,
+            max = MAX_RELAX_ATOMS
+        ))
+    } else if points > MAX_RELAX_POINTS {
+        Some(t!(
+            "scan.window.relax_too_many_points",
+            points = points,
+            max = MAX_RELAX_POINTS
+        ))
+    } else if relax_work(atoms, points) > MAX_RELAX_WORK {
+        let [low, high] = relax_estimate(atoms, points);
+        Some(t!(
+            "scan.window.relax_too_much_work",
+            points = points,
+            atoms = atoms,
+            low = run::format_duration(low),
+            high = run::format_duration(high),
+            max = (MAX_RELAX_WORK / relax_work(atoms, 1)) as usize
+        ))
+    } else {
+        None
+    }
+}
 
 /// One scanned parameter and the values it takes.
 #[derive(Debug, Clone, PartialEq)]
@@ -219,7 +286,8 @@ impl Scan {
 
     /// The scan as CSV: a header naming each parameter and the energy with their units, then
     /// one row per computed point in grid order (a failed point's energy is `NaN`). A relaxed
-    /// scan has a last column saying whether each point's minimisation converged.
+    /// scan has a last column saying whether each point's minimisation converged (`false` for
+    /// a failed point).
     pub fn to_csv(&self) -> String {
         let mut out = String::new();
         let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
@@ -250,7 +318,8 @@ impl Scan {
                 let _ = write!(out, "NaN,NaN");
             }
             if self.relaxed {
-                let _ = write!(out, ",{}", !self.unconverged[i]);
+                // A failed point did not converge to anything.
+                let _ = write!(out, ",{}", e.is_finite() && !self.unconverged[i]);
             }
             let _ = writeln!(out);
         }
@@ -354,5 +423,79 @@ mod tests {
         assert_eq!(lines[1], "1,5,3");
         assert!(lines[2].ends_with("NaN,NaN"), "{}", lines[2]);
         assert_eq!(lines[3], "1.6666666666666665,2,0");
+    }
+
+    /// A relaxed scan's failed point did not converge: its CSV row says so, as an unconverged
+    /// one's does, while a converged one's says it did.
+    #[test]
+    fn a_relaxed_csv_does_not_call_failed_points_converged() {
+        let mut scan = scan_1d(&[Some(5.0), Some(f64::NAN), Some(2.0), None]);
+        scan.relaxed = true;
+        scan.unconverged[2] = true;
+        let csv = scan.to_csv();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert!(lines[0].ends_with(",\"converged\""), "{}", lines[0]);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[1], "1,5,3,true");
+        assert!(lines[2].ends_with("NaN,NaN,false"), "{}", lines[2]);
+        assert_eq!(lines[3], "1.6666666666666665,2,0,false");
+    }
+
+    /// The work guard: the caps on atoms and points alone, then their product, which the
+    /// largest atoms × the most points exceed many times over.
+    #[test]
+    fn relaxed_scans_too_long_to_run_are_refused_before_starting() {
+        assert_eq!(relax_refusal(32, 37), None);
+        assert_eq!(
+            relax_refusal(MAX_RELAX_ATOMS, 37),
+            None,
+            "a dihedral of the most atoms"
+        );
+        assert_eq!(relax_refusal(100, 37 * 37), None, "a 10° map of 100 atoms");
+        let too_many_atoms = relax_refusal(MAX_RELAX_ATOMS + 1, 2).unwrap();
+        assert!(
+            too_many_atoms.contains("Too many atoms"),
+            "{too_many_atoms}"
+        );
+        let too_many_points = relax_refusal(10, MAX_RELAX_POINTS + 1).unwrap();
+        assert!(
+            too_many_points.contains("Too many points"),
+            "{too_many_points}"
+        );
+        // Each alone allowed, together ~2 days.
+        let why = relax_refusal(MAX_RELAX_ATOMS, MAX_RELAX_POINTS).unwrap();
+        assert!(why.contains("1500 points"), "{why}");
+        assert!(why.contains("at most 80 points"), "{why}");
+        let [low, high] = relax_estimate(MAX_RELAX_ATOMS, MAX_RELAX_POINTS);
+        assert!(low < high);
+        assert!(high > Duration::from_secs(24 * 3600), "{high:?}");
+        // Right at the budget is allowed; one point more is not.
+        let atoms = 200;
+        let most = (MAX_RELAX_WORK / (atoms * atoms) as f64) as usize;
+        assert_eq!(relax_refusal(atoms, most), None);
+        assert!(relax_refusal(atoms, most + 1).is_some());
+        // Whatever is allowed ends within ~3 h even at the slowest rate.
+        assert!(relax_estimate(atoms, most)[1] <= Duration::from_secs(3 * 3600));
+    }
+
+    /// The estimate warns of a long run (and how long Cancel takes) before it starts.
+    #[test]
+    fn the_relaxed_estimate_grows_as_atoms_squared_times_points() {
+        let [low, high] = relax_estimate(100, 10);
+        let [low4, high4] = relax_estimate(200, 10);
+        assert!((low4.as_secs_f64() / low.as_secs_f64() - 4.0).abs() < 1e-9);
+        assert!((high4.as_secs_f64() / high.as_secs_f64() - 4.0).abs() < 1e-9);
+        let [_, double] = relax_estimate(100, 20);
+        assert!((double.as_secs_f64() / high.as_secs_f64() - 2.0).abs() < 1e-9);
+        assert!(
+            relax_estimate(32, 13)[1] < LONG_RELAX,
+            "butane-sized: short"
+        );
+        assert!(
+            relax_estimate(MAX_RELAX_ATOMS, 37)[1] > LONG_RELAX,
+            "warned"
+        );
+        assert!(relax_cancel_latency(MAX_RELAX_ATOMS) < Duration::from_secs(30));
+        assert!(relax_cancel_latency(MAX_RELAX_ATOMS) > relax_cancel_latency(100));
     }
 }

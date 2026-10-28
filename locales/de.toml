@@ -934,6 +934,10 @@ relax_too_many_points = "Zu viele Punkte zum Relaxieren ({points}). Ein relaxier
 relax_conflict = "OpenBabel kann beim Optimieren einen Bindungswinkel und einen Diederwinkel nicht gleichzeitig festhalten (der Diederwinkel würde nicht gehalten). Nur einen von beiden scannen oder beschränken"
 unconverged_points = { one = "{n} Punkt ist innerhalb der Optimierungsschritte nicht konvergiert (im Diagramm umkreist)", other = "{n} Punkte sind innerhalb der Optimierungsschritte nicht konvergiert (im Diagramm umkreist)" }
 unconverged = "Nicht konvergiert (Optimierungsschritte aufgebraucht)"
+relax_fixed_both_sides = "Im 3D-Modell fixierte Atome liegen auf beiden Seiten von {param}; der Wert lässt sich nicht setzen, ohne eines davon zu bewegen. Zum Relaxieren die Fixierung auf einer Seite aufheben"
+relax_too_much_work = "Zu lang zum Relaxieren: {points} Punkte mit {atoms} Atomen dauern etwa {low}–{high}. Bei dieser Größe nimmt ein relaxierter Scan höchstens {max} Punkte"
+relax_estimate = "Geschätzte Dauer: {low}–{high}"
+relax_long = "Lange Rechnung: geschätzt {low}–{high}. Sie läuft im Hintergrund; Abbrechen stoppt sie innerhalb von etwa {cancel}, die fertigen Punkte bleiben"
 
 [scan.progress]
 counts = "{done} / {total} Punkte · vergangen {elapsed}"

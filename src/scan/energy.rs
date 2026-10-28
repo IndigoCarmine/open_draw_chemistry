@@ -272,7 +272,8 @@ impl Evaluator {
         cancel: &AtomicBool,
     ) -> Option<(bool, u32)> {
         let mut taken = 0;
-        // The energy (restraints included) where the last segment ended.
+        // The energy where the last segment ended, as the minimiser's frames report it: the
+        // force field's own, the restraints' penalty left out.
         let mut last = f64::INFINITY;
         loop {
             if cancel.load(Ordering::Relaxed) {

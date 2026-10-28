@@ -369,9 +369,11 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     if same {
         ui.label(RichText::new(t!("scan.window.same_axes")).color(warn_color(ui)));
     }
-    let relax_refused = relax.then(|| relax_limit(atoms, total)).flatten();
+    let relax_refused = relax.then(|| scan::relax_refusal(atoms, total)).flatten();
     if let Some(why) = &relax_refused {
         ui.label(RichText::new(why).color(warn_color(ui)));
+    } else if relax && total > 0 {
+        ui.label(relax_estimate(ui, atoms, total));
     }
 
     ui.horizontal(|ui| {
@@ -429,22 +431,29 @@ fn axis_row(
     }
 }
 
-/// Why a relaxed scan of `atoms` atoms and `points` points would be refused, if it would.
-fn relax_limit(atoms: usize, points: usize) -> Option<String> {
-    if atoms > scan::MAX_RELAX_ATOMS {
-        Some(t!(
-            "scan.window.relax_too_many_atoms",
-            atoms = atoms,
-            max = scan::MAX_RELAX_ATOMS
+/// How long a relaxed scan of `atoms` atoms and `points` points should take, before it starts:
+/// a warning, saying how long Cancel takes, from [`scan::LONG_RELAX`] on.
+fn relax_estimate(ui: &egui::Ui, atoms: usize, points: usize) -> RichText {
+    let [low, high] = scan::relax_estimate(atoms, points);
+    let (low_text, high_text) = (format_duration(low), format_duration(high));
+    if high >= scan::LONG_RELAX {
+        let cancel = format_duration(scan::relax_cancel_latency(atoms));
+        RichText::new(t!(
+            "scan.window.relax_long",
+            low = low_text,
+            high = high_text,
+            cancel = cancel
         ))
-    } else if points > scan::MAX_RELAX_POINTS {
-        Some(t!(
-            "scan.window.relax_too_many_points",
-            points = points,
-            max = scan::MAX_RELAX_POINTS
-        ))
+        .color(warn_color(ui))
     } else {
-        None
+        muted(
+            ui,
+            t!(
+                "scan.window.relax_estimate",
+                low = low_text,
+                high = high_text
+            ),
+        )
     }
 }
 
@@ -1309,7 +1318,7 @@ mod tests {
         scan.unconverged[1] = true;
         // "Minimised" at 60°: the dihedral set, and the whole chain moved along x.
         let set = dihedral
-            .write_coords(&edit::coords(&model), &edit::graph(&model), 60.0, None)
+            .write_coords(&edit::coords(&model), &edit::graph(&model), 60.0, &[])
             .unwrap();
         let relaxed: Vec<_> = set.iter().map(|p| [p[0] + 0.5, p[1], p[2]]).collect();
         doc.scan = Some(Run::finished_relaxed(

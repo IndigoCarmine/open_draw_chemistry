@@ -21,7 +21,8 @@ pub enum Source {
         topology: Option<(Vec<String>, Vec<Bond3d>)>,
     },
     /// The model as it was when the scan started; each point edits its coordinates, the
-    /// parameters set in turn (the smaller side of each moving), never moving `anchor`.
+    /// parameters set in turn (the smaller side of each moving), never moving `anchor` — nor,
+    /// in a relaxed scan, the atoms fixed in the 3D view (see [`Source::at_from`]).
     Model {
         model: Model3d,
         graph: Graph,
@@ -136,31 +137,64 @@ impl Source {
                     })
                 }
             }
-            Source::Model { model, .. } => self.at_from(&edit::coords(model), values),
+            Source::Model { model, .. } => self.at_from(&edit::coords(model), values, &[]),
         }
     }
 
     /// The model's atoms at `from` (another structure of them, such as a neighbouring point's
-    /// relaxed one) with the parameters set to `values`. The assembly's points are always
-    /// rebuilt from its design, so for it this is [`Source::at`].
-    pub fn at_from(&self, from: &[Vec3], values: &[f64]) -> Result<Point, String> {
+    /// relaxed one) with the parameters set to `values`, none of the `fixed` atoms moving (see
+    /// [`Source::pinned`]). The assembly's points are always rebuilt from its design, so for
+    /// it this is [`Source::at`].
+    pub fn at_from(&self, from: &[Vec3], values: &[f64], fixed: &[usize]) -> Result<Point, String> {
         match self {
             Source::Assembly { .. } => self.at(values),
-            Source::Model {
-                graph,
-                anchor,
-                params,
-                ..
-            } => {
+            Source::Model { graph, params, .. } => {
                 let mut coords = from.to_vec();
                 for (p, &v) in params.iter().zip(values) {
                     coords = p
-                        .write_coords(&coords, graph, v, *anchor)
+                        .write_coords(&coords, graph, v, &self.pinned(p, fixed)?)
                         .map_err(|e| e.to_string())?;
                 }
                 Ok(Point::Coords(coords))
             }
         }
+    }
+
+    /// The atoms setting the model's parameter `param` keeps still: the `fixed` ones (those a
+    /// relaxed scan holds where they were when it started) and the anchor — or the `fixed`
+    /// ones alone when with the anchor no side is free, for the minimiser moves the anchor
+    /// anyway. Fails when the `fixed` atoms are on both sides of the parameter.
+    fn pinned(&self, param: &Param, fixed: &[usize]) -> Result<Vec<usize>, String> {
+        let Source::Model {
+            model,
+            graph,
+            anchor,
+            ..
+        } = self
+        else {
+            return Ok(Vec::new());
+        };
+        let mut pinned = fixed.to_vec();
+        pinned.extend(anchor.filter(|a| !fixed.contains(a)));
+        if !param.blocked_by(graph, &pinned) {
+            Ok(pinned)
+        } else if !param.blocked_by(graph, fixed) {
+            Ok(fixed.to_vec())
+        } else {
+            Err(t!(
+                "scan.window.relax_fixed_both_sides",
+                param = param.label(None, Some(model))
+            ))
+        }
+    }
+
+    /// Why the parameters cannot be set at all without moving one of the `fixed` atoms, if
+    /// they cannot (checked before a relaxed scan starts; which side moves does not depend on
+    /// the values).
+    pub fn fixed_conflict(&self, fixed: &[usize]) -> Option<String> {
+        self.params()
+            .iter()
+            .find_map(|p| self.pinned(p, fixed).err())
     }
 }
 

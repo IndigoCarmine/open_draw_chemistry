@@ -261,21 +261,38 @@ impl Param {
     }
 
     /// `coords` with the parameter set to `value`, moving the smaller side as the 編集 tools
-    /// do (never the `anchor` atom).
+    /// do (never an atom of `pinned`: the anchor, or the atoms a relaxed scan holds fixed).
     pub fn write_coords(
         &self,
         coords: &[Vec3],
         graph: &Graph,
         value: f64,
-        anchor: Option<usize>,
+        pinned: &[usize],
     ) -> Result<Vec<Vec3>, ApplyError> {
         let result = match *self {
-            Param::Bond([a, b]) => geom::set_bond_length(coords, graph, a, b, value, anchor),
-            Param::Angle(atoms) => geom::set_angle(coords, graph, atoms, value, anchor),
-            Param::Dihedral(atoms) => geom::set_dihedral(coords, graph, atoms, value, anchor),
+            Param::Bond([a, b]) => {
+                geom::set_bond_length_avoiding(coords, graph, a, b, value, pinned)
+            }
+            Param::Angle(atoms) => geom::set_angle_avoiding(coords, graph, atoms, value, pinned),
+            Param::Dihedral(atoms) => {
+                geom::set_dihedral_avoiding(coords, graph, atoms, value, pinned)
+            }
             _ => return Err(ApplyError(t!("scan.error.assembly_param").into())),
         };
         result.map_err(|e| ApplyError(e.to_string()))
+    }
+
+    /// Whether every side that setting the 3D model's parameter could move holds an atom of
+    /// `pinned`, so it cannot be set without moving one (false for the assembly's, and for one
+    /// that cannot be set for another reason).
+    pub fn blocked_by(&self, graph: &Graph, pinned: &[usize]) -> bool {
+        let side = match *self {
+            Param::Bond([a, b]) => geom::moving_side_avoiding(graph, a, b, pinned).err(),
+            Param::Angle(atoms) => geom::swinging_arm(graph, atoms, pinned).err(),
+            Param::Dihedral([_, b, c, _]) => geom::moving_side_avoiding(graph, b, c, pinned).err(),
+            _ => None,
+        };
+        side == Some(geom::EditError::AnchorBlocks)
     }
 
     /// The restraint holding the 3D model's parameter at `value` through an optimisation (none
@@ -432,15 +449,15 @@ mod tests {
         let graph = Graph::new(6, [(0, 1), (1, 2), (2, 3), (0, 4), (3, 5)]);
         let param = Param::Dihedral([0, 1, 2, 3]);
         for target in [-180.0, -95.0, 0.0, 60.0, 179.0] {
-            let next = param.write_coords(&coords, &graph, target, None).unwrap();
+            let next = param.write_coords(&coords, &graph, target, &[]).unwrap();
             let back = param.read_coords(&next).unwrap();
             assert!(geom::wrap_degrees(back - target).abs() < 1e-6, "{back}");
         }
         let bond = Param::Bond([1, 2]);
-        let next = bond.write_coords(&coords, &graph, 1.7, None).unwrap();
+        let next = bond.write_coords(&coords, &graph, 1.7, &[]).unwrap();
         assert!((bond.read_coords(&next).unwrap() - 1.7).abs() < 1e-9);
         let angle = Param::Angle([0, 1, 2]);
-        let next = angle.write_coords(&coords, &graph, 100.0, None).unwrap();
+        let next = angle.write_coords(&coords, &graph, 100.0, &[]).unwrap();
         assert!((angle.read_coords(&next).unwrap() - 100.0).abs() < 1e-6);
         assert_eq!(
             Param::of_picked(&[0, 1, 2, 3], &graph),

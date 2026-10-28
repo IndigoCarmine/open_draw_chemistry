@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::energy::{self, Evaluator, Relaxation};
 use super::source::{Point, Reference, Source};
-use super::{Axis, MAX_ATOMS, MAX_RELAX_ATOMS, MAX_RELAX_POINTS, Scan, ScanAxis, grid};
+use super::{Axis, MAX_ATOMS, Scan, ScanAxis, grid, relax_refusal};
 use crate::three_d::geom::Vec3;
 use crate::three_d::{Constraint, ForceField, OPTIMIZE_STEPS, edit};
 
@@ -70,6 +70,17 @@ impl Relax {
             constraints,
             steps: OPTIMIZE_STEPS,
         }
+    }
+
+    /// The atoms fixed in place.
+    fn fixed(&self) -> Vec<usize> {
+        self.constraints
+            .iter()
+            .filter_map(|c| match *c {
+                Constraint::Fix(a) => Some(a),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The restraints of the point where `params` take `values`.
@@ -160,8 +171,13 @@ impl Run {
     /// and held while everything else is minimised under `relax`, and the energy is that of
     /// the minimised structure. Each point starts from its neighbour's minimised structure
     /// (the previous point along the second axis, else the first point of the previous row).
-    /// Refuses at once a source other than the model, more than [`MAX_RELAX_ATOMS`] atoms or
-    /// [`MAX_RELAX_POINTS`] points, and restraints OpenBabel cannot hold together.
+    ///
+    /// The atoms fixed in `relax` stay where they were when the scan started at every point:
+    /// each parameter is set by moving a side that holds none of them (the anchor's side too
+    /// when there is no other, the minimiser moving the anchor anyway), so a scan whose fixed
+    /// atoms sit on both sides of a parameter — which only the minimiser could reach, if at
+    /// all — is refused, as are a source other than the model, a scan beyond
+    /// [`super::relax_refusal`]'s limits and restraints OpenBabel cannot hold together.
     pub fn start_relaxed(
         source: Source,
         axes: &[Axis],
@@ -171,27 +187,19 @@ impl Run {
         if !matches!(source, Source::Model { .. }) {
             return Err(t!("scan.window.relax_model_only").into());
         }
-        let atoms = source.atom_count();
-        if atoms > MAX_RELAX_ATOMS {
-            return Err(t!(
-                "scan.window.relax_too_many_atoms",
-                atoms = atoms,
-                max = MAX_RELAX_ATOMS
-            ));
-        }
         let points = grid(axes);
-        if points.len() > MAX_RELAX_POINTS {
-            return Err(t!(
-                "scan.window.relax_too_many_points",
-                points = points.len(),
-                max = MAX_RELAX_POINTS
-            ));
+        if let Some(why) = relax_refusal(source.atom_count(), points.len()) {
+            return Err(why);
         }
         let params = source.params().to_vec();
         if let Some(values) = points.first()
             && edit::conflict(&relax.at(&params, values)).is_some()
         {
             return Err(t!("scan.window.relax_conflict").into());
+        }
+        let fixed = relax.fixed();
+        if let Some(why) = source.fixed_conflict(&fixed) {
+            return Err(why);
         }
         let row = axes.get(1).map_or(1, |a| a.values().len()).max(1);
         let work = move |source: &Source, send: &Sender<Message>, cancel: &AtomicBool| {
@@ -210,8 +218,15 @@ impl Run {
                 }
                 let first_of_row = index % row == 0;
                 let from = if first_of_row { &row_first } else { &previous };
-                let from = from.as_deref().unwrap_or(&reference.coords);
-                let relaxed = match source.at_from(from, values) {
+                let mut from = from.as_deref().unwrap_or(&reference.coords).to_vec();
+                // The minimiser keeps the fixed atoms where they start; put them back where
+                // they were at the scan's start exactly, whatever it left them at.
+                for &a in &fixed {
+                    if let (Some(at), Some(&start)) = (from.get_mut(a), reference.coords.get(a)) {
+                        *at = start;
+                    }
+                }
+                let relaxed = match source.at_from(&from, values, &fixed) {
                     Ok(Point::Coords(coords)) => {
                         evaluator.relax(&coords, &relax.at(&params, values), relax.steps, cancel)
                     }
@@ -678,6 +693,81 @@ mod tests {
         assert!(run.scan.energies[done..].iter().all(Option::is_none));
     }
 
+    /// Setting a parameter for a relaxed scan never moves a fixed atom: the side holding none
+    /// moves, even when it holds the anchor or is the larger one.
+    #[test]
+    fn fixed_atoms_stay_put_when_a_parameter_is_set() {
+        let model = chain_model();
+        let start = edit::coords(&model);
+        let bond = Param::Bond([2, 3]);
+        // Unfixed, the smaller side (atom 3) moves; fixed, the rest of the chain does.
+        let source = Source::model(&model, Some(0), vec![bond.clone()]);
+        let Ok(Point::Coords(rigid)) = source.at(&[1.7]) else {
+            panic!("rigid")
+        };
+        assert_ne!(
+            rigid[3], start[3],
+            "the rigid scan moves the smaller side, as before"
+        );
+        assert_eq!(rigid[0], start[0], "never the anchor");
+        // The middle bond's sides are the same size; that of atoms 2 and 3 moves unless fixed.
+        let middle = Param::Bond([1, 2]);
+        for (anchor, fixed, bond) in [
+            (Some(0), vec![3], &bond),
+            (None, vec![3], &bond),
+            (None, vec![2, 3], &middle),
+            (Some(0), vec![3, 2], &middle),
+        ] {
+            let source = Source::model(&model, anchor, vec![bond.clone()]);
+            assert_eq!(source.fixed_conflict(&fixed), None);
+            let Ok(Point::Coords(c)) = source.at_from(&start, &[1.7], &fixed) else {
+                panic!("{anchor:?} {fixed:?}")
+            };
+            assert!((bond.read_coords(&c).unwrap() - 1.7).abs() < 1e-9);
+            for &a in &fixed {
+                assert_eq!(c[a], start[a], "{anchor:?} {fixed:?}: fixed atom {a} moved");
+            }
+        }
+        // A fixed atom on the smaller side of a dihedral's bond: the other side turns.
+        let dihedral = Param::Dihedral([0, 1, 2, 3]);
+        let source = Source::model(&model, None, vec![dihedral.clone()]);
+        let Ok(Point::Coords(c)) = source.at_from(&start, &[60.0], &[3]) else {
+            panic!("dihedral")
+        };
+        assert!(
+            crate::three_d::geom::wrap_degrees(dihedral.read_coords(&c).unwrap() - 60.0).abs()
+                < 1e-6
+        );
+        assert_eq!(c[3], start[3]);
+        assert_eq!(c[2], start[2]);
+        // Fixed atoms on both sides: refused, naming the parameter.
+        let source = Source::model(&model, None, vec![bond.clone()]);
+        let why = source.fixed_conflict(&[0, 3]).expect("both sides fixed");
+        assert!(why.contains("both sides") && why.contains("C3–C4"), "{why}");
+        assert!(source.at_from(&start, &[1.7], &[0, 3]).is_err());
+        let source = Source::model(&model, Some(0), vec![Param::Angle([1, 2, 3])]);
+        assert!(source.fixed_conflict(&[0, 3]).is_some());
+        assert_eq!(
+            source.fixed_conflict(&[0]),
+            None,
+            "the arm with atom 3 swings"
+        );
+        let Err(message) = Run::start_relaxed(
+            Source::model(&model, None, vec![bond]),
+            &[Axis {
+                param: Param::Bond([2, 3]),
+                start: 1.4,
+                end: 1.7,
+                points: 2,
+            }],
+            ForceField::Uff,
+            Relax::new(vec![Constraint::Fix(0), Constraint::Fix(3)]),
+        ) else {
+            panic!("a scan that must move a fixed atom started");
+        };
+        assert!(message.contains("both sides"), "{message}");
+    }
+
     #[test]
     fn too_large_scans_are_refused_at_once() {
         let mut model = chain_model();
@@ -1086,6 +1176,63 @@ mod energy_tests {
         assert!(deviation < 0.5, "off by {deviation}°");
     }
 
+    /// Fixed atoms on the side that setting the parameter would move (the smaller side, or the
+    /// anchor's other side) stay where they were at the scan's start at every point, several
+    /// of them, with or without an anchor elsewhere, and the scanned value is still held.
+    #[test]
+    fn fixed_atoms_on_the_moving_side_stay_put_through_a_relaxed_scan() {
+        let model = butane(ForceField::Uff);
+        let graph = edit::graph(&model);
+        let start = edit::coords(&model);
+        // A hydrogen on C4 (atom 3), the end the C3–C4 bond and the dihedral would move.
+        let h4 = graph
+            .neighbors(3)
+            .iter()
+            .copied()
+            .find(|&n| model.atoms[n].element == "H")
+            .expect("a hydrogen on C4");
+        let bond = Axis {
+            param: Param::Bond([2, 3]),
+            start: 1.45,
+            end: 1.65,
+            points: 3,
+        };
+        for (anchor, fixed, axis) in [
+            // The review's case: the anchor on the other end.
+            (Some(0), vec![3], bond.clone()),
+            (None, vec![3, h4], bond),
+            (None, vec![h4], butane_dihedral_axis(5)),
+            (Some(1), vec![3, h4], butane_dihedral_axis(5)),
+        ] {
+            let mut run = Run::start_relaxed(
+                Source::model(&model, anchor, vec![axis.param.clone()]),
+                std::slice::from_ref(&axis),
+                ForceField::Uff,
+                Relax::new(fixed.iter().map(|&a| Constraint::Fix(a)).collect()),
+            )
+            .expect("start");
+            run.wait();
+            assert_eq!(run.error, None);
+            assert_eq!(run.scan.done(), axis.points);
+            for i in 0..axis.points {
+                assert!(
+                    run.scan.energies[i].unwrap().is_finite(),
+                    "point {i} failed"
+                );
+                let coords = run.structure(i).unwrap();
+                for &a in &fixed {
+                    let moved = crate::three_d::geom::distance(coords[a], start[a]);
+                    assert!(
+                        moved < 1e-6,
+                        "{anchor:?} {fixed:?} point {i}: fixed atom {a} moved {moved} Å"
+                    );
+                }
+            }
+            let deviation = worst_deviation(&run);
+            assert!(deviation < 0.5, "{anchor:?} {fixed:?}: off by {deviation}");
+        }
+    }
+
     /// A point whose minimisation runs out of steps still moving keeps its energy but is
     /// marked unconverged, unlike a failed one.
     #[test]
@@ -1151,6 +1298,51 @@ mod energy_tests {
         assert_eq!(relaxed, Relaxation::Cancelled);
     }
 
+    /// A flag raised from another thread while a point minimises stops it at the next
+    /// segment, long before the point would have finished.
+    #[test]
+    fn a_relaxed_point_can_be_cancelled_part_way() {
+        // ~100 atoms: a point takes a second or more (see `relaxed_point_timing`), one
+        // segment tens of milliseconds.
+        let model = alkane(33, ForceField::Uff);
+        let param = Param::Dihedral([0, 1, 2, 3]);
+        let source = Source::model(&model, None, vec![param.clone()]);
+        let reference = source.reference().unwrap();
+        let mut evaluator = Evaluator::new(&reference.molfile, ForceField::Uff).unwrap();
+        let Ok(Point::Coords(syn)) = source.at(&[0.0]) else {
+            panic!("syn")
+        };
+        let held = [param.restraint(0.0).unwrap()];
+        let never = AtomicBool::new(false);
+        let started = Instant::now();
+        let whole = evaluator.relax(&syn, &held, OPTIMIZE_STEPS, &never);
+        let whole_took = started.elapsed();
+        assert!(matches!(whole, Relaxation::Done { .. }), "{whole:?}");
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let raise = {
+            let cancel = cancel.clone();
+            let after = whole_took / 10;
+            std::thread::spawn(move || {
+                std::thread::sleep(after);
+                cancel.store(true, Ordering::Relaxed);
+            })
+        };
+        let started = Instant::now();
+        let relaxed = evaluator.relax(&syn, &held, OPTIMIZE_STEPS, &cancel);
+        let took = started.elapsed();
+        raise.join().unwrap();
+        assert_eq!(
+            relaxed,
+            Relaxation::Cancelled,
+            "after {took:?} of {whole_took:?}"
+        );
+        assert!(
+            took < whole_took / 2,
+            "cancelled after {took:?}, the whole point takes {whole_took:?}"
+        );
+    }
+
     /// What OpenBabel cannot hold, or a relaxed scan cannot do, is refused before starting.
     #[test]
     fn relaxed_scans_it_cannot_do_are_refused_at_once() {
@@ -1200,6 +1392,61 @@ mod energy_tests {
         let source = Source::model(&big, None, vec![Param::Dihedral([0, 1, 2, 3])]);
         let axis = butane_dihedral_axis(3);
         assert!(Run::start_relaxed(source, &[axis], ForceField::Uff, Relax::new(vec![])).is_err());
+    }
+
+    /// An alkane of `carbons` carbons (3n + 2 atoms), drawn as a zig-zag.
+    fn alkane(carbons: usize, force_field: ForceField) -> Model3d {
+        let mut drawing = chembuider_rs::Molecule::default();
+        let mut prev = drawing.add_atom("C".to_owned(), [0.0, 0.0], 0);
+        for i in 1..carbons {
+            let y = 0.75 * (i % 2) as f32;
+            let next = drawing.add_atom("C".to_owned(), [1.3 * i as f32, y], 0);
+            drawing.add_bond(prev, next, BondOrder::Single);
+            prev = next;
+        }
+        generate(&drawing, force_field)
+    }
+
+    /// The cost of a relaxed point and of one minimiser segment (the cancel latency) as the
+    /// atoms grow, behind [`crate::scan::relax_estimate`]
+    /// (`cargo test --release -- --ignored --nocapture relaxed_point_timing`).
+    #[test]
+    #[ignore = "timing report"]
+    fn relaxed_point_timing() {
+        for carbons in [33, 100, 166] {
+            for ff in [ForceField::Mmff94, ForceField::Uff] {
+                let model = alkane(carbons, ff);
+                let param = Param::Dihedral([0, 1, 2, 3]);
+                let source = Source::model(&model, None, vec![param.clone()]);
+                let reference = source.reference().unwrap();
+                let mut ev = Evaluator::new(&reference.molfile, ff).unwrap();
+                let never = AtomicBool::new(false);
+                let mut point = Duration::ZERO;
+                for target in [60.0, 0.0, -120.0] {
+                    let Ok(Point::Coords(c)) = source.at(&[target]) else {
+                        panic!()
+                    };
+                    let held = [param.restraint(target).unwrap()];
+                    let t = Instant::now();
+                    let _ = ev.relax(&c, &held, OPTIMIZE_STEPS, &never);
+                    point += t.elapsed() / 3;
+                }
+                let Ok(Point::Coords(c)) = source.at(&[0.0]) else {
+                    panic!()
+                };
+                let held = [param.restraint(0.0).unwrap()];
+                let t = Instant::now();
+                let _ = ev.relax(&c, &held, 50, &never);
+                let segment = t.elapsed();
+                let atoms = reference.atoms as f64;
+                eprintln!(
+                    "{ff} {} atoms: point {point:?} ({:.2e} s/atom²), 50 steps {segment:?} ({:.2e} s/atom²)",
+                    reference.atoms,
+                    point.as_secs_f64() / (atoms * atoms),
+                    segment.as_secs_f64() / (atoms * atoms),
+                );
+            }
+        }
     }
 
     /// Per-point cost of replacing the coordinates against re-reading the molfile, for each
