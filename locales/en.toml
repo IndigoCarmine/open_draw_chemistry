@@ -1173,17 +1173,46 @@ unset = "Not set"
 use_picked = "Use selected atoms"
 use_picked_tip = "Use the atoms selected in the 3D view for this axis (2 atoms: bond length, 3: bond angle, 4: dihedral)"
 use_picked_disabled_tip = "In the 3D view, select 2 to 4 bonded atoms in order (4 for a dihedral)"
-two_d = "2D scan (two parameters)"
+# Button: scan one more parameter (another axis).
+add_axis = "+ Add axis"
+add_axis_tip = "Scan one more parameter: the energy is computed at every combination of the axes' values"
+# Tooltips of the small buttons on each axis's row.
+move_up_tip = "Move this axis up (the first axis is varied slowest)"
+move_down_tip = "Move this axis down"
+remove_axis_tip = "Remove this axis"
+# Next to an axis's number of points; {total}: the points of all axes together.
+total_points = "→ {total} points in all"
+# {max}: the most points a scan takes.
+total_points_tip = "The points of every axis multiplied. A scan takes at most {max} points"
+# {points}: points asked for (all axes together); {max}: the most a scan takes.
+too_many_points = "Too many points ({points}). A scan takes at most {max} points, all axes together; use fewer points or axes"
+# Heading of what a scan of three or more parameters plots.
+view_heading = "Plot"
+# Label before the parameter plotted across (x).
+view_across = "Across"
+# Label before the parameter plotted up (y), or none for a curve.
+view_up = "Up"
+view_curve = "None (curve)"
+# For a parameter not plotted: show the points at one of its values.
+reduce_slice = "Slice"
+reduce_slice_tip = "Show the points at one value of this parameter (chosen with the slider)"
+# For a parameter not plotted: show the lowest energy over its values.
+reduce_minimum = "Lowest"
+reduce_minimum_tip = "Show at each point of the plot the lowest energy over this parameter's values; clicking applies the point that has it"
+slice_at_minimum = "Slices at the minimum"
+slice_at_minimum_tip = "Move every slice to the values of the lowest point"
+# Tooltip line of a plotted point that is the lowest over some parameters; {axes}: their names.
+projected = "Lowest over {axes}"
 force_field = "Force field"
 # {total}: number of grid points; {atoms}: number of atoms; {unit}: energy unit such as kcal/mol.
 summary = "Points: {total} · atoms: {atoms} · single-point energy at each point, no optimization ({unit})"
 crystal_note = "Crystals are computed without periodic boundaries (the force fields do not support periodic systems, so this is the energy of the finite supercell that was built)"
 # {atoms}: atoms in the structure; {max}: the most a scan accepts.
 too_many_atoms = "Too many atoms ({atoms}). A scan takes at most {max} atoms"
-same_axes = "Both axes are the same parameter"
+same_axes = "Two axes are the same parameter"
 start = "Start scan"
 start_disabled_tip = "Choose the parameters to scan"
-# Heading of one scanned axis; {number} is 1 or 2.
+# Heading of one scanned axis; {number}: its place, 1 for the first.
 axis = "Axis {number}"
 # Label before the first value of an axis's range.
 range_start = "Start"

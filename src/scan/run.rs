@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 
 use super::energy::{self, Evaluator, Relaxation};
 use super::source::{Point, Reference, Source};
-use super::{Axis, MAX_ATOMS, Scan, ScanAxis, grid, relax_refusal};
+use super::{
+    Axis, MAX_ATOMS, Scan, ScanAxis, grid, points_refusal, previous_neighbour, relax_refusal,
+    total_points,
+};
 use crate::three_d::geom::Vec3;
 use crate::three_d::{Constraint, ForceField, OPTIMIZE_STEPS, edit};
 
@@ -122,9 +125,9 @@ pub struct Run {
 }
 
 impl Run {
-    /// Start scanning `axes` (one or two, the parameters of `source` in order) under
+    /// Start scanning `axes` (any number, the parameters of `source` in order) under
     /// `force_field`. Refuses at once — without a thread — a structure of more than
-    /// [`MAX_ATOMS`] atoms and a scan without axes.
+    /// [`MAX_ATOMS`] atoms and a scan of more than [`super::MAX_SCAN_POINTS`] points.
     pub fn start(source: Source, axes: &[Axis], force_field: ForceField) -> Result<Run, String> {
         let atoms = source.atom_count();
         if atoms > MAX_ATOMS {
@@ -133,6 +136,9 @@ impl Run {
                 atoms = atoms,
                 max = MAX_ATOMS
             ));
+        }
+        if let Some(why) = points_refusal(total_points(axes)) {
+            return Err(why);
         }
         let points = grid(axes);
         let work = move |source: &Source, send: &Sender<Message>, cancel: &AtomicBool| {
@@ -169,8 +175,9 @@ impl Run {
 
     /// Start a relaxed scan of the 3D model: at every point the scanned parameters are set
     /// and held while everything else is minimised under `relax`, and the energy is that of
-    /// the minimised structure. Each point starts from its neighbour's minimised structure
-    /// (the previous point along the second axis, else the first point of the previous row).
+    /// the minimised structure. Each point starts from its neighbour's minimised structure:
+    /// one step back along the last axis it is not at the start of ([`previous_neighbour`] —
+    /// the previous point, else the first of the previous row, of the previous slab…).
     ///
     /// The atoms fixed in `relax` stay where they were when the scan started at every point:
     /// each parameter is set by moving a side that holds none of them (the anchor's side too
@@ -187,10 +194,13 @@ impl Run {
         if !matches!(source, Source::Model { .. }) {
             return Err(t!("scan.window.relax_model_only").into());
         }
-        let points = grid(axes);
-        if let Some(why) = relax_refusal(source.atom_count(), points.len()) {
+        let total = total_points(axes);
+        if let Some(why) =
+            points_refusal(total).or_else(|| relax_refusal(source.atom_count(), total))
+        {
             return Err(why);
         }
+        let points = grid(axes);
         let params = source.params().to_vec();
         if let Some(values) = points.first()
             && edit::conflict(&relax.at(&params, values)).is_some()
@@ -201,24 +211,23 @@ impl Run {
         if let Some(why) = source.fixed_conflict(&fixed) {
             return Err(why);
         }
-        let row = axes.get(1).map_or(1, |a| a.values().len()).max(1);
+        let shape: Vec<usize> = axes.iter().map(Axis::count).collect();
         let work = move |source: &Source, send: &Sender<Message>, cancel: &AtomicBool| {
             let Some((reference, mut evaluator)) = set_up(source, force_field, send) else {
                 return;
             };
             let start = evaluator.energy(&reference.coords);
             let check_every = sentinel_every(&reference);
-            // The minimised structures to start from: the last point's, and the first point's
-            // of the last row.
-            let mut previous: Option<Vec<Vec3>> = None;
-            let mut row_first: Option<Vec<Vec3>> = None;
+            // Each point's minimised structure, for the points after it to start from (`None`
+            // when it failed: they start from the reference). At most `MAX_RELAX_WORK / atoms`
+            // atoms' coordinates in all.
+            let mut minimised: Vec<Option<Vec<Vec3>>> = vec![None; points.len()];
             for (index, values) in points.iter().enumerate() {
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                let first_of_row = index % row == 0;
-                let from = if first_of_row { &row_first } else { &previous };
-                let mut from = from.as_deref().unwrap_or(&reference.coords).to_vec();
+                let from = previous_neighbour(&shape, index).and_then(|n| minimised[n].as_deref());
+                let mut from = from.unwrap_or(&reference.coords).to_vec();
                 // The minimiser keeps the fixed atoms where they start; put them back where
                 // they were at the scan's start exactly, whatever it left them at.
                 for &a in &fixed {
@@ -251,10 +260,7 @@ impl Run {
                         (energy, Some(coords))
                     }
                 };
-                if first_of_row {
-                    row_first.clone_from(&done);
-                }
-                previous = done;
+                minimised[index] = done;
                 if send.send(Message::Point { index, energy }).is_err() {
                     return;
                 }
@@ -840,6 +846,39 @@ mod tests {
         assert!(message.contains("Too many atoms"), "{message}");
     }
 
+    /// A grid of more points than a scan takes is refused before it is built (three axes of
+    /// 200 points would be 8 million), rigid or relaxed; the message says how many and the cap.
+    #[test]
+    fn scans_of_too_many_points_are_refused_at_once() {
+        let params = vec![
+            Param::Dihedral([0, 1, 2, 3]),
+            Param::Bond([0, 1]),
+            Param::Bond([2, 3]),
+        ];
+        let axes: Vec<Axis> = params
+            .iter()
+            .map(|p| Axis {
+                param: p.clone(),
+                start: 1.0,
+                end: 2.0,
+                points: crate::scan::MAX_POINTS,
+            })
+            .collect();
+        let source = || Source::model(&chain_model(), None, params.clone());
+        let Err(message) = Run::start(source(), &axes, ForceField::Uff) else {
+            panic!("a scan of too many points started");
+        };
+        assert!(
+            message.contains("Too many points") && message.contains("8000000"),
+            "{message}"
+        );
+        let Err(message) = Run::start_relaxed(source(), &axes, ForceField::Uff, Relax::new(vec![]))
+        else {
+            panic!("a relaxed scan of too many points started");
+        };
+        assert!(message.contains("8000000"), "{message}");
+    }
+
     #[test]
     fn durations_read_in_english() {
         assert_eq!(format_duration(Duration::from_millis(12_340)), "12.3 s");
@@ -1202,6 +1241,113 @@ mod energy_tests {
                 .unwrap();
             let want = run.scan.values_at(i)[0];
             assert!((held - want).abs() < 0.01, "point {i}: {held} for {want}");
+        }
+    }
+
+    /// A three-parameter scan of butane: every point's energy is that of the structure with
+    /// the three values set, computed afresh (a new force-field setup per point), and the
+    /// points come in grid order.
+    #[test]
+    fn a_3d_scan_matches_single_points_computed_directly() {
+        let force_field = ForceField::Mmff94;
+        let model = butane(force_field);
+        let axes = [
+            Axis {
+                param: Param::Bond([0, 1]),
+                start: 1.45,
+                end: 1.6,
+                points: 2,
+            },
+            Axis {
+                param: Param::Angle([0, 1, 2]),
+                start: 105.0,
+                end: 115.0,
+                points: 3,
+            },
+            butane_dihedral_axis(4),
+        ];
+        let params: Vec<Param> = axes.iter().map(|a| a.param.clone()).collect();
+        let source = Source::model(&model, None, params);
+        let mut run = Run::start(source.clone(), &axes, force_field).expect("start");
+        run.wait();
+        assert_eq!(run.error, None);
+        assert!(!run.drifted());
+        assert_eq!(run.scan.axes.len(), 3);
+        assert_eq!(run.scan.total(), 24);
+        assert_eq!(run.scan.done(), 24);
+        let reference = source.reference().unwrap();
+        for i in 0..24 {
+            let values = run.scan.values_at(i);
+            let [a, b, c] = run.scan.indices_at(i)[..] else {
+                panic!()
+            };
+            assert_eq!(
+                values,
+                [
+                    axes[0].values()[a],
+                    axes[1].values()[b],
+                    axes[2].values()[c]
+                ]
+            );
+            let Ok(Point::Coords(coords)) = source.at(&values) else {
+                panic!("point {i}")
+            };
+            for (p, v) in source.params().iter().zip(&values) {
+                let now = p.read_coords(&coords).unwrap();
+                let off = match p {
+                    Param::Dihedral(_) => crate::three_d::geom::wrap_degrees(now - v),
+                    _ => now - v,
+                };
+                assert!(off.abs() < 1e-6, "point {i}: {p:?} at {now}, not {v}");
+            }
+            let text = edit::molfile_with_coords(&reference.molfile, &coords).unwrap();
+            let direct = Evaluator::new(&text, force_field).unwrap().energy(&coords);
+            let scanned = run.scan.energies[i].unwrap();
+            assert!(direct.is_finite(), "point {i}");
+            assert!(
+                (scanned - direct).abs() <= 1e-6 * direct.abs().max(1.0),
+                "point {i} at {values:?}: scanned {scanned}, direct {direct}"
+            );
+        }
+    }
+
+    /// A three-parameter relaxed scan holds all three at every point, each starting from a
+    /// neighbouring point's minimised structure.
+    #[test]
+    fn a_3d_relaxed_scan_holds_all_three_parameters() {
+        let model = butane(ForceField::Mmff94);
+        let bond = |atoms| Axis {
+            param: Param::Bond(atoms),
+            start: 1.48,
+            end: 1.58,
+            points: 2,
+        };
+        let axes = [bond([0, 1]), bond([2, 3]), butane_dihedral_axis(3)];
+        let params: Vec<Param> = axes.iter().map(|a| a.param.clone()).collect();
+        let mut run = Run::start_relaxed(
+            Source::model(&model, None, params),
+            &axes,
+            ForceField::Mmff94,
+            Relax::new(Vec::new()),
+        )
+        .expect("start");
+        run.wait();
+        assert_eq!(run.error, None);
+        assert_eq!(run.scan.done(), 12);
+        assert!(run.scan.energies.iter().all(|e| e.unwrap().is_finite()));
+        let deviation = worst_deviation(&run);
+        assert!(deviation < 0.5, "off by {deviation}");
+        for i in 0..12 {
+            let coords = run.structure(i).unwrap();
+            let values = run.scan.values_at(i);
+            for (k, atoms) in [[0, 1], [2, 3]].into_iter().enumerate() {
+                let held = Param::Bond(atoms).read_coords(coords).unwrap();
+                assert!(
+                    (held - values[k]).abs() < 0.01,
+                    "point {i}: {held} for {}",
+                    values[k]
+                );
+            }
         }
     }
 

@@ -1,20 +1,22 @@
-//! The パラメータスキャン window: choose one or two parameters of the assembly (集合体 view) or
-//! of the 3D model (3D view), run the scan in the background, and see the MM energy as a curve
-//! (one parameter) or a heatmap (two). Clicking a point puts its values into the design or the
-//! model as one undoable step, so that structure can be looked at.
+//! The パラメータスキャン window: choose any number of parameters of the assembly (集合体 view)
+//! or of the 3D model (3D view), run the scan in the background, and see the MM energy as a
+//! curve (one parameter) or a heatmap (two). Of three or more, one or two are plotted and each
+//! other one is sliced at a value or minimised over. Clicking a point puts its values into the
+//! design or the model as one undoable step, so that structure can be looked at.
 
 use std::time::Duration;
 
 use egui::{Color32, RichText, vec2};
 use egui_plot::{Heatmap, Line, MarkerShape, Plot, PlotPoint, PlotPoints, Points, Text};
 
+use super::icons::{self, Icon};
 use super::{Command, ViewMode};
 use crate::document::Document;
 use crate::scan::param::design_params;
 use crate::scan::run::Relax;
 use crate::scan::run::format_duration;
 use crate::scan::source::{Point, Source};
-use crate::scan::{self, Axis, MAX_POINTS, Param, Run, Scan};
+use crate::scan::{self, Axis, MAX_POINTS, Param, Reduce, Run, Scan};
 use crate::theme;
 use crate::three_d::{ForceField, edit};
 
@@ -87,8 +89,8 @@ impl AxisForm {
 #[derive(Debug, Default)]
 pub struct ScanWindow {
     pub open: bool,
-    axes: [AxisForm; 2],
-    two_d: bool,
+    /// The axes, the first the outermost loop (one once the window has been shown).
+    axes: Vec<AxisForm>,
     /// The force field chosen here; the document's own until changed.
     force_field: Option<ForceField>,
     /// Minimise everything but the scanned parameters at every point (the 3D model only).
@@ -98,6 +100,131 @@ pub struct ScanWindow {
     colors: ColorRange,
     /// The last problem or confirmation, and whether it is a problem.
     message: Option<(String, bool)>,
+    /// How a scan of three or more axes is plotted.
+    view: ViewForm,
+}
+
+/// Which axes of a scan of three or more are plotted, and how each other one is reduced.
+#[derive(Debug, Default, Clone, PartialEq)]
+struct ViewForm {
+    /// The axis plotted across.
+    across: usize,
+    /// The axis plotted up (a heatmap), or none (a curve).
+    up: Option<usize>,
+    /// One per axis of the scan (those plotted ignored).
+    reduce: Vec<Reduce>,
+}
+
+impl ViewForm {
+    /// Fit to a scan whose axes take `shape` values each: for another number of axes, the
+    /// first two plotted and the rest minimised over.
+    fn fit(&mut self, shape: &[usize]) {
+        let n = shape.len();
+        if self.reduce.len() != n {
+            *self = ViewForm {
+                across: 0,
+                up: (n > 1).then_some(1),
+                reduce: vec![Reduce::Minimum; n],
+            };
+        }
+        self.across = self.across.min(n.saturating_sub(1));
+        if self.up.is_some_and(|u| u >= n || u == self.across) {
+            self.up = None;
+        }
+        for (reduce, &len) in self.reduce.iter_mut().zip(shape) {
+            if let Reduce::Slice(i) = reduce {
+                *i = (*i).min(len.saturating_sub(1));
+            }
+        }
+    }
+
+    /// The axes plotted: across, then up.
+    fn shown(&self) -> Vec<usize> {
+        std::iter::once(self.across).chain(self.up).collect()
+    }
+}
+
+/// What a plot shows: the axes plotted, the point each of their cells shows (see
+/// [`Scan::section`]), and the axes minimised over.
+struct Section {
+    axes: Vec<usize>,
+    cells: Vec<usize>,
+    projected: Vec<usize>,
+}
+
+impl Section {
+    /// The whole of a scan of one or two axes: each cell its own point (the section of every
+    /// axis).
+    fn whole(scan: &Scan) -> Self {
+        Section {
+            axes: (0..scan.axes.len()).collect(),
+            cells: (0..scan.total()).collect(),
+            projected: Vec::new(),
+        }
+    }
+
+    /// The scan seen as `view` says.
+    fn of(scan: &Scan, view: &ViewForm) -> Self {
+        let axes = view.shown();
+        let projected = (0..scan.axes.len())
+            .filter(|k| !axes.contains(k) && view.reduce.get(*k) == Some(&Reduce::Minimum))
+            .collect();
+        Section {
+            cells: scan.section(&axes, &view.reduce),
+            axes,
+            projected,
+        }
+    }
+
+    /// The cell showing point `index`, if one does.
+    fn cell_of(&self, index: usize) -> Option<usize> {
+        self.cells.iter().position(|&i| i == index)
+    }
+}
+
+/// What a click on an axis row's buttons asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AxisAction {
+    Up,
+    Down,
+    Remove,
+}
+
+/// Apply `action` to axis `k` of `axes` (the last one is never removed).
+fn edit_axes(axes: &mut Vec<AxisForm>, k: usize, action: AxisAction) {
+    match action {
+        AxisAction::Up if k > 0 && k < axes.len() => axes.swap(k - 1, k),
+        AxisAction::Down if k + 1 < axes.len() => axes.swap(k, k + 1),
+        AxisAction::Remove if axes.len() > 1 && k < axes.len() => {
+            axes.remove(k);
+        }
+        _ => {}
+    }
+}
+
+/// What keeps a scan of `axes` over `atoms` atoms from starting, if anything: a parameter on
+/// two axes, too many atoms, too many points, or (relaxing) too much work.
+fn refusal(axes: &[Axis], atoms: usize, relax: bool) -> Option<String> {
+    let total = scan::total_points(axes);
+    let same = axes
+        .iter()
+        .enumerate()
+        .any(|(k, a)| axes[..k].iter().any(|b| b.param == a.param));
+    if same {
+        Some(t!("scan.window.same_axes").into())
+    } else if atoms > scan::MAX_ATOMS {
+        Some(t!(
+            "scan.window.too_many_atoms",
+            atoms = atoms,
+            max = scan::MAX_ATOMS
+        ))
+    } else if let Some(why) = scan::points_refusal(total) {
+        Some(why)
+    } else if relax {
+        scan::relax_refusal(atoms, total)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -254,6 +381,9 @@ fn body(
 
 /// The parameters, the force field, and starting or cancelling the scan.
 fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Target) {
+    if win.axes.is_empty() {
+        win.axes.push(AxisForm::default());
+    }
     // Forget parameters of the other kind (the window was last used from another view).
     for form in &mut win.axes {
         if form.param.as_ref().is_some_and(|p| !target.matches(p)) {
@@ -269,6 +399,12 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     };
     ui.label(RichText::new(heading).strong());
 
+    // Every axis's points multiplied, also before their parameters are chosen.
+    let total_all = win.axes.iter().fold(1usize, |t, f| {
+        t.saturating_mul(f.points.clamp(1, MAX_POINTS))
+    });
+    let count = win.axes.len();
+    let mut action = None;
     let atoms;
     let mut has_lattice = false;
     match target {
@@ -286,9 +422,6 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                 ui.label(muted(ui, t!("scan.window.no_params")));
             }
             for (k, form) in win.axes.iter_mut().enumerate() {
-                if k == 1 && !win.two_d {
-                    break;
-                }
                 // A parameter whose step was removed is dropped.
                 if form
                     .param
@@ -297,7 +430,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                 {
                     form.param = None;
                 }
-                axis_row(ui, k, form, |ui, form| {
+                let row = axis_row(ui, (k, count), total_all, form, |ui, form| {
                     let selected = form.param.as_ref().map_or_else(
                         || t!("scan.window.choose").to_owned(),
                         |p| p.label(Some(&state.design), None),
@@ -315,6 +448,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                             }
                         });
                 });
+                action = action.or(row.map(|a| (k, a)));
             }
         }
         Target::Model => {
@@ -327,9 +461,6 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
             let picked = Param::of_picked(&edit3d.picked, &graph);
             let coords = edit::coords(model);
             for (k, form) in win.axes.iter_mut().enumerate() {
-                if k == 1 && !win.two_d {
-                    break;
-                }
                 // Atoms that are no longer a chain of this model are dropped.
                 if form.param.as_ref().is_some_and(|p| {
                     let atoms: Vec<usize> = match p {
@@ -342,7 +473,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                 }) {
                     form.param = None;
                 }
-                axis_row(ui, k, form, |ui, form| {
+                let row = axis_row(ui, (k, count), total_all, form, |ui, form| {
                     let label = form.param.as_ref().map_or_else(
                         || t!("scan.window.unset").to_owned(),
                         |p| p.label(None, Some(model)),
@@ -361,12 +492,22 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                         form.set(p.clone(), p.read_coords(&coords));
                     }
                 });
+                action = action.or(row.map(|a| (k, a)));
             }
         }
     }
+    if let Some((k, action)) = action {
+        edit_axes(&mut win.axes, k, action);
+    }
 
     ui.horizontal_wrapped(|ui| {
-        ui.checkbox(&mut win.two_d, t!("scan.window.two_d"));
+        if ui
+            .button(t!("scan.window.add_axis"))
+            .on_hover_text(t!("scan.window.add_axis_tip"))
+            .clicked()
+        {
+            win.axes.push(AxisForm::default());
+        }
         ui.add_space(8.0);
         ui.label(t!("scan.window.force_field"));
         egui::ComboBox::from_id_salt("scan_force_field")
@@ -394,20 +535,13 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
         win.relax = relax;
     }
 
-    let axes: Vec<Axis> = win
-        .axes
-        .iter()
-        .take(if win.two_d { 2 } else { 1 })
-        .filter_map(AxisForm::axis)
-        .collect();
-    let wanted = if win.two_d { 2 } else { 1 };
-    let total: usize = if axes.len() == wanted {
-        axes.iter().map(|a| a.values().len()).product()
+    let axes: Vec<Axis> = win.axes.iter().filter_map(AxisForm::axis).collect();
+    let all_set = axes.len() == win.axes.len();
+    let total = if all_set {
+        scan::total_points(&axes)
     } else {
         0
     };
-    let same = axes.len() == 2 && axes[0].param == axes[1].param;
-    let too_large = atoms > scan::MAX_ATOMS;
     let unit = scan::energy::unit(force_field);
     let summary = if relax {
         t!(
@@ -428,28 +562,16 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     if has_lattice {
         ui.label(muted(ui, t!("scan.window.crystal_note")));
     }
-    if too_large {
-        ui.label(
-            RichText::new(t!(
-                "scan.window.too_many_atoms",
-                atoms = atoms,
-                max = scan::MAX_ATOMS
-            ))
-            .color(warn_color(ui)),
-        );
-    }
-    if same {
-        ui.label(RichText::new(t!("scan.window.same_axes")).color(warn_color(ui)));
-    }
-    let relax_refused = relax.then(|| scan::relax_refusal(atoms, total)).flatten();
-    if let Some(why) = &relax_refused {
+    // Of the axes set so far: too many atoms is said before any is.
+    let refused = refusal(&axes, atoms, relax);
+    if let Some(why) = &refused {
         ui.label(RichText::new(why).color(warn_color(ui)));
-    } else if relax && total > 0 {
+    } else if relax && all_set {
         ui.label(relax_estimate(ui, atoms, total));
     }
 
     ui.horizontal(|ui| {
-        let ready = axes.len() == wanted && !same && !too_large && relax_refused.is_none();
+        let ready = all_set && refused.is_none();
         if running {
             if ui.button(t!("common.cancel")).clicked()
                 && let Some(run) = &mut doc.scan
@@ -466,16 +588,47 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     });
 }
 
-/// One axis's row: the parameter (drawn by `param`), its range and its number of points.
+/// Axis `k` of `count`'s row: the parameter (drawn by `param`), its range, and its number of
+/// points next to the `total` of all axes; and buttons to move it up or down or remove it,
+/// whose click is returned.
 fn axis_row(
     ui: &mut egui::Ui,
-    k: usize,
+    (k, count): (usize, usize),
+    total: usize,
     form: &mut AxisForm,
     param: impl FnOnce(&mut egui::Ui, &mut AxisForm),
-) {
+) -> Option<AxisAction> {
+    let mut action = None;
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(t!("scan.window.axis", number = k + 1)).strong());
         param(ui, form);
+        let buttons = [
+            (
+                Icon::ChevronUp,
+                AxisAction::Up,
+                k > 0,
+                t!("scan.window.move_up_tip"),
+            ),
+            (
+                Icon::ChevronDown,
+                AxisAction::Down,
+                k + 1 < count,
+                t!("scan.window.move_down_tip"),
+            ),
+            (
+                Icon::Close,
+                AxisAction::Remove,
+                count > 1,
+                t!("scan.window.remove_axis_tip"),
+            ),
+        ];
+        for (icon, act, enabled, tip) in buttons {
+            let size = vec2(18.0, 18.0);
+            let flat = icons::Frame::Flat;
+            if icons::icon_button(ui, icon, size, flat, false, enabled, tip).clicked() && enabled {
+                action = Some(act);
+            }
+        }
     });
     if let Some(p) = form.param.clone() {
         let unit = format!(" {}", p.unit());
@@ -499,8 +652,21 @@ fn axis_row(
             ui.label(t!("scan.window.points"));
             ui.add(egui::DragValue::new(&mut form.points).range(1..=MAX_POINTS))
                 .on_hover_text(t!("scan.window.points_tip"));
+            if count > 1 {
+                let color = if total > scan::MAX_SCAN_POINTS {
+                    warn_color(ui)
+                } else {
+                    theme::muted(ui.visuals().dark_mode)
+                };
+                let text = t!("scan.window.total_points", total = total);
+                ui.label(RichText::new(text).color(color)).on_hover_text(t!(
+                    "scan.window.total_points_tip",
+                    max = scan::MAX_SCAN_POINTS
+                ));
+            }
         });
     }
+    action
 }
 
 /// How long a relaxed scan of `atoms` atoms and `points` points should take, before it starts:
@@ -614,7 +780,7 @@ fn results(
         ));
     }
 
-    let clicked = plot(ui, &run.scan, win.relative, &mut win.colors);
+    let clicked = plot(ui, &run.scan, win.relative, &mut win.colors, &mut win.view);
     ui.label(muted(ui, t!("scan.window.plot_help")));
     let index = clicked?;
     let message = apply_point(doc, index);
@@ -811,15 +977,16 @@ fn cells(values: &[f64]) -> (f64, f64, bool) {
     (first.min(last), step, last < first)
 }
 
-/// A ring round every point of `scan` whose minimisation did not converge, at `at` (the
-/// point's place in the plot).
+/// A ring round every cell of `section` whose point's minimisation did not converge, at `at`
+/// (the cell's place in the plot).
 fn unconverged_rings(
     scan: &Scan,
+    section: &Section,
     at: impl Fn(usize) -> Option<[f64; 2]>,
     color: Color32,
 ) -> Option<Points<'static>> {
-    let rings: Vec<[f64; 2]> = (0..scan.total())
-        .filter(|&i| scan.is_unconverged(i))
+    let rings: Vec<[f64; 2]> = (0..section.cells.len())
+        .filter(|&c| scan.is_unconverged(section.cells[c]))
         .filter_map(at)
         .collect();
     (!rings.is_empty()).then(|| {
@@ -831,8 +998,15 @@ fn unconverged_rings(
     })
 }
 
-/// The plot of `scan`. Returns the point clicked, if any.
-fn plot(ui: &mut egui::Ui, scan: &Scan, relative: bool, colors: &mut ColorRange) -> Option<usize> {
+/// The plot of `scan`; of three or more axes, as `view` says (chosen above it). Returns the
+/// point clicked, if any.
+fn plot(
+    ui: &mut egui::Ui,
+    scan: &Scan,
+    relative: bool,
+    colors: &mut ColorRange,
+    view: &mut ViewForm,
+) -> Option<usize> {
     if scan.axes.is_empty() || scan.total() == 0 {
         return None;
     }
@@ -842,10 +1016,106 @@ fn plot(ui: &mut egui::Ui, scan: &Scan, relative: bool, colors: &mut ColorRange)
         scan.force_field,
         scan.unit
     );
-    if scan.is_2d() {
-        heatmap(ui, scan, relative, &y_title, colors)
+    let section = if scan.axes.len() <= 2 {
+        Section::whole(scan)
     } else {
-        curve(ui, scan, relative, &y_title)
+        view.fit(&scan.shape());
+        view_controls(ui, scan, view);
+        Section::of(scan, view)
+    };
+    if section.axes.len() == 2 {
+        heatmap(ui, scan, &section, relative, &y_title, colors)
+    } else {
+        curve(ui, scan, &section, relative, &y_title)
+    }
+}
+
+/// The choice of the axes plotted (across, and up or none for a curve) and, for each other
+/// one, a slice at one of its values or the lowest energy along it.
+fn view_controls(ui: &mut egui::Ui, scan: &Scan, view: &mut ViewForm) {
+    let label = |k: usize| scan.axes[k].label.clone();
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(t!("scan.window.view_heading")).strong());
+        ui.label(t!("scan.window.view_across"));
+        egui::ComboBox::from_id_salt("scan_view_across")
+            .selected_text(label(view.across))
+            .show_ui(ui, |ui| {
+                for k in 0..scan.axes.len() {
+                    if ui.selectable_label(view.across == k, label(k)).clicked() {
+                        // Taking the axis plotted up swaps the two.
+                        if view.up == Some(k) {
+                            view.up = Some(view.across);
+                        }
+                        view.across = k;
+                    }
+                }
+            });
+        ui.label(t!("scan.window.view_up"));
+        let up_text = view
+            .up
+            .map_or_else(|| t!("scan.window.view_curve").to_owned(), label);
+        egui::ComboBox::from_id_salt("scan_view_up")
+            .selected_text(up_text)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(view.up.is_none(), t!("scan.window.view_curve"))
+                    .clicked()
+                {
+                    view.up = None;
+                }
+                for k in (0..scan.axes.len()).filter(|&k| k != view.across) {
+                    if ui.selectable_label(view.up == Some(k), label(k)).clicked() {
+                        view.up = Some(k);
+                    }
+                }
+            });
+    });
+    let shown = view.shown();
+    let at_minimum = scan.minimum().map(|(i, _)| scan.indices_at(i));
+    for (k, axis) in scan.axes.iter().enumerate() {
+        if shown.contains(&k) {
+            continue;
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(12.0);
+            ui.label(&axis.label);
+            let sliced = matches!(view.reduce[k], Reduce::Slice(_));
+            if ui
+                .radio(sliced, t!("scan.window.reduce_slice"))
+                .on_hover_text(t!("scan.window.reduce_slice_tip"))
+                .clicked()
+                && !sliced
+            {
+                let at = at_minimum.as_ref().map_or(0, |m| m[k]);
+                view.reduce[k] = Reduce::Slice(at);
+            }
+            if ui
+                .radio(!sliced, t!("scan.window.reduce_minimum"))
+                .on_hover_text(t!("scan.window.reduce_minimum_tip"))
+                .clicked()
+            {
+                view.reduce[k] = Reduce::Minimum;
+            }
+            if let Reduce::Slice(at) = &mut view.reduce[k] {
+                let last = axis.values.len().saturating_sub(1);
+                ui.add_enabled(last > 0, egui::Slider::new(at, 0..=last).show_value(false));
+                ui.label(format_value(axis.values[*at], axis.unit()));
+            }
+        });
+    }
+    let sliced = (0..scan.axes.len())
+        .any(|k| !shown.contains(&k) && matches!(view.reduce[k], Reduce::Slice(_)));
+    if let Some(at) = at_minimum.filter(|_| sliced)
+        && ui
+            .small_button(t!("scan.window.slice_at_minimum"))
+            .on_hover_text(t!("scan.window.slice_at_minimum_tip"))
+            .clicked()
+    {
+        for (reduce, i) in view.reduce.iter_mut().zip(at) {
+            if let Reduce::Slice(s) = reduce {
+                *s = i;
+            }
+        }
     }
 }
 
@@ -853,20 +1123,27 @@ fn accent(ui: &egui::Ui) -> Color32 {
     theme::accent(ui.visuals().dark_mode)
 }
 
-/// A one-parameter scan: the energy against the parameter, a line through the points with a
-/// gap at each failed one, the lowest point marked.
-fn curve(ui: &mut egui::Ui, scan: &Scan, relative: bool, y_title: &str) -> Option<usize> {
-    let axis = &scan.axes[0];
+/// A one-parameter scan (or a section of one axis): the energy against the parameter, a line
+/// through the points with a gap at each failed one, the lowest point marked.
+fn curve(
+    ui: &mut egui::Ui,
+    scan: &Scan,
+    section: &Section,
+    relative: bool,
+    y_title: &str,
+) -> Option<usize> {
+    let axis = &scan.axes[section.axes[0]];
     let accent = accent(ui);
     let min_color = if ui.visuals().dark_mode {
         Color32::from_rgb(0x5e, 0xc9, 0x62)
     } else {
         Color32::from_rgb(0x1f, 0x7a, 0x3a)
     };
-    let points: Vec<(usize, [f64; 2])> = (0..scan.total())
-        .filter_map(|i| {
-            let e = scan.shown(i, relative)?;
-            e.is_finite().then(|| (i, [axis.values[i], e]))
+    // By cell: the point it shows is `section.cells[c]`.
+    let points: Vec<(usize, [f64; 2])> = (0..section.cells.len())
+        .filter_map(|c| {
+            let e = scan.shown(section.cells[c], relative)?;
+            e.is_finite().then(|| (c, [axis.values[c], e]))
         })
         .collect();
     // Runs of consecutive computed points: a failed or missing point breaks the line.
@@ -883,14 +1160,16 @@ fn curve(ui: &mut egui::Ui, scan: &Scan, relative: bool, y_title: &str) -> Optio
     }
     let minimum = scan.minimum();
     let min_point = minimum.and_then(|(i, _)| {
+        let c = section.cell_of(i)?;
         let e = scan.shown(i, relative)?;
-        Some([axis.values[i], e])
+        Some([axis.values[c], e])
     });
     let rings = unconverged_rings(
         scan,
-        |i| {
-            let e = scan.shown(i, relative)?;
-            e.is_finite().then(|| [axis.values[i], e])
+        section,
+        |c| {
+            let e = scan.shown(section.cells[c], relative)?;
+            e.is_finite().then(|| [axis.values[c], e])
         },
         warn_color(ui),
     );
@@ -902,7 +1181,7 @@ fn curve(ui: &mut egui::Ui, scan: &Scan, relative: bool, y_title: &str) -> Optio
             .fold(f64::NEG_INFINITY, f64::max),
     );
 
-    let response = Plot::new("scan_curve")
+    let response = Plot::new(("scan_curve", &section.axes))
         // Room round the data, so the end points and the minimum marker are not cut off.
         .set_margin_fraction(vec2(0.04, 0.1))
         .height(320.0)
@@ -955,38 +1234,41 @@ fn curve(ui: &mut egui::Ui, scan: &Scan, relative: bool, y_title: &str) -> Optio
     let hovered = response.response.hover_pos().and_then(|pos| {
         points
             .iter()
-            .map(|&(i, p)| {
+            .map(|&(c, p)| {
                 let screen = response
                     .transform
                     .position_from_point(&PlotPoint::new(p[0], p[1]));
-                (i, (screen.x - pos.x).abs())
+                (c, (screen.x - pos.x).abs())
             })
             .filter(|&(_, dx)| dx < 14.0)
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(i, _)| i)
+            .map(|(c, _)| section.cells[c])
     });
-    finish_interaction(&response.response, scan, relative, hovered)
+    finish_interaction(&response.response, scan, section, relative, hovered)
 }
 
-/// A two-parameter scan: a heatmap (first parameter across, second up), a colour bar, and the
-/// lowest cell marked.
+/// A two-parameter scan (or a section of two axes): a heatmap (the first parameter across, the
+/// second up), a colour bar, and the lowest cell marked.
 fn heatmap(
     ui: &mut egui::Ui,
     scan: &Scan,
+    section: &Section,
     relative: bool,
     z_title: &str,
     colors: &mut ColorRange,
 ) -> Option<usize> {
-    let (ax, ay) = (&scan.axes[0], &scan.axes[1]);
+    let (ax, ay) = (&scan.axes[section.axes[0]], &scan.axes[section.axes[1]]);
     let (nx, ny) = (ax.values.len(), ay.values.len());
     let (x0, dx, x_rev) = cells(&ax.values);
     let (y0, dy, y_rev) = cells(&ay.values);
-    // Grid cell (column c, row r) of the plot ↔ point (i, j) of the scan.
+    // Grid cell (column c, row r) of the plot ↔ cell (i, j) of the section ↔ the point it shows.
     let to_point = |c: usize, r: usize| {
         let i = if x_rev { nx - 1 - c } else { c };
         let j = if y_rev { ny - 1 - r } else { r };
-        scan.index(i, j)
+        section.cells[i * ny + j]
     };
+    // The place in the plot of the section's cell `k`.
+    let place = |k: usize| [ax.values[k / ny], ay.values[k % ny]];
     let mut values = Vec::with_capacity(nx * ny);
     for r in 0..ny {
         for c in 0..nx {
@@ -1024,10 +1306,10 @@ fn heatmap(
     if !colors.auto {
         (colors.lo, colors.hi) = (lo, hi);
     }
-    let min_cell = scan.minimum().map(|(index, _)| {
-        let v = scan.values_at(index);
-        [v[0], v[1]]
-    });
+    let min_cell = scan
+        .minimum()
+        .and_then(|(index, _)| section.cell_of(index))
+        .map(place);
     let marker = if ui.visuals().dark_mode {
         Color32::WHITE
     } else {
@@ -1044,7 +1326,7 @@ fn heatmap(
             .show_labels(false)
             .range(lo, hi)
             .custom_mapping(Box::new(move |v| heatmap_color(v, lo, hi)));
-        let response = Plot::new("scan_heatmap")
+        let response = Plot::new(("scan_heatmap", &section.axes))
             .set_margin_fraction(vec2(0.02, 0.02))
             .width(width)
             .height(340.0)
@@ -1055,11 +1337,8 @@ fn heatmap(
             .show_grid(false)
             .show(ui, |plot_ui| {
                 plot_ui.add(map);
-                let at = |i| match scan.values_at(i)[..] {
-                    [x, y] => Some([x, y]),
-                    _ => None,
-                };
-                if let Some(rings) = unconverged_rings(scan, at, marker) {
+                let at = |k| Some(place(k));
+                if let Some(rings) = unconverged_rings(scan, section, at, marker) {
                     plot_ui.points(rings);
                 }
                 if let Some(p) = min_cell {
@@ -1089,16 +1368,18 @@ fn heatmap(
             ((0.0..nx as f64).contains(&c) && (0.0..ny as f64).contains(&r))
                 .then(|| to_point(c as usize, r as usize))
         });
-        clicked = finish_interaction(&response.response, scan, relative, hovered);
+        clicked = finish_interaction(&response.response, scan, section, relative, hovered);
         colour_bar(ui, lo, hi, z_title, bar_width);
     });
     clicked
 }
 
-/// The tooltip of the hovered point, and the point clicked.
+/// The tooltip of the hovered point (all its values: of a projection, the point found lowest),
+/// and the point clicked.
 fn finish_interaction(
     response: &egui::Response,
     scan: &Scan,
+    section: &Section,
     relative: bool,
     hovered: Option<usize>,
 ) -> Option<usize> {
@@ -1112,11 +1393,23 @@ fn finish_interaction(
             scan.unit
         ),
     };
+    let projected = (!section.projected.is_empty()).then(|| {
+        let axes: Vec<&str> = section
+            .projected
+            .iter()
+            .map(|&k| scan.axes[k].label.as_str())
+            .collect();
+        t!(
+            "scan.window.projected",
+            axes = axes.join(t!("scan.window.values_separator"))
+        )
+    });
     let lines: Vec<String> = scan
         .values_at(index)
         .iter()
         .zip(&scan.axes)
         .map(|(v, a)| format!("{} = {}", a.label, format_value(*v, a.unit())))
+        .chain(projected)
         .chain(
             scan.is_unconverged(index)
                 .then(|| t!("scan.window.unconverged").to_owned()),
@@ -1494,6 +1787,189 @@ mod tests {
         apply_point(&mut doc, 1);
         let (m, _) = doc.three_d.model_and_edit().unwrap();
         assert_eq!(edit::coords(m), relaxed);
+    }
+
+    /// A model scan over the chain's two end bonds and its dihedral, `energy` at each point.
+    fn scan_3d(energy: impl Fn(&[f64]) -> Option<f64>) -> (Scan, Vec<Param>) {
+        let params = vec![
+            Param::Bond([0, 1]),
+            Param::Bond([2, 3]),
+            Param::Dihedral([0, 1, 2, 3]),
+        ];
+        let scan = scan_of(
+            vec![
+                (params[0].clone(), vec![1.4, 1.5, 1.6]),
+                (params[1].clone(), vec![1.3, 1.5]),
+                (params[2].clone(), vec![-120.0, 0.0, 120.0, 180.0]),
+            ],
+            energy,
+        );
+        (scan, params)
+    }
+
+    /// A three-parameter scan draws a heatmap of two of them and offers, for the third, a
+    /// slice or the lowest energy; a curve of one, the others reduced, draws too.
+    #[test]
+    fn a_3d_scan_renders_a_section_headless_in_both_themes() {
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        let model = chain_model();
+        doc.three_d = three_d::Job::with_model(model.clone(), &doc.editor.molecule);
+        let (scan, params) = scan_3d(|v| Some((v[0] - 1.5).powi(2) + v[1] + v[2].abs() / 100.0));
+        assert_eq!(scan.total(), 24);
+        doc.scan = Some(Run::finished(scan, Source::model(&model, None, params)));
+        let mut win = ScanWindow {
+            open: true,
+            ..Default::default()
+        };
+        for dark in [false, true] {
+            let text = frame(&mut win, &mut doc, ViewMode::ThreeD, dark);
+            assert!(text.contains("24 / 24 points"), "{text}");
+            assert!(text.contains("Plot"), "{text}");
+            assert!(text.contains("Slice") && text.contains("Lowest"), "{text}");
+            assert!(text.contains("Minimum"), "{text}");
+        }
+        assert_eq!(win.view.shown(), [0, 1]);
+        assert_eq!(win.view.reduce[2], Reduce::Minimum);
+        // A curve along the dihedral, the bonds sliced.
+        win.view = ViewForm {
+            across: 2,
+            up: None,
+            reduce: vec![Reduce::Slice(2), Reduce::Slice(0), Reduce::Minimum],
+        };
+        for dark in [false, true] {
+            let text = frame(&mut win, &mut doc, ViewMode::ThreeD, dark);
+            assert!(text.contains("Slices at the minimum"), "{text}");
+            assert!(text.contains("1.600 Å"), "the slice's value: {text}");
+        }
+    }
+
+    /// Clicking a cell of a projection applies the point that has its lowest energy, with
+    /// every one of its values, not merely the values plotted.
+    #[test]
+    fn a_projected_cell_applies_the_point_that_has_its_minimum() {
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        let model = chain_model();
+        doc.three_d = three_d::Job::with_model(model.clone(), &doc.editor.molecule);
+        // Lowest at a dihedral of 0° for every pair of bonds.
+        let (scan, params) = scan_3d(|v| Some(v[0] + v[1] + (v[2] / 60.0).powi(2)));
+        let view = ViewForm {
+            across: 0,
+            up: Some(1),
+            reduce: vec![Reduce::Minimum; 3],
+        };
+        let section = Section::of(&scan, &view);
+        assert_eq!(section.projected, [2]);
+        let cell = 2 * 2 + 1; // bond 1 = 1.6, bond 2 = 1.5
+        let index = section.cells[cell];
+        assert_eq!(scan.values_at(index), [1.6, 1.5, 0.0]);
+        doc.scan = Some(Run::finished(
+            scan,
+            Source::model(&model, None, params.clone()),
+        ));
+        let message = apply_point(&mut doc, index);
+        assert!(message.contains("Applied"), "{message}");
+        let (m, _) = doc.three_d.model_and_edit().unwrap();
+        let coords = edit::coords(m);
+        for (p, want) in params.iter().zip([1.6, 1.5, 0.0]) {
+            let now = p.read_coords(&coords).unwrap();
+            assert!((now - want).abs() < 1e-6, "{p:?}: {now}, not {want}");
+        }
+    }
+
+    /// Settings beyond the cap on points (all axes together) cannot start: the window says how
+    /// many and the cap, next to every axis's points as well as above the button.
+    #[test]
+    fn a_scan_of_too_many_points_cannot_start() {
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        let model = chain_model();
+        doc.three_d = three_d::Job::with_model(model.clone(), &doc.editor.molecule);
+        let form = |param: Param, points| AxisForm {
+            param: Some(param),
+            start: 1.0,
+            end: 2.0,
+            points,
+        };
+        let mut win = ScanWindow {
+            open: true,
+            axes: vec![
+                form(Param::Bond([0, 1]), MAX_POINTS),
+                form(Param::Bond([1, 2]), MAX_POINTS),
+                form(Param::Bond([2, 3]), 2),
+            ],
+            ..Default::default()
+        };
+        let text = frame(&mut win, &mut doc, ViewMode::ThreeD, false);
+        assert!(text.contains("Too many points (80000)"), "{text}");
+        assert!(text.contains("at most 40000 points"), "{text}");
+        assert_eq!(text.matches("→ 80000 points in all").count(), 3, "{text}");
+        let axes: Vec<Axis> = win.axes.iter().filter_map(AxisForm::axis).collect();
+        assert!(refusal(&axes, model.atoms.len(), false).is_some());
+        assert!(Run::start(Source::model(&model, None, vec![]), &axes, ForceField::Uff).is_err());
+        // One point fewer along the last axis: allowed (rigid; relaxed, the relaxed caps).
+        win.axes[2].points = 1;
+        let axes: Vec<Axis> = win.axes.iter().filter_map(AxisForm::axis).collect();
+        assert_eq!(refusal(&axes, model.atoms.len(), false), None);
+        let relaxed = refusal(&axes, model.atoms.len(), true).unwrap();
+        assert!(relaxed.contains("Too many points to relax"), "{relaxed}");
+        let text = frame(&mut win, &mut doc, ViewMode::ThreeD, false);
+        assert!(!text.contains("Too many points"), "{text}");
+        // The same parameter twice is refused too.
+        win.axes[1].param = Some(Param::Bond([0, 1]));
+        let axes: Vec<Axis> = win.axes.iter().filter_map(AxisForm::axis).collect();
+        assert!(refusal(&axes, 4, false).unwrap().contains("same parameter"));
+    }
+
+    /// Axes are added, moved and removed; the last one stays.
+    #[test]
+    fn axes_can_be_reordered_and_removed() {
+        let form = |points| AxisForm {
+            points,
+            ..Default::default()
+        };
+        let mut axes = vec![form(1), form(2), form(3)];
+        let points = |axes: &[AxisForm]| axes.iter().map(|f| f.points).collect::<Vec<_>>();
+        edit_axes(&mut axes, 2, AxisAction::Up);
+        assert_eq!(points(&axes), [1, 3, 2]);
+        edit_axes(&mut axes, 0, AxisAction::Down);
+        assert_eq!(points(&axes), [3, 1, 2]);
+        edit_axes(&mut axes, 0, AxisAction::Up);
+        edit_axes(&mut axes, 2, AxisAction::Down);
+        assert_eq!(points(&axes), [3, 1, 2], "nothing past the ends");
+        edit_axes(&mut axes, 1, AxisAction::Remove);
+        assert_eq!(points(&axes), [3, 2]);
+        edit_axes(&mut axes, 0, AxisAction::Remove);
+        edit_axes(&mut axes, 0, AxisAction::Remove);
+        assert_eq!(points(&axes), [2], "one axis stays");
+
+        // The window starts with one axis; "+ Add axis" is there.
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        doc.three_d = three_d::Job::with_model(chain_model(), &doc.editor.molecule);
+        let mut win = ScanWindow {
+            open: true,
+            ..Default::default()
+        };
+        let text = frame(&mut win, &mut doc, ViewMode::ThreeD, false);
+        assert_eq!(win.axes.len(), 1);
+        assert!(text.contains("+ Add axis"), "{text}");
+    }
+
+    /// The view fits the scan shown: the first two axes plotted for a new number of axes,
+    /// slices kept within their axis, and never the same axis across and up.
+    #[test]
+    fn the_view_fits_the_scan() {
+        let mut view = ViewForm::default();
+        view.fit(&[3, 4, 5]);
+        assert_eq!(view.shown(), [0, 1]);
+        assert_eq!(view.reduce, [Reduce::Minimum; 3]);
+        view.reduce[2] = Reduce::Slice(9);
+        view.up = Some(0);
+        view.fit(&[3, 4, 5]);
+        assert_eq!(view.reduce[2], Reduce::Slice(4));
+        assert_eq!(view.up, None, "not the axis across");
+        view.across = 2;
+        view.up = Some(1);
+        view.fit(&[3, 4, 5, 2]);
+        assert_eq!(view.shown(), [0, 1], "another scan: reset");
     }
 
     #[test]
