@@ -18,6 +18,7 @@ pub mod menu;
 pub mod palette;
 pub mod periodic_table;
 pub mod properties;
+pub mod smiles_row;
 pub mod status;
 pub mod tabs;
 pub mod view3d;

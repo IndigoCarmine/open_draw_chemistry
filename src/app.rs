@@ -1188,6 +1188,12 @@ impl eframe::App for OpenDrawApp {
                                     &doc.editor.molecule,
                                     &doc.editor.selected_atoms,
                                 );
+                                ui::smiles_row::show(
+                                    ui,
+                                    &doc.editor.molecule,
+                                    &doc.editor.selected_atoms,
+                                    &self.config,
+                                );
                             }
                         });
                         if collapse {
