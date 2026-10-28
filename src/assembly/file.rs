@@ -6,17 +6,31 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::model::Design;
+use super::model::{Design, Step};
 
 /// The file extension.
 pub const EXTENSION: &str = "odasm";
 
-/// The version written; files of a newer version are refused.
+/// The newest version read; files of a newer version are refused.
 ///
 /// 2 added the crystal step (`Lattice`, with its operations as `x,y,z` text). Version 1 files
 /// read unchanged; an older app opening a version 2 file says it is newer instead of calling
 /// it damaged. 3 added the move/rotate step (`Transform`) the same way.
 pub const VERSION: u32 = 3;
+
+/// The version a file of `design` needs: the oldest one that holds every step it uses, so
+/// an assembly without a move/rotate step still opens in a release that reads only version 2.
+fn version_for(design: &Design) -> u32 {
+    if design
+        .steps
+        .iter()
+        .any(|step| matches!(step, Step::Transform(_)))
+    {
+        VERSION
+    } else {
+        2
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct FileContents {
@@ -53,7 +67,7 @@ impl std::error::Error for Error {}
 /// `design` as the text of an `.odasm` file.
 pub fn to_string(design: &Design) -> String {
     let contents = FileContents {
-        version: VERSION,
+        version: version_for(design),
         design: design.clone(),
     };
     serde_json::to_string_pretty(&contents).expect("a design always serialises")
@@ -135,7 +149,7 @@ mod tests {
             ..Default::default()
         };
         let text = to_string(&design);
-        assert!(text.contains("\"version\": 3"));
+        assert!(text.contains("\"version\": 2"));
         let back = from_str(&text).unwrap();
         assert_eq!(back, design);
         assert_eq!(build(&back, 1).unwrap(), build(&design, 1).unwrap());
@@ -200,6 +214,81 @@ mod tests {
         assert_eq!(empty, Design::default());
     }
 
+    /// An assembly without a move/rotate step is written exactly as the release before the
+    /// step (v0.1.0, which reads up to version 2) wrote it, so that release still opens it.
+    #[test]
+    fn an_assembly_without_a_transform_is_written_as_version_2() {
+        use crate::assembly::model::Array;
+        let design = Design {
+            components: vec![Component {
+                name: "c".into(),
+                atoms: vec![Atom3d {
+                    element: "C".into(),
+                    pos: [0.0, 0.5, -1.0],
+                }],
+                bonds: Vec::new(),
+                orient: None,
+            }],
+            steps: vec![Step::Array(Array {
+                enabled: true,
+                n: 3,
+                offset: [0.0, 0.0, 3.5],
+                euler_deg: [0.0; 3],
+            })],
+            excluded: vec![1],
+            ..Default::default()
+        };
+        let text = to_string(&design);
+        assert_eq!(text, GOLDEN_V2);
+        assert_eq!(from_str(&text).unwrap(), design);
+    }
+
+    /// What v0.1.0's `to_string` writes for the design in
+    /// [`an_assembly_without_a_transform_is_written_as_version_2`].
+    const GOLDEN_V2: &str = r#"{
+  "version": 2,
+  "components": [
+    {
+      "name": "c",
+      "atoms": [
+        {
+          "element": "C",
+          "pos": [
+            0.0,
+            0.5,
+            -1.0
+          ]
+        }
+      ],
+      "bonds": [],
+      "orient": null
+    }
+  ],
+  "base": 0,
+  "steps": [
+    {
+      "Array": {
+        "enabled": true,
+        "n": 3,
+        "offset": [
+          0.0,
+          0.0,
+          3.5
+        ],
+        "euler_deg": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ],
+  "manual": [],
+  "excluded": [
+    1
+  ]
+}"#;
+
     /// A move/rotate step is saved with its pivot and opens to the same build; a version 2
     /// file (written before the step existed) still opens.
     #[test]
@@ -234,9 +323,22 @@ mod tests {
             ..Default::default()
         };
         let text = to_string(&design);
+        assert!(text.contains("\"version\": 3"));
         let back = from_str(&text).unwrap();
         assert_eq!(back, design);
         assert_eq!(build(&back, 1).unwrap(), build(&design, 1).unwrap());
+
+        // A disabled one still needs version 3: an older app could not read the step.
+        let off = Design {
+            steps: vec![{
+                let mut t = Step::new_transform();
+                *t.enabled_mut() = false;
+                t
+            }],
+            ..Default::default()
+        };
+        assert!(to_string(&off).contains("\"version\": 3"));
+        assert_eq!(from_str(&to_string(&off)).unwrap(), off);
 
         let old = r#"{"version": 2, "components": [{"name": "c", "atoms": [{"element": "C", "pos": [0, 0, 0]}], "bonds": []}], "steps": [{"Array": {"enabled": true, "n": 3, "offset": [0, 0, 3.5], "euler_deg": [0, 0, 0]}}]}"#;
         let design = from_str(old).unwrap();

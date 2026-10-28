@@ -789,7 +789,7 @@ offset_tip = "旋轉後將此前建構的整體移動這麼多"
 rotation = "旋轉"
 rotation_tip = "將此前建構的整體繞中心旋轉（依次繞 x、y、z 軸），然後再移動"
 pivot = "中心"
-pivot_tip = "旋轉所繞的點"
+pivot_tip = "旋轉所繞的點。質心包括已排除（刪除或分離）的副本"
 pivot_centroid = "重心"
 pivot_origin = "原點"
 

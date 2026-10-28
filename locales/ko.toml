@@ -789,7 +789,7 @@ offset_tip = "회전한 뒤 지금까지 만든 전체를 이만큼 옮깁니다
 rotation = "회전"
 rotation_tip = "지금까지 만든 전체를 중심을 기준으로 회전합니다(x → y → z 축 순). 이동은 그 다음"
 pivot = "중심"
-pivot_tip = "회전의 중심점"
+pivot_tip = "회전의 중심점. 무게중심에는 제외한(삭제하거나 분리한) 복사본도 포함됩니다"
 pivot_centroid = "무게중심"
 pivot_origin = "원점"
 

@@ -471,7 +471,9 @@ impl Step {
     /// The transform of each copy, in order. A lattice's symmetry copies depend on where each
     /// molecule is, so they are made in [`Design::placements`]; here it gives only the
     /// whole-cell repeats. A move about the centroid depends on the structure too: here it
-    /// turns about the origin, and [`Design::placements`] puts the pivot in place.
+    /// turns about the origin, whatever its [`Pivot`], and [`Design::placements`] puts the
+    /// pivot in place — so for a [`Step::Transform`] this is not where the step puts the
+    /// molecules; use [`Design::placements`] (or [`Transform::about`] with the pivot) instead.
     pub fn transforms(&self) -> Vec<Rigid> {
         match self {
             Step::Lattice(l) => return l.translations(),

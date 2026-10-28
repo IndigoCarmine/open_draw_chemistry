@@ -766,7 +766,7 @@ offset_tip = "Verschiebt alles bisher Gebaute nach dem Drehen um diesen Betrag"
 rotation = "Drehung"
 rotation_tip = "Dreht alles bisher Gebaute um den Drehpunkt (um x, dann y, dann z), bevor es verschoben wird"
 pivot = "Drehpunkt"
-pivot_tip = "Der Punkt, um den gedreht wird"
+pivot_tip = "Der Punkt, um den gedreht wird. Der Schwerpunkt schließt ausgelassene (gelöschte oder abgetrennte) Kopien ein"
 pivot_centroid = "Schwerpunkt"
 pivot_origin = "Ursprung"
 

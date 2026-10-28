@@ -769,7 +769,7 @@ offset_tip = "Mueve todo lo construido hasta ahora esta cantidad, después de gi
 rotation = "Rotación"
 rotation_tip = "Gira todo lo construido hasta ahora alrededor del pivote (sobre x, luego y, luego z) antes de moverlo"
 pivot = "Pivote"
-pivot_tip = "El punto alrededor del cual gira la rotación"
+pivot_tip = "El punto alrededor del cual gira la rotación. El centroide incluye las copias excluidas (eliminadas o separadas)"
 pivot_centroid = "Centroide"
 pivot_origin = "Origen"
 

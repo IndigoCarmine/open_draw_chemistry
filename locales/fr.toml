@@ -766,7 +766,7 @@ offset_tip = "Déplace tout ce qui est construit jusqu’ici de cette quantité,
 rotation = "Rotation"
 rotation_tip = "Tourne tout ce qui est construit jusqu’ici autour du pivot (autour de x, puis y, puis z) avant de le déplacer"
 pivot = "Pivot"
-pivot_tip = "Le point autour duquel tourne la rotation"
+pivot_tip = "Le point autour duquel tourne la rotation. Le centroïde inclut les copies exclues (supprimées ou détachées)"
 pivot_centroid = "Centroïde"
 pivot_origin = "Origine"
 

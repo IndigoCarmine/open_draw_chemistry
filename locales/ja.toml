@@ -789,7 +789,7 @@ offset_tip = "それまでの全体を、回転させたあとこれだけ動か
 rotation = "回転"
 rotation_tip = "それまでの全体を中心まわりに回します（x → y → z 軸の順）。移動はその後"
 pivot = "中心"
-pivot_tip = "回転の中心"
+pivot_tip = "回転の中心。重心には手順から外した（削除・手動配置にした）分子も含まれます"
 pivot_centroid = "重心"
 pivot_origin = "原点"
 

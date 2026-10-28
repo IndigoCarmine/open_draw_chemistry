@@ -786,7 +786,7 @@ offset_tip = "旋转后将此前构建的整体移动这么多"
 rotation = "旋转"
 rotation_tip = "将此前构建的整体绕中心旋转（依次绕 x、y、z 轴），然后再移动"
 pivot = "中心"
-pivot_tip = "旋转所绕的点"
+pivot_tip = "旋转所绕的点。质心包括已排除（删除或分离）的副本"
 pivot_centroid = "重心"
 pivot_origin = "原点"
 

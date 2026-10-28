@@ -769,7 +769,7 @@ offset_tip = "Sposta tutto ciò che è stato costruito finora di questa quantit�
 rotation = "Rotazione"
 rotation_tip = "Ruota tutto ciò che è stato costruito finora attorno al perno (attorno a x, poi y, poi z) prima di spostarlo"
 pivot = "Perno"
-pivot_tip = "Il punto attorno a cui avviene la rotazione"
+pivot_tip = "Il punto attorno a cui avviene la rotazione. Il baricentro include le copie escluse (eliminate o staccate)"
 pivot_centroid = "Baricentro"
 pivot_origin = "Origine"
 

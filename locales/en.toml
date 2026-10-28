@@ -972,7 +972,7 @@ rotation = "Rotation"
 rotation_tip = "Turns everything built so far about the pivot (about x, then y, then z), before moving it"
 # Parameter label (narrow): the point the rotation is about
 pivot = "Pivot"
-pivot_tip = "The point the rotation turns about"
+pivot_tip = "The point the rotation turns about. The centroid also counts the molecules taken out of the steps (deleted or placed by hand)"
 # Choice of pivot: the centroid of the atoms built so far.
 pivot_centroid = "Centroid"
 # Choice of pivot: the origin of coordinates.
