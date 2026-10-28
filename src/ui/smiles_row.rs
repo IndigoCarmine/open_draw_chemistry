@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use chembuider_rs::{Config, Molecule};
 
-use crate::smiles::{self, Smiles};
+use crate::smiles;
 
 /// Atoms above which the SMILES is not computed: the panel would wait too long on it.
 const MAX_ATOMS: usize = 999;
@@ -20,7 +20,7 @@ struct State {
     /// The structures the result (or the running work) is for.
     source: Option<Molecule>,
     /// `None` while the work runs.
-    result: Option<Result<Smiles, String>>,
+    result: Option<Result<String, String>>,
     /// Bumped on every new request, so a stale thread's answer is dropped.
     generation: u64,
     copied: Option<String>,
@@ -83,7 +83,7 @@ pub fn show(ui: &mut egui::Ui, mol: &Molecule, selection: &HashSet<u32>, config:
                     });
                 }
                 Some(Ok(smiles)) => {
-                    let text = smiles.text.clone();
+                    let text = smiles.clone();
                     ui.horizontal_wrapped(|ui| {
                         ui.add(egui::Label::new(egui::RichText::new(&text).monospace()).wrap());
                         let copy = ui.small_button("📋").on_hover_text("SMILES をコピー");
@@ -92,12 +92,12 @@ pub fn show(ui: &mut egui::Ui, mol: &Molecule, selection: &HashSet<u32>, config:
                             clicked = Some(text.clone());
                         }
                     });
-                    if !smiles.isomeric {
-                        ui.weak("（立体は含みません）");
-                    }
                     if let Some(copied) = &copied {
                         ui.weak(format!("コピーしました: {copied}"));
                     }
+                }
+                Some(Err(reason)) if reason == smiles::NEEDS_OPENBABEL => {
+                    ui.weak(reason);
                 }
                 Some(Err(reason)) => {
                     ui.weak(format!("— (未対応: {reason})"));
