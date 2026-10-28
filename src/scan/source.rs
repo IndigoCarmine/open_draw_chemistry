@@ -21,8 +21,9 @@ pub enum Source {
         topology: Option<(Vec<String>, Vec<Bond3d>)>,
     },
     /// The model as it was when the scan started; each point edits its coordinates, the
-    /// parameters set in turn (the smaller side of each moving), never moving `anchor` — nor,
-    /// in a relaxed scan, the atoms fixed in the 3D view (see [`Source::at_from`]).
+    /// parameters set in turn (the smaller side of each moving), never moving `anchor` — in a
+    /// relaxed scan, never the atoms fixed in the 3D view, and the anchor only when it blocks
+    /// every side (see [`Source::pinned`]).
     Model {
         model: Model3d,
         graph: Graph,
@@ -137,7 +138,7 @@ impl Source {
                     })
                 }
             }
-            Source::Model { model, .. } => self.at_from(&edit::coords(model), values, &[]),
+            Source::Model { model, .. } => self.coords_at(&edit::coords(model), values, None),
         }
     }
 
@@ -148,23 +149,37 @@ impl Source {
     pub fn at_from(&self, from: &[Vec3], values: &[f64], fixed: &[usize]) -> Result<Point, String> {
         match self {
             Source::Assembly { .. } => self.at(values),
-            Source::Model { graph, params, .. } => {
-                let mut coords = from.to_vec();
-                for (p, &v) in params.iter().zip(values) {
-                    coords = p
-                        .write_coords(&coords, graph, v, &self.pinned(p, fixed)?)
-                        .map_err(|e| e.to_string())?;
-                }
-                Ok(Point::Coords(coords))
-            }
+            Source::Model { .. } => self.coords_at(from, values, Some(fixed)),
         }
     }
 
-    /// The atoms setting the model's parameter `param` keeps still: the `fixed` ones (those a
-    /// relaxed scan holds where they were when it started) and the anchor — or the `fixed`
-    /// ones alone when with the anchor no side is free, for the minimiser moves the anchor
-    /// anyway. Fails when the `fixed` atoms are on both sides of the parameter.
-    fn pinned(&self, param: &Param, fixed: &[usize]) -> Result<Vec<usize>, String> {
+    /// The model's atoms at `from` with the parameters set to `values`, keeping still the atoms
+    /// [`Source::pinned`] gives for `fixed` (`None` in a rigid scan).
+    fn coords_at(
+        &self,
+        from: &[Vec3],
+        values: &[f64],
+        fixed: Option<&[usize]>,
+    ) -> Result<Point, String> {
+        let Source::Model { graph, params, .. } = self else {
+            return self.at(values);
+        };
+        let mut coords = from.to_vec();
+        for (p, &v) in params.iter().zip(values) {
+            coords = p
+                .write_coords(&coords, graph, v, &self.pinned(p, fixed)?)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(Point::Coords(coords))
+    }
+
+    /// The atoms setting the model's parameter `param` keeps still. In a rigid scan (`fixed`
+    /// is `None`) that is the anchor, as the 編集 tools keep it: a parameter it blocks on every
+    /// side cannot be set. In a relaxed one it is the `fixed` atoms (those held where they were
+    /// when it started) and the anchor — or the `fixed` ones alone when with the anchor no side
+    /// is free, for the minimiser moves the anchor anyway. Fails when the `fixed` atoms are on
+    /// both sides of the parameter.
+    fn pinned(&self, param: &Param, fixed: Option<&[usize]>) -> Result<Vec<usize>, String> {
         let Source::Model {
             model,
             graph,
@@ -173,6 +188,9 @@ impl Source {
         } = self
         else {
             return Ok(Vec::new());
+        };
+        let Some(fixed) = fixed else {
+            return Ok(anchor.as_slice().to_vec());
         };
         let mut pinned = fixed.to_vec();
         pinned.extend(anchor.filter(|a| !fixed.contains(a)));
@@ -194,7 +212,7 @@ impl Source {
     pub fn fixed_conflict(&self, fixed: &[usize]) -> Option<String> {
         self.params()
             .iter()
-            .find_map(|p| self.pinned(p, fixed).err())
+            .find_map(|p| self.pinned(p, Some(fixed)).err())
     }
 }
 

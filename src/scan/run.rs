@@ -768,6 +768,66 @@ mod tests {
         assert!(message.contains("both sides"), "{message}");
     }
 
+    /// A rigid scan keeps the anchor as the 編集 tools do: a parameter it blocks on every side
+    /// fails (only a relaxed scan lets the anchor go, for the minimiser moves it anyway).
+    #[test]
+    fn rigid_scans_never_move_the_anchor() {
+        // Cyclopropane 0-1-2 with the chain 0-3-4: of the angle 1-0-3, the arm with atom 1 is
+        // in the ring, and the other holds the anchor 4.
+        let pos = [
+            [0.0, 0.0, 0.0],
+            [1.5, 0.0, 0.0],
+            [0.75, 1.3, 0.0],
+            [-1.0, -1.1, 0.0],
+            [-2.5, -1.1, 0.0],
+        ];
+        let model = Model3d {
+            atoms: pos
+                .iter()
+                .map(|&pos| Atom3d {
+                    element: "C".into(),
+                    pos,
+                })
+                .collect(),
+            bonds: [(0, 1), (1, 2), (2, 0), (0, 3), (3, 4)]
+                .into_iter()
+                .map(|(begin, end)| Bond3d {
+                    begin,
+                    end,
+                    order: 1,
+                })
+                .collect(),
+            force_field: ForceField::Uff,
+            energy: 0.0,
+            energy_unit: "kJ/mol".into(),
+            formula: "C5".into(),
+            molfile: String::new(),
+        };
+        let start = edit::coords(&model);
+        let angle = Param::Angle([1, 0, 3]);
+        let source = Source::model(&model, Some(4), vec![angle.clone()]);
+        let blocked = crate::three_d::geom::set_angle(
+            &start,
+            &edit::graph(&model),
+            [1, 0, 3],
+            100.0,
+            Some(4),
+        );
+        assert_eq!(blocked, Err(crate::three_d::geom::EditError::AnchorBlocks));
+        for value in [100.0, 130.0] {
+            assert_eq!(
+                source.at(&[value]),
+                Err(crate::three_d::geom::EditError::AnchorBlocks.to_string()),
+                "the rigid point at {value}° fails as before"
+            );
+        }
+        // A relaxed scan sets it, moving the anchor.
+        let Ok(Point::Coords(c)) = source.at_from(&start, &[100.0], &[]) else {
+            panic!("relaxed")
+        };
+        assert!((angle.read_coords(&c).unwrap() - 100.0).abs() < 1e-6);
+    }
+
     #[test]
     fn too_large_scans_are_refused_at_once() {
         let mut model = chain_model();
