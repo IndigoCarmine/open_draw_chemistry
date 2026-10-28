@@ -176,6 +176,7 @@ fn font_menu(
         })
         .show_ui(ui, |ui| {
             popup_rects.push(ui.clip_rect());
+            let before = changes.len();
             let search = ui.add(
                 egui::TextEdit::singleline(&mut bar.search)
                     .hint_text("フォントを検索")
@@ -224,6 +225,10 @@ fn font_menu(
                         ui.weak("一致するフォントはありません");
                     }
                 });
+            // A font was picked: the next search starts afresh.
+            if changes.len() > before {
+                bar.search.clear();
+            }
         });
     combo
         .response
