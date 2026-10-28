@@ -897,6 +897,10 @@ pub struct AssemblyState {
     /// Tells this state apart from every other in the process (a viewer showing several
     /// documents' assemblies in turn keys on it).
     id: u64,
+    /// Which design is open: changed by [`AssemblyState::replace`] and kept by every edit, so
+    /// the designs sharing it are one design's history, in which an item's id
+    /// ([`Ids`]) always names the same item. Unique in the process.
+    lineage: u64,
     pub design: Design,
     /// The molecule selected in the viewer, as an index into the build's molecules.
     pub selected: Option<usize>,
@@ -904,11 +908,18 @@ pub struct AssemblyState {
     committed: Design,
     /// The design has changed since [`AssemblyState::committed`].
     pending: bool,
-    undo: Vec<Design>,
-    redo: Vec<Design>,
+    /// The designs undo and redo restore, each with its lineage.
+    undo: Vec<(Design, u64)>,
+    redo: Vec<(Design, u64)>,
     revision: u64,
     /// The last build and the revision it was made at (see [`super::build`]).
     pub(super) cache: Option<super::build::Cached>,
+}
+
+/// A lineage no state has had (see [`AssemblyState::lineage`]).
+fn new_lineage() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Default for AssemblyState {
@@ -923,6 +934,7 @@ impl AssemblyState {
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
             id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            lineage: new_lineage(),
             committed: design.clone(),
             design,
             selected: None,
@@ -937,6 +949,13 @@ impl AssemblyState {
     /// Unique to this state.
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Which design is open (see [`AssemblyState::lineage`]): what refers to the design's items
+    /// by id, such as the atoms picked to measure, holds only while it is the same. Undo and
+    /// redo across an opened file bring back the lineage of the design they restore.
+    pub fn lineage(&self) -> u64 {
+        self.lineage
     }
 
     /// Changes with every change to the design.
@@ -956,7 +975,7 @@ impl AssemblyState {
             return;
         }
         let previous = std::mem::replace(&mut self.committed, self.design.clone());
-        self.undo.push(previous);
+        self.undo.push((previous, self.lineage));
         if self.undo.len() > HISTORY_LIMIT {
             self.undo.remove(0);
         }
@@ -983,11 +1002,12 @@ impl AssemblyState {
     /// Go back one step. Returns whether there was one.
     pub fn undo(&mut self) -> bool {
         self.settle();
-        let Some(previous) = self.undo.pop() else {
+        let Some((previous, lineage)) = self.undo.pop() else {
             return false;
         };
         let current = std::mem::replace(&mut self.design, previous);
-        self.redo.push(current);
+        self.redo
+            .push((current, std::mem::replace(&mut self.lineage, lineage)));
         self.committed = self.design.clone();
         self.revision += 1;
         true
@@ -995,19 +1015,22 @@ impl AssemblyState {
 
     pub fn redo(&mut self) -> bool {
         self.settle();
-        let Some(next) = self.redo.pop() else {
+        let Some((next, lineage)) = self.redo.pop() else {
             return false;
         };
         let current = std::mem::replace(&mut self.design, next);
-        self.undo.push(current);
+        self.undo
+            .push((current, std::mem::replace(&mut self.lineage, lineage)));
         self.committed = self.design.clone();
         self.revision += 1;
         true
     }
 
-    /// Replace the design (an opened file) as one undo step.
+    /// Replace the design (an opened file) as one undo step. The new design is another
+    /// lineage: its ids are its own, not the replaced design's.
     pub fn replace(&mut self, design: Design) {
         self.edit(|d| *d = design);
+        self.lineage = new_lineage();
         self.selected = None;
     }
 
@@ -1268,6 +1291,30 @@ mod tests {
         }
         assert_eq!(d.step_molecule_count(), 1);
         assert_eq!(d.instances().len(), 1 + d.manual.len());
+    }
+
+    #[test]
+    fn opening_a_file_starts_another_lineage_that_undo_and_redo_cross() {
+        let mut state = AssemblyState::with_design(design_with_two_steps());
+        let first = state.lineage();
+        state.edit(|d| d.steps.pop());
+        assert_eq!(state.lineage(), first, "an edit is the same design");
+        state.replace(design_with_two_steps());
+        let opened = state.lineage();
+        assert_ne!(opened, first);
+        assert!(state.undo());
+        assert_eq!(state.lineage(), first);
+        assert!(state.undo());
+        assert_eq!(state.lineage(), first);
+        assert!(state.redo() && state.redo());
+        assert_eq!(state.lineage(), opened);
+        // Opening the same design again is still another.
+        state.replace(design_with_two_steps());
+        assert_ne!(state.lineage(), opened);
+        assert_ne!(
+            AssemblyState::with_design(design_with_two_steps()).lineage(),
+            state.lineage()
+        );
     }
 
     #[test]

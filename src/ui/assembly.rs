@@ -105,10 +105,13 @@ fn orient_role(n: usize) -> &'static str {
 }
 
 /// Atoms being picked to measure, in the assembly of the state with this id (the view is
-/// shared by every document).
+/// shared by every document) while it has this design open ([`AssemblyState::lineage`]):
+/// another file opened over it, or undo / redo across that, lets the picks go rather than
+/// have the other design's ids name unrelated atoms. They stay gone on going back.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Measuring {
     state: u64,
+    lineage: u64,
     pick: MeasurePick,
 }
 
@@ -570,15 +573,16 @@ fn click(state: &mut AssemblyState, view: &mut AssemblyView, built: &Built, hit:
 }
 
 /// The atoms being measured in `state`'s assembly: none yet if they were picked in another
-/// document's.
+/// document's, or in another design of this one's.
 fn measure_pick<'a>(
     measure: &'a mut Option<Measuring>,
     state: &AssemblyState,
 ) -> Option<&'a mut MeasurePick> {
     let measuring = measure.as_mut()?;
-    if measuring.state != state.id() {
+    if (measuring.state, measuring.lineage) != (state.id(), state.lineage()) {
         *measuring = Measuring {
             state: state.id(),
+            lineage: state.lineage(),
             pick: MeasurePick::default(),
         };
     }
@@ -2048,6 +2052,47 @@ mod tests {
         assert!(measured_atoms(&other, &mut view, &built).is_empty());
         click(&mut other, &mut view, &built, Hit::Atom(1));
         assert_eq!(measured_atoms(&other, &mut view, &built), vec![1]);
+    }
+
+    /// Opening another assembly over this one lets the picks go: its atoms' ids are its own,
+    /// and the same ids would name unrelated atoms. Undo and redo back across the opening do
+    /// not bring picks onto the other design either, while edits within one design keep them.
+    #[test]
+    fn opening_another_assembly_lets_the_picks_go() {
+        let mut state = ring_of_water();
+        let mut view = AssemblyView::default();
+        view.set_measuring(true);
+        let built = state.built().unwrap();
+        for a in [0, 3] {
+            click(&mut state, &mut view, &built, Hit::Atom(a));
+        }
+        // Another file: the same atoms by id, named differently.
+        let mut other = ring_of_water().design;
+        other.components[0].name = "other".into();
+        state.replace(other);
+        let built = state.built().unwrap();
+        assert!(measured_atoms(&state, &mut view, &built).is_empty());
+        // Picked in the opened design, the atoms do not carry back onto the one undone to,
+        // nor forward again on redo.
+        click(&mut state, &mut view, &built, Hit::Atom(0));
+        click(&mut state, &mut view, &built, Hit::Atom(3));
+        assert!(state.undo());
+        let built = state.built().unwrap();
+        assert!(measured_atoms(&state, &mut view, &built).is_empty());
+        click(&mut state, &mut view, &built, Hit::Atom(0));
+        click(&mut state, &mut view, &built, Hit::Atom(3));
+        assert!(state.redo());
+        let built = state.built().unwrap();
+        assert!(measured_atoms(&state, &mut view, &built).is_empty());
+        // An ordinary edit, and its undo, keep them.
+        click(&mut state, &mut view, &built, Hit::Atom(3));
+        click(&mut state, &mut view, &built, Hit::Atom(15));
+        state.edit(|d| d.remove_molecule(0));
+        let built = state.built().unwrap();
+        assert_eq!(measured_atoms(&state, &mut view, &built), vec![0, 12]);
+        assert!(state.undo());
+        let built = state.built().unwrap();
+        assert_eq!(measured_atoms(&state, &mut view, &built), vec![3, 15]);
     }
 
     #[test]
