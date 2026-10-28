@@ -48,6 +48,8 @@ pub struct OpenDrawApp {
     assembly_view: ui::assembly::AssemblyView,
     /// The text format bar (書式): its recently used fonts are remembered.
     text_format: ui::text_format::TextFormatBar,
+    /// The 書式 menu's colours (remembered) and the shadow it is editing.
+    appearance: ui::appearance::Appearance,
     /// The UI language the user picked; `None` (until they pick one) follows the OS locale.
     #[serde(deserialize_with = "crate::i18n::deserialize_lenient")]
     language: Option<Lang>,
@@ -110,6 +112,7 @@ impl Default for OpenDrawApp {
             view3d: Default::default(),
             assembly_view: Default::default(),
             text_format: Default::default(),
+            appearance: Default::default(),
             language: None,
             fonts_for: None,
             docs: Vec::new(),
@@ -573,6 +576,17 @@ impl OpenDrawApp {
                     self.status = crate::ui::palette::bracket_shape(&mut doc.editor, shape);
                 }
             }
+            Command::FillRing(_)
+            | Command::ClearRingFill
+            | Command::LineColor(_)
+            | Command::TextColor(_)
+            | Command::Shadow(_) => {
+                if let Some(doc) = self.active_doc_mut()
+                    && let Some(message) = ui::appearance::run(&mut doc.editor, &command)
+                {
+                    self.status = message.to_owned();
+                }
+            }
             Command::Undo
             | Command::Redo
             | Command::Copy
@@ -834,6 +848,7 @@ impl OpenDrawApp {
             can_export_3d: has_model,
             can_create_assembly: editor.is_some(),
             language: crate::i18n::language(),
+            selection: editor.map(ui::appearance::Selection::of),
         }
     }
 
@@ -1039,13 +1054,14 @@ fn read_component(path: &Path) -> Result<Component, String> {
 
 /// The analysis panel, labelled in Japanese like the rest of the window.
 /// The canvas of the active document, with a menu on right-click: ChemDraw's bond menu on a
-/// bond, and 3D化 for the molecule clicked on (or the selected ones, or the whole drawing);
-/// and over it, while there is text to format, the 書式 bar.
+/// bond, 3D化 for the molecule clicked on (or the selected ones, or the whole drawing), and the
+/// 書式 menu's items; and over it, while there is text to format, the 書式 bar.
 fn editor_canvas(
     ui: &mut egui::Ui,
     doc: &mut Document,
     context_atom: &mut Option<u32>,
     text_format: &mut ui::text_format::TextFormatBar,
+    appearance: &mut ui::appearance::Appearance,
     out: &mut Vec<Command>,
 ) {
     let response = doc.show(ui).response;
@@ -1093,6 +1109,9 @@ fn editor_canvas(
             make_3d = target;
             ui.close();
         }
+        ui.separator();
+        let selection = ui::appearance::Selection::of(editor);
+        ui::appearance::items(ui, appearance, Some(selection), out);
     });
     if menu.is_none() {
         editor.clear_context_bond();
@@ -1184,6 +1203,8 @@ impl eframe::App for OpenDrawApp {
         {
             doc.assembly.settle();
         }
+        // The menu bar edits the 書式 colours while `state` holds on to the app.
+        let mut appearance = std::mem::take(&mut self.appearance);
         let state = self.menu_state();
         let visuals = ui.visuals().clone();
         let dark = visuals.dark_mode;
@@ -1202,10 +1223,13 @@ impl eframe::App for OpenDrawApp {
         };
         egui::Panel::top("menu_bar")
             .frame(bar(surface, 8, 2))
-            .show(ui, |ui| ui::menu::menu_bar(ui, &state, &mut commands));
+            .show(ui, |ui| {
+                ui::menu::menu_bar(ui, &state, &mut appearance, &mut commands)
+            });
         egui::Panel::top("toolbar")
             .frame(bar(visuals.panel_fill, 10, 6))
             .show(ui, |ui| ui::menu::toolbar(ui, &state, &mut commands));
+        self.appearance = appearance;
         egui::Panel::bottom("status_bar")
             .frame(bar(surface, 12, 4))
             .show(ui, |ui| {
@@ -1334,6 +1358,7 @@ impl eframe::App for OpenDrawApp {
                     doc,
                     &mut self.context_atom,
                     &mut self.text_format,
+                    &mut self.appearance,
                     &mut commands,
                 ),
                 None => welcome(ui, &mut commands),
@@ -1925,5 +1950,263 @@ mod tests {
         assert!(storage.0.contains("\"de\""), "{}", storage.0);
         let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
         assert_eq!(back.language, Some(Lang::De));
+    }
+
+    /// A step through the menu bar: open a menu or press an item, or hover a submenu open.
+    enum Step<'a> {
+        Click(&'a str),
+        Hover(&'a str),
+    }
+
+    /// The commands a walk through the menu bar gives, from a frame showing it as `app` is.
+    fn through_menu(
+        h: &mut ui::appearance::tests::Harness,
+        app: &OpenDrawApp,
+        appearance: &mut ui::appearance::Appearance,
+        steps: &[Step],
+    ) -> Vec<Command> {
+        let state = app.menu_state();
+        let mut out = Vec::new();
+        let mut show = |ui: &mut egui::Ui| ui::menu::menu_bar(ui, &state, appearance, &mut out);
+        h.frame(Vec::new(), &mut show);
+        for step in steps {
+            match step {
+                Step::Click(label) => h.click(label, &mut show),
+                Step::Hover(label) => h.hover(label, &mut show),
+            }
+        }
+        // Whatever stayed open closes, so the next walk starts from the bar.
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        h.frame(vec![escape], &mut show);
+        h.frame(Vec::new(), &mut show);
+        drop(show);
+        out
+    }
+
+    /// A right-click on the canvas offers the 書式 items too.
+    #[test]
+    fn the_canvas_menu_fills_rings() {
+        let mut app = app_with_one_untitled();
+        let (ring, ..) = ui::appearance::tests::phenol(&mut app.docs[0].editor);
+        app.docs[0]
+            .editor
+            .selected_atoms
+            .extend(ring.iter().copied());
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut appearance = ui::appearance::Appearance::default();
+        let mut text_format = ui::text_format::TextFormatBar::default();
+        let mut context_atom = None;
+        let mut out = Vec::new();
+        let doc = &mut app.docs[0];
+        let mut show = |ui: &mut egui::Ui| {
+            editor_canvas(
+                ui,
+                doc,
+                &mut context_atom,
+                &mut text_format,
+                &mut appearance,
+                &mut out,
+            )
+        };
+        h.frame(Vec::new(), &mut show);
+        // An empty corner of the canvas, away from the drawing in its middle.
+        let corner = egui::pos2(30.0, 30.0);
+        h.click_at(corner, egui::PointerButton::Secondary, &mut show);
+        h.hover(t!("format.fill_ring"), &mut show);
+        h.click(t!("format.fill"), &mut show);
+        drop(show);
+        let fill = ui::appearance::Appearance::default().ring_fill.rgba;
+        assert_eq!(out, [Command::FillRing(fill)]);
+    }
+
+    /// The 書式 menu end to end: a ring fill, line and text colours (each its own) and a
+    /// shadow set from the menu bar survive saving as CDX and CDXML and opening again, each is
+    /// one undo step of Edit > Undo / Redo, and once reset the drawing saves as it did before
+    /// any of them.
+    #[test]
+    fn the_format_menu_survives_saving_and_undoes() {
+        use Step::{Click, Hover};
+        use chembuider_rs::molecule::Shadow;
+
+        let ctx = egui::Context::default();
+        let mut app = app_with_one_untitled();
+        let (ring, o, text) = ui::appearance::tests::phenol(&mut app.docs[0].editor);
+        let dir = std::env::temp_dir().join(format!("odc-format-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bytes = |app: &OpenDrawApp, format| {
+            io::encode(format, &app.docs[0].editor.molecule, None).unwrap()
+        };
+        let before = [bytes(&app, Format::Cdx), bytes(&app, Format::Cdxml)];
+        let saves_as_before = |app: &OpenDrawApp, what: &str| {
+            let cdxml = bytes(app, Format::Cdxml);
+            assert!(
+                before[1] == cdxml,
+                "{what}: CDXML differs:
+{}",
+                String::from_utf8_lossy(&cdxml)
+            );
+            assert!(before[0] == bytes(app, Format::Cdx), "{what}: CDX differs");
+        };
+
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut appearance = ui::appearance::Appearance::default();
+        let format = t!("menu.format.title");
+        let mut walk = |app: &mut OpenDrawApp, steps: &[Step]| {
+            let commands = through_menu(&mut h, app, &mut appearance, steps);
+            assert_eq!(commands.len(), 1, "one command from the menu");
+            for command in commands.clone() {
+                app.run(&ctx, command);
+            }
+            commands
+        };
+
+        // The ring's atoms selected: fill it green, and its bonds red.
+        app.docs[0]
+            .editor
+            .selected_atoms
+            .extend(ring.iter().copied());
+        let green = [22, 163, 74, 90];
+        let fill = walk(
+            &mut app,
+            &[
+                Click(format),
+                Hover(t!("format.fill_ring")),
+                Click("#16A34A"),
+                Click(t!("format.fill")),
+            ],
+        );
+        assert_eq!(fill, [Command::FillRing(green)]);
+        assert_eq!(app.status, t!("format.status.ring_filled"));
+        let red = [220, 38, 38, 255];
+        walk(
+            &mut app,
+            &[
+                Click(format),
+                Hover(t!("format.line_color")),
+                Click(t!("format.apply_color")),
+            ],
+        );
+        // Nothing selected: the shadow goes to every structure.
+        app.docs[0].editor.selected_atoms.clear();
+        let shadow = walk(
+            &mut app,
+            &[
+                Click(format),
+                Hover(t!("format.shadow")),
+                Click(t!("format.shadow_on")),
+            ],
+        );
+        assert_eq!(shadow, [Command::Shadow(Some(Shadow::default()))]);
+        // The O's label and the text blue; the O's bond keeps the style's colour.
+        let blue = [37, 99, 235, 255];
+        app.docs[0].editor.selected_atoms = [o].into();
+        app.docs[0].editor.selected_objects = [text].into();
+        walk(
+            &mut app,
+            &[
+                Click(format),
+                Hover(t!("format.text_color")),
+                Click(t!("format.apply_color")),
+            ],
+        );
+        assert_eq!(app.docs[0].editor.undo_stack.len(), 4);
+
+        let check = |mol: &chembuider_rs::Molecule, what: &str| {
+            assert_eq!(mol.ring_fills.len(), 1, "{what}");
+            assert_eq!(mol.ring_fills[0].color, green, "{what}");
+            assert_eq!(mol.ring_fills[0].atoms.len(), 6, "{what}");
+            let bond_colors: Vec<_> = mol.bonds.iter().map(|b| b.color).collect();
+            let red_bonds = bond_colors.iter().filter(|c| **c == Some(red)).count();
+            assert_eq!(red_bonds, 6, "{what}: {bond_colors:?}");
+            let plain_bonds = bond_colors.iter().filter(|c| c.is_none()).count();
+            assert_eq!(plain_bonds, 1, "{what}: {bond_colors:?}");
+            let labels: Vec<_> = mol
+                .atoms
+                .iter()
+                .map(|a| (a.element.as_str(), a.color))
+                .collect();
+            assert!(labels.contains(&("O", Some(blue))), "{what}: {labels:?}");
+            let carbons_plain = labels
+                .iter()
+                .filter(|(e, _)| *e == "C")
+                .all(|(_, c)| c.is_none());
+            assert!(carbons_plain, "{what}: {labels:?}");
+            let texts: Vec<_> = mol.objects.iter().filter_map(|o| o.as_text()).collect();
+            assert_eq!(texts.len(), 1, "{what}");
+            assert_eq!(texts[0].color, Some(blue), "{what}");
+            let shadows = mol.structure_shadows();
+            assert_eq!(shadows.len(), 1, "{what}");
+            assert_eq!(shadows[0].0.len(), 7, "{what}");
+            let (s, d) = (shadows[0].1, Shadow::default());
+            assert_eq!(s.color, d.color, "{what}");
+            let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+            let same = close(s.offset[0], d.offset[0])
+                && close(s.offset[1], d.offset[1])
+                && close(s.blur, d.blur);
+            assert!(same, "{what}: {s:?}");
+        };
+        check(&app.docs[0].editor.molecule, "drawn");
+        for name in ["format.cdx", "format.cdxml"] {
+            let path = dir.join(name);
+            let format = Format::from_path(&path).unwrap();
+            app.docs[0].save_as(&path, format).unwrap();
+            let mut reopened = OpenDrawApp::default();
+            reopened.open_path(&path);
+            assert_eq!(reopened.docs.len(), 1, "{name}");
+            check(&reopened.docs[0].editor.molecule, name);
+        }
+
+        // Edit > Undo four times takes all of it back, Redo puts it back. (An item is named
+        // with its shortcut.)
+        let edit = t!("menu.edit.title");
+        let undo = format!("{} Ctrl+Z", t!("menu.edit.undo"));
+        let redo = format!("{} Ctrl+Y", t!("menu.edit.redo"));
+        for _ in 0..4 {
+            walk(&mut app, &[Click(edit), Click(&undo)]);
+        }
+        let mol = &app.docs[0].editor.molecule;
+        assert!(mol.ring_fills.is_empty());
+        assert!(mol.bonds.iter().all(|b| b.color.is_none()));
+        assert!(
+            mol.atoms
+                .iter()
+                .all(|a| a.color.is_none() && a.shadow.is_none())
+        );
+        saves_as_before(&app, "undone");
+        for _ in 0..4 {
+            walk(&mut app, &[Click(edit), Click(&redo)]);
+        }
+        check(&app.docs[0].editor.molecule, "redone");
+
+        // Reset from the menu: no fill, the default colours, no shadow — saved as before.
+        app.docs[0].editor.selected_atoms = ring.iter().copied().chain([o]).collect();
+        app.docs[0].editor.selected_objects = [text].into();
+        walk(&mut app, &[Click(format), Click(t!("format.clear_fill"))]);
+        for submenu in [t!("format.line_color"), t!("format.text_color")] {
+            walk(
+                &mut app,
+                &[
+                    Click(format),
+                    Hover(submenu),
+                    Click(t!("format.default_color")),
+                ],
+            );
+        }
+        walk(
+            &mut app,
+            &[
+                Click(format),
+                Hover(t!("format.shadow")),
+                Click(t!("format.shadow_on")),
+            ],
+        );
+        saves_as_before(&app, "reset");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

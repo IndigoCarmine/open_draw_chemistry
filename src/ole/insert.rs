@@ -3,7 +3,7 @@
 //!
 //! The editor widget's own CDX paste keeps only atoms and bonds; this keeps the page objects
 //! too (arrows, text, reaction tables, brackets), with every id they hold remapped into the
-//! drawing. Like the widget's paste, the drawing is centred on the cursor (a CDX's absolute
+//! drawing, and the appearance (colours, shadows, ring fills). Like the widget's paste, the drawing is centred on the cursor (a CDX's absolute
 //! page coordinates would otherwise land it far off-screen), selected, and undone in one step.
 
 use std::collections::{HashMap, HashSet};
@@ -33,6 +33,8 @@ pub fn paste_drawing(editor: &mut ChemStructEditor, pasted: &Molecule) -> bool {
         );
         if let Some(atom) = mol.atom_by_id_mut(id) {
             atom.group_h = a.group_h;
+            atom.color = a.color;
+            atom.shadow = a.shadow;
         }
         atoms.insert(a.id, id);
     }
@@ -44,6 +46,7 @@ pub fn paste_drawing(editor: &mut ChemStructEditor, pasted: &Molecule) -> bool {
         if let Some(bond) = mol.bond_by_id_mut(id) {
             bond.stereo = b.stereo.clone();
             bond.double_position = b.double_position;
+            bond.color = b.color;
         }
     }
     for fill in &pasted.ring_fills {
@@ -177,6 +180,72 @@ mod tests {
         assert!(editor.undo());
         assert_eq!(editor.molecule.atoms.len(), 1);
         assert!(editor.molecule.objects.is_empty());
+    }
+
+    /// The appearance comes along: the colours of the bonds, atom labels and texts, the
+    /// structure's shadow and its ring fills, on the new ids.
+    #[test]
+    fn pastes_colours_shadows_and_ring_fills() {
+        use chembuider_rs::molecule::Shadow;
+        let mut pasted = Molecule::default();
+        let ring: Vec<u32> = (0..3)
+            .map(|k| {
+                let angle = k as f32 * std::f32::consts::TAU / 3.0;
+                pasted.add_atom("C".into(), [angle.cos(), angle.sin()], 0)
+            })
+            .collect();
+        for k in 0..3 {
+            pasted.add_bond(ring[k], ring[(k + 1) % 3], BondOrder::Single);
+        }
+        let shadow = Shadow {
+            color: [10, 20, 30, 120],
+            offset: [0.2, 0.3],
+            blur: 0.25,
+        };
+        for a in &mut pasted.atoms {
+            a.shadow = Some(shadow);
+        }
+        pasted.atoms[1].color = Some([0, 0, 255, 255]);
+        pasted.bonds[2].color = Some([255, 0, 0, 255]);
+        pasted.set_ring_fill(ring.clone(), [0, 200, 0, 100]);
+        let text = pasted.add_text([3.0, 0.0], "THF");
+        if let Some(PageObject::Text(t)) = pasted.objects.iter_mut().find(|o| o.id() == text) {
+            t.color = Some([0, 128, 0, 255]);
+        }
+
+        let mut editor = ChemStructEditor::default();
+        // Something already there, so the pasted ids differ from the originals.
+        let a = editor.molecule.add_atom("N".into(), [9.0, 9.0], 0);
+        let b = editor.molecule.add_atom("O".into(), [10.0, 9.0], 0);
+        editor.molecule.add_bond(a, b, BondOrder::Single);
+        assert!(paste_drawing(&mut editor, &pasted));
+
+        let mol = &editor.molecule;
+        let new: Vec<&chembuider_rs::molecule::Atom> = mol
+            .atoms
+            .iter()
+            .filter(|x| x.id != a && x.id != b)
+            .collect();
+        assert_eq!(new.len(), 3);
+        assert!(new.iter().all(|x| x.shadow == Some(shadow)));
+        assert_eq!(
+            new.iter().filter_map(|x| x.color).collect::<Vec<_>>(),
+            [[0, 0, 255, 255]]
+        );
+        assert_eq!(mol.shadow_of(new[0].id), Some(shadow));
+        assert_eq!(mol.shadow_of(a), None);
+        let coloured: Vec<_> = mol.bonds.iter().filter_map(|x| x.color).collect();
+        assert_eq!(coloured, [[255, 0, 0, 255]]);
+        assert_eq!(mol.ring_fills.len(), 1);
+        assert_eq!(mol.ring_fills[0].color, [0, 200, 0, 100]);
+        assert!(
+            mol.ring_fills[0]
+                .atoms
+                .iter()
+                .all(|id| new.iter().any(|x| x.id == *id))
+        );
+        let text = mol.objects.iter().find_map(|o| o.as_text()).unwrap();
+        assert_eq!(text.color, Some([0, 128, 0, 255]));
     }
 
     #[test]
