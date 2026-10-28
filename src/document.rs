@@ -43,6 +43,10 @@ pub struct Document {
     /// The last parameter scan of the assembly or the 3D model (パラメータスキャン), running or
     /// done.
     pub scan: Option<crate::scan::Run>,
+    /// Ctrl+V on the canvas, taken from the editor widget (see [`crate::ole::PasteShortcut`]).
+    paste_shortcut: crate::ole::PasteShortcut,
+    /// Ctrl+V was pressed on the canvas: the app pastes (see [`Document::take_paste_request`]).
+    paste_requested: bool,
 }
 
 /// The OLE object a document edits, and the document it is embedded in.
@@ -73,6 +77,8 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            paste_shortcut: Default::default(),
+            paste_requested: false,
         }
     }
 
@@ -94,6 +100,8 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            paste_shortcut: Default::default(),
+            paste_requested: false,
         }
     }
 
@@ -125,6 +133,8 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            paste_shortcut: Default::default(),
+            paste_requested: false,
         }
     }
 
@@ -176,11 +186,22 @@ impl Document {
         if crate::ole::take_copy_shortcut(ui.ctx()) {
             crate::ole::copy(&self.editor, ui.ctx());
         }
+        // So does Ctrl+V: the app's paste also takes objects copied in Word/PowerPoint.
+        if self.paste_shortcut.take(ui.ctx()) {
+            self.paste_requested = true;
+        }
         let response = self.editor.show(ui);
+        self.paste_shortcut.release(ui.ctx());
         if let Some(fit) = self.auto_fit.as_mut().filter(|_| fitting) {
             fit.view = Some((self.editor.zoom, self.editor.pan));
         }
         response
+    }
+
+    /// Whether Ctrl+V was pressed on the canvas since last asked; the caller pastes with
+    /// [`crate::ole::paste`] (Edit > Paste), which reports to the status bar.
+    pub fn take_paste_request(&mut self) -> bool {
+        std::mem::take(&mut self.paste_requested)
     }
 
     /// Whether the structure differs from what was last opened or saved.
