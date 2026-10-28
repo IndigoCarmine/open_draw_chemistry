@@ -45,8 +45,8 @@ pub fn tab_strip(ui: &mut egui::Ui, docs: &[Document], active: usize, out: &mut 
                 ui.add_space(4.0);
             }
             if ui
-                .add(egui::Button::new(RichText::new("＋").size(14.0)).frame(false))
-                .on_hover_text("新しい文書")
+                .add(egui::Button::new(RichText::new("＋").size(14.0)).frame(false)) // i18n-allow: a symbol, not text
+                .on_hover_text(t!("tabs.new_document"))
                 .clicked()
             {
                 out.push(Command::New);
@@ -126,9 +126,9 @@ fn tab(ui: &mut egui::Ui, doc: &Document, i: usize, is_active: bool, out: &mut V
         out.push(Command::SelectTab(i));
     }
     let close_tip = if doc.is_dirty() {
-        "閉じる（未保存の変更あり）"
+        t!("tabs.close_unsaved")
     } else {
-        "閉じる"
+        t!("tabs.close")
     };
     close.on_hover_text(close_tip);
     if let Some(path) = &doc.path {

@@ -218,14 +218,18 @@ impl Document {
     pub fn title(&self) -> String {
         if let Some(e) = &self.embedded {
             return if e.document.is_empty() {
-                format!("{} の埋め込み", e.container)
+                t!("document.embedded", app = e.container)
             } else {
-                format!("{} の埋め込み — {}", e.container, e.document)
+                t!(
+                    "document.embedded_named",
+                    app = e.container,
+                    name = e.document
+                )
             };
         }
         match self.path.as_deref().and_then(Path::file_name) {
             Some(name) => name.to_string_lossy().into_owned(),
-            None => format!("無題 {}", self.untitled_number),
+            None => t!("document.untitled", number = self.untitled_number),
         }
     }
 
@@ -277,7 +281,7 @@ mod tests {
     #[test]
     fn untitled_documents_are_numbered() {
         let doc = Document::new(&Config::default(), 3);
-        assert_eq!(doc.title(), "無題 3");
+        assert_eq!(doc.title(), "Untitled 3");
         assert!(!doc.is_dirty());
         assert!(doc.is_pristine());
     }

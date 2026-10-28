@@ -25,7 +25,9 @@ fn sources() -> Vec<PathBuf> {
 fn used_keys() -> Vec<(String, bool, String)> {
     let mut out = Vec::new();
     // The i18n module's own docs and tests show made-up keys.
-    let own = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("i18n");
+    let own = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("i18n");
     for path in sources().into_iter().filter(|p| !p.starts_with(&own)) {
         let text: String = std::fs::read_to_string(&path)
             .unwrap()
@@ -71,12 +73,18 @@ fn every_key_used_in_code_is_in_english() {
                 missing.insert(format!("{key} ({file})"));
             }
             Some(Entry::Text(_)) if plural => {
-                missing.insert(format!("{key} is used with tn! but has no plural forms ({file})"));
+                missing.insert(format!(
+                    "{key} is used with tn! but has no plural forms ({file})"
+                ));
             }
             Some(_) => {}
         }
     }
-    assert!(missing.is_empty(), "keys missing from en.toml:\n{}", Vec::from_iter(missing).join("\n"));
+    assert!(
+        missing.is_empty(),
+        "keys missing from en.toml:\n{}",
+        Vec::from_iter(missing).join("\n")
+    );
 }
 
 #[test]
@@ -88,7 +96,10 @@ fn every_english_key_is_used() {
         .copied()
         .filter(|k| !used.contains(*k))
         .collect();
-    assert!(unused.is_empty(), "keys in en.toml that no code uses: {unused:?}");
+    assert!(
+        unused.is_empty(),
+        "keys in en.toml that no code uses: {unused:?}"
+    );
 }
 
 #[test]
@@ -108,8 +119,11 @@ fn every_catalog_matches_english_keys_and_placeholders() {
             let Some(reference) = en.get(key) else {
                 panic!("{}: {key} is not in en.toml", lang.code());
             };
-            let expected: BTreeSet<String> =
-                reference.texts().iter().flat_map(|t| placeholders(t)).collect();
+            let expected: BTreeSet<String> = reference
+                .texts()
+                .iter()
+                .flat_map(|t| placeholders(t))
+                .collect();
             for text in entry.texts() {
                 if text.is_empty() {
                     continue; // Untranslated: falls back to English.
@@ -117,15 +131,27 @@ fn every_catalog_matches_english_keys_and_placeholders() {
                 let found: BTreeSet<String> = placeholders(text).into_iter().collect();
                 // A plural form may leave out `{n}` ("one file"), never add an unknown name.
                 let unknown: Vec<_> = found.difference(&expected).collect();
-                assert!(unknown.is_empty(), "{}: {key}: unknown placeholders {unknown:?} in {text:?}", lang.code());
+                assert!(
+                    unknown.is_empty(),
+                    "{}: {key}: unknown placeholders {unknown:?} in {text:?}",
+                    lang.code()
+                );
                 let lost: Vec<_> = expected
                     .difference(&found)
                     .filter(|n| !(n.as_str() == "n" && matches!(reference, Entry::Plural(_))))
                     .collect();
-                assert!(lost.is_empty(), "{}: {key}: placeholders {lost:?} missing from {text:?}", lang.code());
+                assert!(
+                    lost.is_empty(),
+                    "{}: {key}: placeholders {lost:?} missing from {text:?}",
+                    lang.code()
+                );
             }
             if let Entry::Plural(forms) = entry {
-                assert!(forms.iter().any(|(c, _)| *c == "other"), "{}: {key} has no `other` form", lang.code());
+                assert!(
+                    forms.iter().any(|(c, _)| *c == "other"),
+                    "{}: {key} has no `other` form",
+                    lang.code()
+                );
             }
         }
     }
@@ -222,7 +248,11 @@ fn no_japanese_literals_outside_catalogs() {
             if !in_string && trimmed.starts_with("//") {
                 continue;
             }
-            let scan = if in_string { format!("\"{line}") } else { line.to_owned() };
+            let scan = if in_string {
+                format!("\"{line}")
+            } else {
+                line.to_owned()
+            };
             let (literals, open) = string_literals(&scan);
             in_string = open;
             if line.contains("i18n-allow") {
@@ -233,7 +263,11 @@ fn no_japanese_literals_outside_catalogs() {
             }
         }
     }
-    assert!(found.is_empty(), "Japanese text outside the catalogs (use t!):\n{}", found.join("\n"));
+    assert!(
+        found.is_empty(),
+        "Japanese text outside the catalogs (use t!):\n{}",
+        found.join("\n")
+    );
 }
 
 #[test]

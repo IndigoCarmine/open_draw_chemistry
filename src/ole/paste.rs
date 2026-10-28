@@ -51,16 +51,11 @@ pub enum PasteError {
 impl std::fmt::Display for PasteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PasteError::WrongClass(class) => write!(
-                f,
-                "クリップボードの埋め込みオブジェクトは ChemDraw の構造式ではないため貼り付けられません（クラス {class}）"
-            ),
-            PasteError::NoContents => f.write_str(
-                "クリップボードの ChemDraw オブジェクトに構造データ（CONTENTS）がないため貼り付けられません",
-            ),
-            PasteError::Unreadable => {
-                f.write_str("クリップボードの埋め込みオブジェクトを読み込めませんでした")
+            PasteError::WrongClass(class) => {
+                f.write_str(&t!("ole.paste.wrong_class", class = class))
             }
+            PasteError::NoContents => f.write_str(t!("ole.paste.no_contents")),
+            PasteError::Unreadable => f.write_str(t!("ole.paste.unreadable")),
         }
     }
 }
@@ -378,7 +373,10 @@ mod tests {
             err,
             PasteError::WrongClass("{00020830-0000-0000-C000-000000000046}".into())
         );
-        assert!(err.to_string().contains("ChemDraw の構造式ではない"));
+        assert!(
+            err.to_string().contains("not a ChemDraw structure"),
+            "{err}"
+        );
     }
 
     #[test]

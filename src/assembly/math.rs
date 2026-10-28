@@ -286,30 +286,25 @@ impl Cell {
 
     /// Whether the cell can exist: positive finite edges, angles strictly between 0° and 180°
     /// that can meet at a corner (each less than the sum of the other two, all three less than
-    /// 360°). The message says what is wrong, in Japanese.
+    /// 360°). The message says what is wrong, in the UI language.
     pub fn check(&self) -> Result<(), String> {
         for (name, v) in [("a", self.a), ("b", self.b), ("c", self.c)] {
             if !v.is_finite() || v <= 0.0 {
-                return Err(format!("格子定数 {name} は正の長さにしてください"));
+                return Err(t!("assembly.error.cell_length", name = name));
             }
         }
         let angles = [("α", self.alpha), ("β", self.beta), ("γ", self.gamma)];
         for (name, v) in angles {
             if !v.is_finite() || v <= 0.0 || v >= 180.0 {
-                return Err(format!(
-                    "角度 {name} は 0° より大きく 180° より小さくしてください"
-                ));
+                return Err(t!("assembly.error.cell_angle", name = name));
             }
         }
         let [x, y, z] = [self.alpha, self.beta, self.gamma];
         if x + y + z >= 360.0 || x >= y + z || y >= x + z || z >= x + y {
-            return Err(
-                "この 3 つの角度では平行六面体になりません（どの角も他の 2 つの和より小さく、3 つの和は 360° 未満にしてください）"
-                    .to_owned(),
-            );
+            return Err(t!("assembly.error.cell_angles").to_owned());
         }
         if self.unit_volume_sq() <= 1e-9 {
-            return Err("単位胞の体積が 0 になります。角度を見直してください".to_owned());
+            return Err(t!("assembly.error.cell_volume").to_owned());
         }
         Ok(())
     }
@@ -475,6 +470,7 @@ mod tests {
 
     #[test]
     fn impossible_cells_are_refused_in_japanese() {
+        let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
         let ok = Cell::default();
         assert!(ok.check().is_ok());
         for bad in [

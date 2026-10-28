@@ -90,7 +90,7 @@ impl Source {
             Source::Assembly { design, .. } => {
                 let built = build::build(design, 0).map_err(|e| e.to_string())?;
                 if built.is_empty() {
-                    return Err("集合体に分子がありません".into());
+                    return Err(t!("scan.error.empty_assembly").into());
                 }
                 Ok(Reference {
                     molfile: energy::molfile(&built.atoms, &built.bonds),

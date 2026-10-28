@@ -70,11 +70,11 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
         icons::brand(ui);
         ui.add_space(10.0);
 
-        ui.menu_button("ファイル", |ui| {
-            item(ui, "新規", "Ctrl+N", true, Command::New, out);
-            item(ui, "開く…", "Ctrl+O", true, Command::Open, out);
+        ui.menu_button(t!("menu.file.title"), |ui| {
+            item(ui, t!("menu.file.new"), "Ctrl+N", true, Command::New, out);
+            item(ui, t!("menu.file.open"), "Ctrl+O", true, Command::Open, out);
             ui.add_enabled_ui(!state.recent.is_empty(), |ui| {
-                ui.menu_button("最近使ったファイル", |ui| {
+                ui.menu_button(t!("menu.file.open_recent"), |ui| {
                     for path in state.recent {
                         if ui.button(path.display().to_string()).clicked() {
                             out.push(Command::OpenPath(path.clone()));
@@ -84,17 +84,24 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
                 });
             });
             ui.separator();
-            item(ui, "保存", "Ctrl+S", state.has_document, Command::Save, out);
             item(
                 ui,
-                "名前を付けて保存…",
+                t!("menu.file.save"),
+                "Ctrl+S",
+                state.has_document,
+                Command::Save,
+                out,
+            );
+            item(
+                ui,
+                t!("menu.file.save_as"),
                 "Ctrl+Shift+S",
                 state.has_document,
                 Command::SaveAs,
                 out,
             );
             ui.add_enabled_ui(state.has_document, |ui| {
-                ui.menu_button("エクスポート", |ui| {
+                ui.menu_button(t!("menu.file.export"), |ui| {
                     for &export in Export::all() {
                         let label = format!("{} (.{})…", export.description(), export.extension());
                         if ui.button(label).clicked() {
@@ -107,7 +114,7 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             ui.separator();
             item(
                 ui,
-                "閉じる",
+                t!("menu.file.close"),
                 "Ctrl+W",
                 state.has_document,
                 Command::CloseActive,
@@ -115,17 +122,31 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             );
             // Quitting from a menu is desktop-only; on web there is no window to close.
             if !cfg!(target_arch = "wasm32") {
-                item(ui, "終了", "", true, Command::Quit, out);
+                item(ui, t!("menu.file.quit"), "", true, Command::Quit, out);
             }
         });
 
-        ui.menu_button("編集", |ui| {
-            item(ui, "元に戻す", "Ctrl+Z", state.can_undo, Command::Undo, out);
-            item(ui, "やり直し", "Ctrl+Y", state.can_redo, Command::Redo, out);
+        ui.menu_button(t!("menu.edit.title"), |ui| {
+            item(
+                ui,
+                t!("menu.edit.undo"),
+                "Ctrl+Z",
+                state.can_undo,
+                Command::Undo,
+                out,
+            );
+            item(
+                ui,
+                t!("menu.edit.redo"),
+                "Ctrl+Y",
+                state.can_redo,
+                Command::Redo,
+                out,
+            );
             ui.separator();
             item(
                 ui,
-                "コピー",
+                t!("menu.edit.copy"),
                 "Ctrl+C",
                 state.has_document,
                 Command::Copy,
@@ -133,7 +154,7 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             );
             item(
                 ui,
-                "貼り付け",
+                t!("menu.edit.paste"),
                 "Ctrl+V",
                 state.has_document,
                 Command::Paste,
@@ -141,10 +162,10 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             );
         });
 
-        ui.menu_button("表示", |ui| {
+        ui.menu_button(t!("menu.view.title"), |ui| {
             item(
                 ui,
-                "全体表示",
+                t!("menu.view.fit"),
                 "Ctrl+0",
                 state.has_document,
                 Command::FitView,
@@ -159,7 +180,10 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             }
             ui.separator();
             let mut show = state.show_properties;
-            if ui.checkbox(&mut show, "右パネル").clicked() {
+            if ui
+                .checkbox(&mut show, t!("menu.view.right_panel"))
+                .clicked()
+            {
                 out.push(Command::ToggleProperties);
                 ui.close();
             }
@@ -171,11 +195,11 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             });
         });
 
-        ui.menu_button("構造", |ui| {
+        ui.menu_button(t!("menu.structure.title"), |ui| {
             let label = if state.cleaning {
-                "クリーンアップを停止"
+                t!("menu.structure.stop_cleanup")
             } else {
-                "クリーンアップ"
+                t!("menu.structure.cleanup")
             };
             item(
                 ui,
@@ -186,10 +210,17 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
                 out,
             );
             ui.separator();
-            item(ui, "IUPAC 名をコピー", "", state.has_document, Command::CopyIupacName, out);
             item(
                 ui,
-                "IUPAC 名をテキストとして挿入",
+                t!("menu.structure.copy_iupac"),
+                "",
+                state.has_document,
+                Command::CopyIupacName,
+                out,
+            );
+            item(
+                ui,
+                t!("menu.structure.insert_iupac"),
                 "",
                 state.has_document,
                 Command::InsertIupacName,
@@ -198,14 +229,14 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             ui.separator();
             item(
                 ui,
-                "括弧で囲む（繰り返し単位）",
+                t!("menu.structure.bracket_sru"),
                 "",
                 state.has_document,
                 Command::Bracket(chembuider_rs::molecule::BracketUsage::Sru),
                 out,
             );
             ui.add_enabled_ui(state.has_document, |ui| {
-                ui.menu_button("括弧の種類と形", |ui| {
+                ui.menu_button(t!("menu.structure.bracket_kind"), |ui| {
                     if super::palette::bracket_menu(ui, out) {
                         ui.close();
                     }
@@ -213,19 +244,25 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             });
         });
 
-        ui.menu_button("反応", |ui| {
+        ui.menu_button(t!("menu.reaction.title"), |ui| {
             use chembuider_rs::molecule::ArrowKind;
             for (label, command) in [
-                ("反応矢印を追加", Command::ArrowTool(ArrowKind::Reaction)),
-                ("平衡矢印を追加", Command::ArrowTool(ArrowKind::Equilibrium)),
-                ("反応条件のテキスト", Command::TextTool),
+                (
+                    t!("menu.reaction.add_arrow"),
+                    Command::ArrowTool(ArrowKind::Reaction),
+                ),
+                (
+                    t!("menu.reaction.add_equilibrium_arrow"),
+                    Command::ArrowTool(ArrowKind::Equilibrium),
+                ),
+                (t!("menu.reaction.conditions_text"), Command::TextTool),
             ] {
                 item(ui, label, "", state.has_document, command, out);
             }
             ui.separator();
             item(
                 ui,
-                "反応表を挿入",
+                t!("menu.reaction.insert_table"),
                 "",
                 state.has_document,
                 Command::InsertReactionTable,
@@ -235,7 +272,7 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
         ui.menu_button("3D", |ui| {
             item(
                 ui,
-                "2D から 3D を生成",
+                t!("menu.three_d.generate"),
                 "",
                 state.can_generate_3d,
                 Command::Generate3d,
@@ -243,14 +280,14 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             );
             item(
                 ui,
-                "構造最適化",
+                t!("menu.three_d.optimize"),
                 "",
                 state.can_optimize_3d,
                 Command::Optimize3d,
                 out,
             );
             ui.add_enabled_ui(state.can_export_3d, |ui| {
-                ui.menu_button("3D をエクスポート", |ui| {
+                ui.menu_button(t!("menu.three_d.export"), |ui| {
                     for export in Export3d::ALL {
                         let label = format!("{} (.{})…", export.description(), export.extension());
                         if ui.button(label).clicked() {
@@ -262,32 +299,37 @@ pub fn menu_bar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>
             });
             item(
                 ui,
-                "パラメータスキャン…",
+                t!("menu.three_d.parameter_scan"),
                 "",
                 state.has_document,
                 Command::OpenScan,
                 out,
             );
             ui.separator();
-            let button = egui::Button::new("分子集合体を作成");
+            let button = egui::Button::new(t!("menu.three_d.create_assembly"));
             if ui
                 .add_enabled(state.can_create_assembly, button)
-                .on_hover_text(
-                    "今の 3D モデルを単量体にして、環状・積層・らせんなどの集合体を組み立てます（集合体画面に切り替わります）",
-                )
+                .on_hover_text(t!("menu.three_d.create_assembly_tip"))
                 .clicked()
             {
                 out.push(Command::CreateAssembly);
                 ui.close();
             }
         });
-        ui.menu_button("ツール", |ui| {
-            planned(ui, &["周期表"]);
-            item(ui, "断片の管理", "", true, Command::ManageFragments, out);
+        ui.menu_button(t!("menu.tools.title"), |ui| {
+            planned(ui, &[t!("menu.tools.periodic_table")]);
+            item(
+                ui,
+                t!("menu.tools.manage_fragments"),
+                "",
+                true,
+                Command::ManageFragments,
+                out,
+            );
         });
 
-        ui.menu_button("ヘルプ", |ui| {
-            item(ui, "バージョン情報", "", true, Command::About, out);
+        ui.menu_button(t!("menu.help.title"), |ui| {
+            item(ui, t!("menu.help.about"), "", true, Command::About, out);
         });
     });
 }
@@ -301,14 +343,26 @@ pub fn toolbar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>)
                 out.push(command);
             }
         };
-        tool(ui, Icon::New, true, Command::New, "新規 (Ctrl+N)");
-        tool(ui, Icon::Open, true, Command::Open, "開く (Ctrl+O)");
+        tool(
+            ui,
+            Icon::New,
+            true,
+            Command::New,
+            &format!("{} (Ctrl+N)", t!("toolbar.new")),
+        );
+        tool(
+            ui,
+            Icon::Open,
+            true,
+            Command::Open,
+            &format!("{} (Ctrl+O)", t!("toolbar.open")),
+        );
         tool(
             ui,
             Icon::Save,
             state.has_document,
             Command::Save,
-            "保存 (Ctrl+S)",
+            &format!("{} (Ctrl+S)", t!("toolbar.save")),
         );
         ui.separator();
         tool(
@@ -316,27 +370,27 @@ pub fn toolbar(ui: &mut egui::Ui, state: &MenuState<'_>, out: &mut Vec<Command>)
             Icon::Undo,
             state.can_undo,
             Command::Undo,
-            "元に戻す (Ctrl+Z)",
+            &format!("{} (Ctrl+Z)", t!("toolbar.undo")),
         );
         tool(
             ui,
             Icon::Redo,
             state.can_redo,
             Command::Redo,
-            "やり直し (Ctrl+Y)",
+            &format!("{} (Ctrl+Y)", t!("toolbar.redo")),
         );
         ui.separator();
         let text_button = |ui: &mut egui::Ui, text: &str, enabled: bool| {
             ui.add_enabled(enabled, egui::Button::new(text).min_size(vec2(0.0, 32.0)))
                 .clicked()
         };
-        if text_button(ui, "全体表示", state.has_document) {
+        if text_button(ui, t!("toolbar.fit"), state.has_document) {
             out.push(Command::FitView);
         }
         let cleanup = if state.cleaning {
-            "クリーンアップを停止"
+            t!("toolbar.stop_cleanup")
         } else {
-            "クリーンアップ"
+            t!("toolbar.cleanup")
         };
         if text_button(ui, cleanup, state.has_document) {
             out.push(Command::ToggleCleanup);
@@ -400,6 +454,9 @@ fn item(
 /// Greyed-out items for a feature that is not built yet.
 fn planned(ui: &mut egui::Ui, labels: &[&str]) {
     for label in labels {
-        ui.add_enabled(false, egui::Button::new(*label).shortcut_text("準備中"));
+        ui.add_enabled(
+            false,
+            egui::Button::new(*label).shortcut_text(t!("common.coming_soon")),
+        );
     }
 }

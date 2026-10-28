@@ -210,7 +210,7 @@ impl Lang {
             Lang::Fr | Lang::PtBr => {
                 if n <= 1 {
                     "one"
-                } else if n != 0 && n % 1_000_000 == 0 {
+                } else if n != 0 && n.is_multiple_of(1_000_000) {
                     "many"
                 } else {
                     "other"
@@ -219,7 +219,7 @@ impl Lang {
             Lang::Es | Lang::It => {
                 if n == 1 {
                     "one"
-                } else if n != 0 && n % 1_000_000 == 0 {
+                } else if n != 0 && n.is_multiple_of(1_000_000) {
                     "many"
                 } else {
                     "other"

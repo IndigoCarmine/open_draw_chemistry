@@ -148,7 +148,7 @@ impl Server {
                 bridge,
             )),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err("OLE サーバーのスレッドが終了しました".to_owned()),
+            Err(_) => Err("OLE サーバーのスレッドが終了しました".to_owned()), // i18n-allow: log output
         }
     }
 
@@ -1161,11 +1161,11 @@ impl IOleObject_Impl for EmbeddedObject_Impl {
     fn GetUserType(&self, form: &USERCLASSTYPE) -> Result<PWSTR> {
         super::log("IOleObject::GetUserType");
         co_string(if *form == USERCLASSTYPE_SHORT {
-            super::USER_TYPE_SHORT
+            super::user_type_short()
         } else if *form == USERCLASSTYPE_APPNAME {
             crate::APP_NAME
         } else {
-            super::USER_TYPE
+            super::user_type()
         })
     }
 

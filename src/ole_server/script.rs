@@ -31,7 +31,7 @@ impl Script {
                 continue;
             }
             let words: Vec<&str> = line.split_whitespace().collect();
-            let bad = || format!("{} 行目を読めません: {line}", n + 1);
+            let bad = || format!("{} 行目を読めません: {line}", n + 1); // i18n-allow: log output
             let step = match words.as_slice() {
                 ["add_atom", element, x, y] => Step::AddAtom {
                     element: (*element).to_owned(),

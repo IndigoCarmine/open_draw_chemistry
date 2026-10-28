@@ -47,8 +47,8 @@ impl Style3d {
 
     pub fn label(self) -> &'static str {
         match self {
-            Style3d::Light => "球（軽量）",
-            Style3d::Wireframe => "Wireframe",
+            Style3d::Light => t!("three_d.view.style_light"),
+            Style3d::Wireframe => t!("three_d.view.style_wireframe"),
         }
     }
 
@@ -527,7 +527,7 @@ impl Viewport3d {
         let texture = self
             .offscreen
             .texture_id()
-            .ok_or_else(|| "3D 表示用のテクスチャを用意できませんでした".to_owned())?;
+            .ok_or_else(|| t!("three_d.error.texture").to_owned())?;
         let response = ui.add(
             egui::Image::from_texture(egui::load::SizedTexture::new(texture, available))
                 .sense(Sense::click_and_drag()),

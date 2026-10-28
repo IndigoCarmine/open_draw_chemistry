@@ -23,11 +23,13 @@ pub mod paste;
 use chembuider_rs::ChemStructEditor;
 
 /// The status line after a successful [`copy`].
-#[cfg(windows)]
-pub const COPIED_MESSAGE: &str = "コピーしました（Word・PowerPoint には ChemDraw オブジェクトとして、ChemDraw には構造として貼り付けられます）";
-#[cfg(not(windows))]
-pub const COPIED_MESSAGE: &str = "コピーしました";
-
+pub fn copied_message() -> &'static str {
+    if cfg!(windows) {
+        t!("ole.clipboard.copied_for_office")
+    } else {
+        t!("ole.clipboard.copied")
+    }
+}
 /// Copy the selection (or the whole drawing when nothing is selected) to the system clipboard.
 /// Returns false when there is nothing to copy.
 pub fn copy(editor: &ChemStructEditor, ctx: &egui::Context) -> bool {
@@ -86,7 +88,7 @@ pub fn paste(editor: &mut ChemStructEditor) -> Result<bool, String> {
         let mut paste_cdx = |cdx: Result<Vec<u8>, String>| -> Result<bool, String> {
             let bytes = cdx?;
             let loaded = crate::io::decode(crate::io::Format::Cdx, &bytes)
-                .map_err(|_| CDX_UNREADABLE.to_owned())?;
+                .map_err(|_| t!("ole.paste.cdx_unreadable").to_owned())?;
             Ok(insert::paste_drawing(editor, &loaded.molecule))
         };
         // The embedded object is read only when the CDX did not paste.
@@ -111,10 +113,6 @@ pub fn paste(editor: &mut ChemStructEditor) -> Result<bool, String> {
     }
     Ok(editor.paste_clipboard())
 }
-
-/// The status line when a CDX on the clipboard cannot be read.
-#[cfg(windows)]
-const CDX_UNREADABLE: &str = "クリップボードの ChemDraw データを読み込めませんでした";
 
 /// Ctrl+V on the canvas, taken from the editor widget so that [`paste`] handles it.
 ///

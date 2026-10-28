@@ -68,7 +68,7 @@ impl FragmentManager {
     pub fn show(&mut self, ctx: &egui::Context, cx: &ManagerContext<'_>) -> Option<FragmentAction> {
         let mut action = None;
         let mut open = self.open;
-        egui::Window::new("断片の管理")
+        egui::Window::new(t!("fragments.manager.title"))
             .open(&mut open)
             .default_size([460.0, 560.0])
             .resizable(true)
@@ -79,20 +79,17 @@ impl FragmentManager {
 
     fn contents(&mut self, ui: &mut egui::Ui, cx: &ManagerContext<'_>) -> Option<FragmentAction> {
         let mut action = None;
-        ui.label(
-            "使い方: 原子を選んでラベルに断片名を入力し、x キーで展開します。\
-             ユーザー断片は組み込みの同名の断片より優先されます。",
-        );
+        ui.label(t!("fragments.manager.usage"));
         ui.add_space(4.0);
 
         // ── 追加 ──────────────────────────────────────────────────────────
         ui.group(|ui| {
-            ui.strong("選択範囲から追加");
+            ui.strong(t!("fragments.manager.add_heading"));
             ui.horizontal(|ui| {
-                ui.label("名前");
+                ui.label(t!("fragments.manager.name"));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.new_name)
-                        .hint_text("例: CO2tBu")
+                        .hint_text(t!("fragments.manager.name_hint"))
                         .desired_width(160.0),
                 );
                 let name = self.new_name.trim();
@@ -100,9 +97,9 @@ impl FragmentManager {
                 let selected = cx.selected.unwrap_or(0);
                 let can_add = selected > 0 && !name.is_empty();
                 let label = if existing.is_some() {
-                    "上書き保存"
+                    t!("fragments.manager.overwrite")
                 } else {
-                    "追加"
+                    t!("fragments.manager.add")
                 };
                 if ui.add_enabled(can_add, egui::Button::new(label)).clicked() {
                     action = Some(FragmentAction::AddFromSelection(name.to_owned()));
@@ -111,15 +108,13 @@ impl FragmentManager {
             let name = self.new_name.trim();
             match cx.selected {
                 None => {
-                    ui.weak("文書が開かれていません");
+                    ui.weak(t!("fragments.manager.no_document"));
                 }
                 Some(0) => {
-                    ui.weak("選択ツールで断片にする原子を選択してください（結合点はホットスポットの原子、なければ最初に描いた原子）");
+                    ui.weak(t!("fragments.manager.select_atoms"));
                 }
                 Some(n) => {
-                    ui.weak(format!(
-                        "選択中の原子 {n} 個（結合点はホットスポットの原子、なければ最初に描いた原子）"
-                    ));
+                    ui.weak(tn!("fragments.manager.selected_atoms", n));
                 }
             }
             if !name.is_empty() {
@@ -127,8 +122,8 @@ impl FragmentManager {
                     ui.colored_label(ui.visuals().error_fg_color, e);
                 } else if let Some(e) = cx.entries.iter().find(|e| e.def.name == name) {
                     let note = match e.source {
-                        Source::Builtin => format!("組み込みの「{name}」をこの断片で置き換えます"),
-                        _ => format!("ユーザー断片「{name}」を上書きします"),
+                        Source::Builtin => t!("fragments.manager.replaces_builtin", name = name),
+                        _ => t!("fragments.manager.overwrites_user", name = name),
                     };
                     ui.colored_label(ui.visuals().warn_fg_color, note);
                 }
@@ -146,15 +141,15 @@ impl FragmentManager {
         }
 
         ui.horizontal(|ui| {
-            ui.label("検索");
+            ui.label(t!("fragments.manager.search"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("断片名")
+                    .hint_text(t!("fragments.manager.search_hint"))
                     .desired_width(160.0),
             );
             if let Some(dir) = cx.dir
                 && ui
-                    .button("フォルダーを開く")
+                    .button(t!("fragments.manager.open_folder"))
                     .on_hover_text(dir.display().to_string())
                     .clicked()
             {
@@ -180,7 +175,7 @@ impl FragmentManager {
                 }
             });
         if rows.is_empty() {
-            ui.weak("一致する断片はありません");
+            ui.weak(t!("fragments.manager.no_match"));
         }
         action
     }
@@ -205,13 +200,13 @@ impl FragmentManager {
                         let edit = ui.add(egui::TextEdit::singleline(new).desired_width(120.0));
                         let enter =
                             edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if ui.button("変更").clicked() || enter {
+                        if ui.button(t!("fragments.manager.rename_apply")).clicked() || enter {
                             action = Some(FragmentAction::Rename {
                                 from: old.clone(),
                                 to: new.trim().to_owned(),
                             });
                         }
-                        cancel = ui.button("キャンセル").clicked();
+                        cancel = ui.button(t!("common.cancel")).clicked();
                     });
                 } else {
                     ui.strong(name);
@@ -220,7 +215,7 @@ impl FragmentManager {
                     self.renaming = None;
                 }
                 ui.horizontal(|ui| {
-                    ui.weak(format!("{} 原子", entry.def.atoms.len()));
+                    ui.weak(tn!("fragments.manager.atom_count", entry.def.atoms.len()));
                     ui.weak("·");
                     ui.weak(entry.source.label());
                 });
@@ -231,22 +226,23 @@ impl FragmentManager {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.confirm_delete.as_deref() == Some(name.as_str()) {
-                    if ui.button("キャンセル").clicked() {
+                    if ui.button(t!("common.cancel")).clicked() {
                         self.confirm_delete = None;
                     }
                     let delete = egui::Button::new(
-                        egui::RichText::new("削除する").color(ui.visuals().error_fg_color),
+                        egui::RichText::new(t!("fragments.manager.confirm_delete"))
+                            .color(ui.visuals().error_fg_color),
                     );
                     if ui.add(delete).clicked() {
                         action = Some(FragmentAction::Delete(name.clone()));
                     }
-                    ui.label("削除しますか？");
+                    ui.label(t!("fragments.manager.delete_question"));
                 } else {
-                    if ui.button("削除").clicked() {
+                    if ui.button(t!("fragments.manager.delete")).clicked() {
                         self.confirm_delete = Some(name.clone());
                         self.renaming = None;
                     }
-                    if ui.button("名前変更").clicked() {
+                    if ui.button(t!("fragments.manager.rename")).clicked() {
                         self.renaming = Some((name.clone(), name.clone()));
                         self.confirm_delete = None;
                     }

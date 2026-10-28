@@ -114,19 +114,20 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::FileTooLarge => write!(
-                f,
-                "ファイルが大きすぎます（{} MB まで）",
-                MAX_FILE_BYTES / (1024 * 1024)
-            ),
-            Error::Empty => write!(f, "ファイルに原子がありません"),
-            Error::TooManyAtoms(n) => write!(
-                f,
-                "原子が多すぎます（{n} 個。読み込めるのは {MAX_ATOMS} 個までです）"
-            ),
-            Error::Unreadable(format) => {
-                write!(f, "{} として読み込めませんでした", format.description())
-            }
+            Error::FileTooLarge => f.write_str(&t!(
+                "three_d.error.read_file_too_large",
+                max = MAX_FILE_BYTES / (1024 * 1024)
+            )),
+            Error::Empty => f.write_str(t!("three_d.error.read_empty")),
+            Error::TooManyAtoms(n) => f.write_str(&t!(
+                "three_d.error.read_too_many_atoms",
+                count = n,
+                max = MAX_ATOMS
+            )),
+            Error::Unreadable(format) => f.write_str(&t!(
+                "three_d.error.read_unreadable",
+                format = format.description()
+            )),
         }
     }
 }

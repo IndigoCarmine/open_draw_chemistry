@@ -85,9 +85,9 @@ pub enum OrientError {
 impl std::fmt::Display for OrientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            OrientError::OutOfRange => "向き合わせの原子番号が単量体の原子数を超えています",
-            OrientError::Repeated => "向き合わせには異なる 3 つの原子を選んでください",
-            OrientError::Collinear => "向き合わせの 3 原子が一直線上にあるため向きが決まりません",
+            OrientError::OutOfRange => t!("assembly.error.orient_out_of_range"),
+            OrientError::Repeated => t!("assembly.error.orient_repeated"),
+            OrientError::Collinear => t!("assembly.error.orient_collinear"),
         })
     }
 }
@@ -201,16 +201,14 @@ pub type Shape = (Vec<Vec3>, Vec<String>);
 
 impl Lattice {
     /// Whether the step can be built: a possible cell, operations including the identity, and
-    /// every operation keeping distances in this cell. The message is Japanese.
+    /// every operation keeping distances in this cell. The message is in the UI language.
     pub fn check(&self) -> Result<(), String> {
         self.cell.check()?;
         if !self.symops.iter().any(SymOp::is_identity) {
-            return Err("恒等操作 x,y,z を含めてください".to_owned());
+            return Err(t!("assembly.symop.error.no_identity").to_owned());
         }
         if let Some(op) = self.symops.iter().find(|op| !op.fits(&self.cell)) {
-            return Err(format!(
-                "対称操作「{op}」がこの格子定数と合いません（分子が歪みます）。空間群の晶系に合った長さと角度にしてください"
-            ));
+            return Err(t!("assembly.error.op_misfits_cell", op = op));
         }
         Ok(())
     }
@@ -367,10 +365,10 @@ impl Step {
     /// The step's name in the panel.
     pub fn label(&self) -> &'static str {
         match self {
-            Step::Ring(_) => "環状",
-            Step::Stack(_) => "積層・らせん",
-            Step::Array(_) => "配列",
-            Step::Lattice(_) => "結晶",
+            Step::Ring(_) => t!("assembly.model.step_ring"),
+            Step::Stack(_) => t!("assembly.model.step_stack"),
+            Step::Array(_) => t!("assembly.model.step_array"),
+            Step::Lattice(_) => t!("assembly.model.step_lattice"),
         }
     }
 
@@ -543,7 +541,7 @@ impl Design {
             .fold(from_steps, |n, c| n.saturating_add(c.atoms.len()))
     }
 
-    /// The first enabled lattice step that cannot be built, and why (in Japanese).
+    /// The first enabled lattice step that cannot be built, and why (in the UI language).
     pub fn lattice_error(&self) -> Option<String> {
         self.steps.iter().find_map(|s| match s {
             Step::Lattice(l) if l.enabled => l.check().err(),

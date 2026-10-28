@@ -16,17 +16,15 @@ fn target(editor: &ChemStructEditor) -> Molecule {
 }
 
 /// The IUPAC name of the selected structures (or the whole drawing), or why there is none —
-/// in Japanese, for the status bar.
+/// in the UI language, for the status bar.
 pub fn name(editor: &ChemStructEditor, config: &Config) -> Result<String, String> {
     let target = target(editor);
     if target.atoms.is_empty() {
-        return Err("名前を付ける構造がありません".to_owned());
+        return Err(t!("iupac.error.empty").to_owned());
     }
     match iupac_name_with_config(&target, config) {
         NameResult::Ok(name) => Ok(name),
-        NameResult::Unsupported(reason) => {
-            Err(format!("この構造の IUPAC 名には未対応です（{reason}）"))
-        }
+        NameResult::Unsupported(reason) => Err(t!("iupac.error.unsupported", reason = reason)),
     }
 }
 

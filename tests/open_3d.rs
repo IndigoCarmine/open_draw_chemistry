@@ -211,6 +211,8 @@ M  END
 
 #[test]
 fn bad_files_are_reported() {
+    // The messages are checked in Japanese.
+    let _lang = open_draw_chemistry::i18n::ScopedLanguage::new(open_draw_chemistry::i18n::Lang::Ja);
     let (dir, empty) = temp_file("empty.xyz", "  \n");
     assert!(matches!(
         io::load_3d(&empty),

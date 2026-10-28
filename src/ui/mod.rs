@@ -65,7 +65,7 @@ impl ViewMode {
         match self {
             ViewMode::TwoD => "2D",
             ViewMode::ThreeD => "3D",
-            ViewMode::Assembly => "集合体",
+            ViewMode::Assembly => t!("view.assembly"),
         }
     }
 

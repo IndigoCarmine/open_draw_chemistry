@@ -50,17 +50,19 @@ pub fn wanted(editor: &ChemStructEditor) -> bool {
 
 fn target_label(target: FormatTarget) -> String {
     match target {
-        FormatTarget::NewText => "新しいテキスト".to_owned(),
-        FormatTarget::Editing { selection: true } => "選択した文字".to_owned(),
-        FormatTarget::Editing { selection: false } => "テキスト全体".to_owned(),
-        FormatTarget::Selected(n) => format!("選択中のテキスト {n} 件"),
+        FormatTarget::NewText => t!("text_format.target.new_text").to_owned(),
+        FormatTarget::Editing { selection: true } => t!("text_format.target.selection").to_owned(),
+        FormatTarget::Editing { selection: false } => {
+            t!("text_format.target.whole_text").to_owned()
+        }
+        FormatTarget::Selected(n) => tn!("text_format.target.selected_texts", n),
     }
 }
 
 fn size_label(size: Option<f32>) -> String {
     match size {
         Some(s) => format!("{s} pt"),
-        None => "標準".to_owned(),
+        None => t!("text_format.size_default").to_owned(),
     }
 }
 
@@ -83,64 +85,84 @@ pub fn show(
         .order(egui::Order::Foreground)
         .fixed_pos(canvas.left_top() + egui::vec2(8.0, 8.0))
         .show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("書式").strong());
-                    ui.weak(target_label(format.target));
-                    ui.separator();
-                    font_menu(ui, style.font, bar, &mut changes, &mut popup_rects);
-                    let size = egui::ComboBox::from_id_salt("odc_text_size")
-                        .width(64.0)
-                        .selected_text(size_label(style.size))
-                        .show_ui(ui, |ui| {
-                            popup_rects.push(ui.clip_rect());
-                            for size in std::iter::once(None).chain(SIZES.iter().map(|s| Some(*s))) {
-                                if ui.selectable_label(style.size == size, size_label(size)).clicked() {
-                                    changes.push(FormatChange::Size(size));
+            egui::Frame::popup(ui.style())
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(t!("text_format.title")).strong());
+                        ui.weak(target_label(format.target));
+                        ui.separator();
+                        font_menu(ui, style.font, bar, &mut changes, &mut popup_rects);
+                        let size = egui::ComboBox::from_id_salt("odc_text_size")
+                            .width(64.0)
+                            .selected_text(size_label(style.size))
+                            .show_ui(ui, |ui| {
+                                popup_rects.push(ui.clip_rect());
+                                for size in
+                                    std::iter::once(None).chain(SIZES.iter().map(|s| Some(*s)))
+                                {
+                                    if ui
+                                        .selectable_label(style.size == size, size_label(size))
+                                        .clicked()
+                                    {
+                                        changes.push(FormatChange::Size(size));
+                                    }
                                 }
-                            }
-                        });
-                    size.response.on_hover_text("文字の大きさ（標準は 10 pt）");
-                    ui.separator();
-                    if ui
-                        .selectable_label(style.bold, egui::RichText::new("B").strong())
-                        .on_hover_text("太字")
-                        .clicked()
-                    {
-                        changes.push(FormatChange::Bold(!style.bold));
-                    }
-                    if ui
-                        .selectable_label(style.italic, egui::RichText::new("I").italics())
-                        .on_hover_text("斜体")
-                        .clicked()
-                    {
-                        changes.push(FormatChange::Italic(!style.italic));
-                    }
-                    let sub = style.script == Script::Sub;
-                    if ui.selectable_label(sub, "x₂").on_hover_text("下付き").clicked() {
-                        changes.push(FormatChange::Script(if sub { Script::Normal } else { Script::Sub }));
-                    }
-                    let sup = style.script == Script::Super;
-                    if ui.selectable_label(sup, "x²").on_hover_text("上付き").clicked() {
-                        changes.push(FormatChange::Script(if sup { Script::Normal } else { Script::Super }));
-                    }
-                    ui.separator();
-                    let symbol_on = match format.target {
-                        FormatTarget::Editing { selection: false } => format.symbol_typing,
-                        _ => style.is_symbol(),
-                    };
-                    if ui
-                        .selectable_label(symbol_on, "Σ Symbol")
-                        .on_hover_text(
-                            "Symbol フォント（ChemDraw のギリシャ文字）：p → π、D → Δ、m → μ\n\
-                             文字を選択していれば選択に、なければこれから入力する文字に適用（Ctrl+G）",
-                        )
-                        .clicked()
-                    {
-                        changes.push(FormatChange::Symbol(!symbol_on));
-                    }
+                            });
+                        size.response.on_hover_text(t!("text_format.size_tip"));
+                        ui.separator();
+                        if ui
+                            .selectable_label(style.bold, egui::RichText::new("B").strong())
+                            .on_hover_text(t!("text_format.bold"))
+                            .clicked()
+                        {
+                            changes.push(FormatChange::Bold(!style.bold));
+                        }
+                        if ui
+                            .selectable_label(style.italic, egui::RichText::new("I").italics())
+                            .on_hover_text(t!("text_format.italic"))
+                            .clicked()
+                        {
+                            changes.push(FormatChange::Italic(!style.italic));
+                        }
+                        let sub = style.script == Script::Sub;
+                        if ui
+                            .selectable_label(sub, "x₂")
+                            .on_hover_text(t!("text_format.subscript"))
+                            .clicked()
+                        {
+                            changes.push(FormatChange::Script(if sub {
+                                Script::Normal
+                            } else {
+                                Script::Sub
+                            }));
+                        }
+                        let sup = style.script == Script::Super;
+                        if ui
+                            .selectable_label(sup, "x²")
+                            .on_hover_text(t!("text_format.superscript"))
+                            .clicked()
+                        {
+                            changes.push(FormatChange::Script(if sup {
+                                Script::Normal
+                            } else {
+                                Script::Super
+                            }));
+                        }
+                        ui.separator();
+                        let symbol_on = match format.target {
+                            FormatTarget::Editing { selection: false } => format.symbol_typing,
+                            _ => style.is_symbol(),
+                        };
+                        if ui
+                            .selectable_label(symbol_on, "Σ Symbol")
+                            .on_hover_text(t!("text_format.symbol_tip"))
+                            .clicked()
+                        {
+                            changes.push(FormatChange::Symbol(!symbol_on));
+                        }
+                    });
                 });
-            });
         });
     editor.keep_text_edit_open_over(area.response.rect);
     for rect in popup_rects {
@@ -164,13 +186,16 @@ fn font_menu(
     changes: &mut Vec<FormatChange>,
     popup_rects: &mut Vec<egui::Rect>,
 ) {
-    let shown = current.map_or_else(|| "標準フォント".to_owned(), |f| f.to_string());
+    let shown = current.map_or_else(
+        || t!("text_format.font.default").to_owned(),
+        |f| f.to_string(),
+    );
     let missing = current.is_some_and(|f| !fonts::is_installed(f.as_str()));
     let combo = egui::ComboBox::from_id_salt("odc_text_font")
         .width(170.0)
         .height(360.0)
         .selected_text(if missing {
-            format!("{shown}（未インストール）")
+            t!("text_format.font.not_installed", font = shown)
         } else {
             shown
         })
@@ -179,7 +204,7 @@ fn font_menu(
             let before = changes.len();
             let search = ui.add(
                 egui::TextEdit::singleline(&mut bar.search)
-                    .hint_text("フォントを検索")
+                    .hint_text(t!("text_format.font.search"))
                     .desired_width(160.0),
             );
             if !search.has_focus() && !ui.ctx().memory(|m| m.focused().is_some()) {
@@ -196,12 +221,12 @@ fn font_menu(
                 }
             };
             if query.is_empty() {
-                pick(ui, None, "標準フォント");
+                pick(ui, None, t!("text_format.font.default"));
             }
             let recent: Vec<String> = bar.recent.iter().filter(|n| matches(n)).cloned().collect();
             if !recent.is_empty() {
                 ui.separator();
-                ui.weak("最近使ったフォント");
+                ui.weak(t!("text_format.font.recent"));
                 for name in &recent {
                     pick(ui, Some(name), name);
                 }
@@ -215,14 +240,14 @@ fn font_menu(
                     for name in all.iter().filter(|n| matches(n)) {
                         any = true;
                         let label = if name.eq_ignore_ascii_case(fonts::SYMBOL) {
-                            "Symbol（ギリシャ文字）"
+                            t!("text_format.font.symbol")
                         } else {
                             name
                         };
                         pick(ui, Some(name), label);
                     }
                     if !any {
-                        ui.weak("一致するフォントはありません");
+                        ui.weak(t!("text_format.font.no_match"));
                     }
                 });
             // A font was picked: the next search starts afresh.
@@ -230,9 +255,7 @@ fn font_menu(
                 bar.search.clear();
             }
         });
-    combo
-        .response
-        .on_hover_text("フォント（インストールされていないフォント名も保存時はそのまま残ります）");
+    combo.response.on_hover_text(t!("text_format.font.tip"));
 }
 
 #[cfg(test)]

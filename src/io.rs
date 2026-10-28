@@ -112,7 +112,7 @@ impl Export {
             Export::Mol2 => "Tripos MOL2",
             Export::Smiles => "SMILES",
             #[cfg(windows)]
-            Export::Png => "PNG image",
+            Export::Png => t!("io.export.png"),
         }
     }
 }
@@ -139,20 +139,18 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(e) => write!(f, "{e}"),
-            Error::UnknownFormat => write!(f, "対応していないファイル形式です"),
+            Error::UnknownFormat => f.write_str(t!("io.error.unknown_format")),
             Error::Unreadable(format) => {
-                write!(f, "{} として読み込めませんでした", format.description())
+                f.write_str(&t!("io.error.unreadable", format = format.description()))
             }
-            Error::Empty => write!(f, "構造が描かれていません"),
+            Error::Empty => f.write_str(t!("io.error.empty")),
             Error::ExportFailed(export) => {
-                write!(f, "{} を書き出せませんでした", export.description())
+                f.write_str(&t!("io.error.export_failed", format = export.description()))
             }
             Error::Structure3d(e) => write!(f, "{e}"),
-            Error::Brackets(export) => write!(
-                f,
-                "{} は括弧（繰り返し単位・多重基）を表せないため書き出せません。括弧を外すか、CDX/CDXML で保存してください",
-                export.description()
-            ),
+            Error::Brackets(export) => {
+                f.write_str(&t!("io.error.brackets", format = export.description()))
+            }
         }
     }
 }
@@ -188,31 +186,42 @@ impl Loaded {
         let brackets = objects.iter().filter(|o| o.as_bracket().is_some()).count();
         let mut parts = Vec::new();
         if arrows > 0 {
-            parts.push(format!("矢印 {arrows} 本"));
+            parts.push(tn!("io.summary.arrows", arrows));
         }
         if texts > 0 {
-            parts.push(format!("テキスト {texts} 個"));
+            parts.push(tn!("io.summary.texts", texts));
         }
         if tables > 0 {
-            parts.push(format!("反応表 {tables} 個"));
+            parts.push(tn!("io.summary.tables", tables));
         }
         if brackets > 0 {
-            parts.push(format!("括弧 {brackets} 組"));
+            parts.push(tn!("io.summary.brackets", brackets));
         }
         let mut out = String::new();
         if !parts.is_empty() {
-            out.push_str(&format!("{}を編集できます", parts.join("・")));
+            out.push_str(&t!("io.summary.editable", items = join_list(&parts)));
         }
         if self.other_objects > 0 {
             if !out.is_empty() {
-                out.push('。');
+                out.push_str(t!("io.summary.sentence_separator"));
             }
-            out.push_str(&format!(
-                "表示されないオブジェクト {} 個は保存時に保持されます",
-                self.other_objects
-            ));
+            out.push_str(&tn!("io.summary.kept", self.other_objects));
         }
         out
+    }
+}
+
+/// `items` as one list in the current language: "a, b and c" in English, 「a・b・c」 in
+/// Japanese.
+fn join_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [init @ .., last] => format!(
+            "{}{}{last}",
+            init.join(t!("io.summary.list_separator")),
+            t!("io.summary.list_last_separator")
+        ),
     }
 }
 
@@ -332,7 +341,7 @@ mod tests {
         for export in [Export::Smiles, Export::Mol2] {
             let err = super::export(export, &mol).unwrap_err();
             assert!(matches!(err, Error::Brackets(_)), "{export:?}");
-            assert!(err.to_string().contains("括弧"));
+            assert!(err.to_string().contains("bracket"));
         }
         for format in [Format::Cdx, Format::Cdxml] {
             let bytes = encode(format, &mol, None).unwrap();
@@ -406,7 +415,7 @@ mod tests {
             assert_eq!(back.other_objects, 0, "{format:?}");
             let text = back.molecule.objects[2].as_text().unwrap();
             assert_eq!(text.text, "H_2SO_4\nreflux", "{format:?}");
-            assert_eq!(back.summary(), "矢印 2 本・テキスト 1 個を編集できます");
+            assert_eq!(back.summary(), "2 arrows and 1 text can be edited");
         }
     }
 
@@ -419,7 +428,7 @@ mod tests {
         };
         assert_eq!(
             loaded.summary(),
-            "表示されないオブジェクト 2 個は保存時に保持されます"
+            "2 hidden objects will be kept when saving"
         );
         let plain = Loaded {
             other_objects: 0,
@@ -437,8 +446,15 @@ mod tests {
         let loaded = load(&path).unwrap();
         assert_eq!(
             loaded.summary(),
-            "矢印 1 本・反応表 1 個を編集できます。表示されないオブジェクト 1 個は保存時に保持されます"
+            "1 arrow and 1 reaction table can be edited. 1 hidden object will be kept when saving"
         );
+        {
+            let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
+            assert_eq!(
+                loaded.summary(),
+                "矢印 1 本・反応表 1 個を編集できます。表示されないオブジェクト 1 個は保存時に保持されます"
+            );
+        }
         for format in Format::ALL {
             let bytes = encode(format, &loaded.molecule, Some(&loaded.original)).unwrap();
             let back = decode(format, &bytes).unwrap();

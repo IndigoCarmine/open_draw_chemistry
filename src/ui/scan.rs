@@ -124,7 +124,7 @@ pub fn window(
     }
     let mut open = true;
     let mut status = None;
-    egui::Window::new("パラメータスキャン")
+    egui::Window::new(t!("scan.window.title"))
         .open(&mut open)
         .default_size(vec2(620.0, 680.0))
         .min_width(420.0)
@@ -162,16 +162,13 @@ fn body(
 ) -> Option<String> {
     ui.spacing_mut().item_spacing.y = 6.0;
     let Some(doc) = doc else {
-        ui.label(muted(ui, "文書が開かれていません"));
+        ui.label(muted(ui, t!("scan.window.no_document")));
         return None;
     };
     let target = Target::of(view);
     match target {
         None => {
-            ui.label(muted(
-                ui,
-                "スキャンは 3D 表示（結合長・結合角・二面角）か集合体表示（手順のパラメータ・手動配置）で設定します",
-            ));
+            ui.label(muted(ui, t!("scan.window.no_view")));
         }
         Some(target) => setup(ui, win, doc, target),
     }
@@ -192,8 +189,8 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     let force_field = *win.force_field.get_or_insert(doc.three_d.force_field);
 
     let heading = match target {
-        Target::Assembly => "対象: 集合体（手順のパラメータ・選択中の手動配置分子）",
-        Target::Model => "対象: 3D モデル（選択中の原子の結合長・結合角・二面角）",
+        Target::Assembly => t!("scan.window.target_assembly"),
+        Target::Model => t!("scan.window.target_model"),
     };
     ui.label(RichText::new(heading).strong());
 
@@ -211,10 +208,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                 .iter()
                 .any(|s| s.enabled() && matches!(s, crate::assembly::Step::Lattice(_)));
             if options.is_empty() {
-                ui.label(muted(
-                    ui,
-                    "スキャンできるパラメータがありません。集合体パネルで手順を追加するか、手動配置の分子を選んでください",
-                ));
+                ui.label(muted(ui, t!("scan.window.no_params")));
             }
             for (k, form) in win.axes.iter_mut().enumerate() {
                 if k == 1 && !win.two_d {
@@ -230,7 +224,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                 }
                 axis_row(ui, k, form, |ui, form| {
                     let selected = form.param.as_ref().map_or_else(
-                        || "選択してください".to_owned(),
+                        || t!("scan.window.choose").to_owned(),
                         |p| p.label(Some(&state.design), None),
                     );
                     egui::ComboBox::from_id_salt(("scan_param", k))
@@ -250,10 +244,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
         }
         Target::Model => {
             let Some((model, edit3d)) = doc.three_d.model_and_edit() else {
-                ui.label(muted(
-                    ui,
-                    "3D モデルがありません（生成・最適化の完了後に使えます）",
-                ));
+                ui.label(muted(ui, t!("scan.window.no_model")));
                 return;
             };
             atoms = model.atoms.len();
@@ -277,19 +268,18 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                     form.param = None;
                 }
                 axis_row(ui, k, form, |ui, form| {
-                    let label = form
-                        .param
-                        .as_ref()
-                        .map_or_else(|| "未設定".to_owned(), |p| p.label(None, Some(model)));
+                    let label = form.param.as_ref().map_or_else(
+                        || t!("scan.window.unset").to_owned(),
+                        |p| p.label(None, Some(model)),
+                    );
                     ui.label(label);
                     if ui
-                        .add_enabled(picked.is_some(), egui::Button::new("選択中の原子を使う").small())
-                        .on_hover_text(
-                            "3D 表示で選んでいる原子（2 個: 結合長、3 個: 結合角、4 個: 二面角）をこの軸にします",
+                        .add_enabled(
+                            picked.is_some(),
+                            egui::Button::new(t!("scan.window.use_picked")).small(),
                         )
-                        .on_disabled_hover_text(
-                            "3D 表示で、結合した 2〜4 個の原子を順に選んでください（4 個で二面角）",
-                        )
+                        .on_hover_text(t!("scan.window.use_picked_tip"))
+                        .on_disabled_hover_text(t!("scan.window.use_picked_disabled_tip"))
                         .clicked()
                         && let Some(p) = &picked
                     {
@@ -301,9 +291,9 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     }
 
     ui.horizontal_wrapped(|ui| {
-        ui.checkbox(&mut win.two_d, "2 次元スキャン（2 つのパラメータ）");
+        ui.checkbox(&mut win.two_d, t!("scan.window.two_d"));
         ui.add_space(8.0);
-        ui.label("力場");
+        ui.label(t!("scan.window.force_field"));
         egui::ComboBox::from_id_salt("scan_force_field")
             .selected_text(force_field.id())
             .show_ui(ui, |ui| {
@@ -331,41 +321,41 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     let too_large = atoms > scan::MAX_ATOMS;
     ui.label(muted(
         ui,
-        format!(
-            "計算点 {total} 点 ・ 原子 {atoms} 個 ・ 各点で最適化なしの一点計算（{}）",
-            scan::energy::unit(force_field)
+        t!(
+            "scan.window.summary",
+            total = total,
+            atoms = atoms,
+            unit = scan::energy::unit(force_field)
         ),
     ));
     if has_lattice {
-        ui.label(muted(
-            ui,
-            "結晶は周期境界なしで計算します（力場は周期系に対応していないため、組み上げた有限のスーパーセルのエネルギーです）",
-        ));
+        ui.label(muted(ui, t!("scan.window.crystal_note")));
     }
     if too_large {
         ui.label(
-            RichText::new(format!(
-                "原子が多すぎます（{atoms} 個）。スキャンできるのは {} 個までです",
-                scan::MAX_ATOMS
+            RichText::new(t!(
+                "scan.window.too_many_atoms",
+                atoms = atoms,
+                max = scan::MAX_ATOMS
             ))
             .color(warn_color(ui)),
         );
     }
     if same {
-        ui.label(RichText::new("2 つの軸が同じパラメータです").color(warn_color(ui)));
+        ui.label(RichText::new(t!("scan.window.same_axes")).color(warn_color(ui)));
     }
 
     ui.horizontal(|ui| {
         let ready = axes.len() == wanted && !same && !too_large;
         if running {
-            if ui.button("キャンセル").clicked()
+            if ui.button(t!("common.cancel")).clicked()
                 && let Some(run) = &mut doc.scan
             {
                 run.cancel();
             }
         } else if ui
-            .add_enabled(ready, egui::Button::new("スキャン開始"))
-            .on_disabled_hover_text("スキャンするパラメータを選んでください")
+            .add_enabled(ready, egui::Button::new(t!("scan.window.start")))
+            .on_disabled_hover_text(t!("scan.window.start_disabled_tip"))
             .clicked()
         {
             start(win, doc, target, &axes, force_field);
@@ -381,7 +371,7 @@ fn axis_row(
     param: impl FnOnce(&mut egui::Ui, &mut AxisForm),
 ) {
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(format!("軸 {}", k + 1)).strong());
+        ui.label(RichText::new(t!("scan.window.axis", number = k + 1)).strong());
         param(ui, form);
     });
     if let Some(p) = form.param.clone() {
@@ -389,23 +379,23 @@ fn axis_row(
         let speed = if p.unit() == "°" { 1.0 } else { 0.05 };
         ui.horizontal_wrapped(|ui| {
             ui.add_space(30.0);
-            ui.label("開始");
+            ui.label(t!("scan.window.range_start"));
             ui.add(
                 egui::DragValue::new(&mut form.start)
                     .speed(speed)
                     .max_decimals(3)
                     .suffix(unit.clone()),
             );
-            ui.label("終了");
+            ui.label(t!("scan.window.range_end"));
             ui.add(
                 egui::DragValue::new(&mut form.end)
                     .speed(speed)
                     .max_decimals(3)
                     .suffix(unit),
             );
-            ui.label("点数");
+            ui.label(t!("scan.window.points"));
             ui.add(egui::DragValue::new(&mut form.points).range(1..=MAX_POINTS))
-                .on_hover_text("開始と終了を含む点の数");
+                .on_hover_text(t!("scan.window.points_tip"));
         });
     }
 }
@@ -447,7 +437,7 @@ fn results(
         ui.label(RichText::new(text).color(color));
     }
     let Some(run) = &doc.scan else {
-        ui.label(muted(ui, "結果はまだありません"));
+        ui.label(muted(ui, t!("scan.window.no_results")));
         return None;
     };
     progress_row(ui, run);
@@ -456,9 +446,12 @@ fn results(
     }
 
     ui.horizontal_wrapped(|ui| {
-        ui.checkbox(&mut win.relative, "最小値からの差 ΔE で表示");
+        ui.checkbox(&mut win.relative, t!("scan.window.relative"));
         if ui
-            .add_enabled(run.scan.done() > 0, egui::Button::new("CSV に書き出す…"))
+            .add_enabled(
+                run.scan.done() > 0,
+                egui::Button::new(t!("scan.window.export_csv")),
+            )
             .clicked()
         {
             win.message = Some(save_csv(&run.scan));
@@ -468,15 +461,17 @@ fn results(
         let values = format_values(&run.scan, index);
         ui.label(muted(
             ui,
-            format!("最小: {values} で E = {e:.3} {}", run.scan.unit),
+            t!(
+                "scan.window.minimum",
+                values = values,
+                energy = format!("{e:.3}"),
+                unit = run.scan.unit
+            ),
         ));
     }
 
     let clicked = plot(ui, &run.scan, win.relative);
-    ui.label(muted(
-        ui,
-        "点（セル）をクリックすると、そのパラメータ値を構造に適用します（元に戻せます）。ホイールで拡大、ドラッグで移動、ダブルクリックで元の範囲",
-    ));
+    ui.label(muted(ui, t!("scan.window.plot_help")));
     let index = clicked?;
     let message = apply_point(doc, index);
     let assembly = doc.scan.as_ref().is_some_and(|r| r.scan.assembly);
@@ -495,25 +490,25 @@ fn progress_row(ui: &mut egui::Ui, run: &Run) {
     } else {
         p.done as f32 / p.total as f32
     };
-    let mut text = format!(
-        "{} / {} 点 ・ 経過 {}",
-        p.done,
-        p.total,
-        format_duration(p.elapsed)
+    let mut text = t!(
+        "scan.progress.counts",
+        done = p.done,
+        total = p.total,
+        elapsed = format_duration(p.elapsed)
     );
     if let Some(remaining) = p.remaining {
         let per_point =
             p.elapsed.saturating_sub(p.setup.unwrap_or_default()) / p.done.max(1) as u32;
-        text.push_str(&format!(
-            " ・ 残り約 {}（1 点 {}）",
-            format_duration(remaining),
-            format_duration(per_point)
+        text.push_str(&t!(
+            "scan.progress.remaining",
+            remaining = format_duration(remaining),
+            per_point = format_duration(per_point)
         ));
     }
     if run.was_cancelled() {
-        text.push_str(" ・ キャンセルしました");
+        text.push_str(t!("scan.progress.cancelled"));
     } else if !run.is_running() && p.done == p.total && p.total > 0 {
-        text.push_str(" ・ 完了");
+        text.push_str(t!("scan.progress.done"));
     }
     ui.add(
         egui::ProgressBar::new(fraction)
@@ -528,18 +523,13 @@ fn progress_row(ui: &mut egui::Ui, run: &Run) {
         .count();
     if run.drifted() {
         ui.label(
-            RichText::new(
-                "スキャン中に OpenBabel の力場が別の分子に使われたため（他の文書の最適化など）、点によってエネルギーの基準がずれている可能性があります。ほかの計算が終わってから、もう一度スキャンしてください",
-            )
-            .size(11.0)
-            .color(warn_color(ui)),
+            RichText::new(t!("scan.progress.drift"))
+                .size(11.0)
+                .color(warn_color(ui)),
         );
     }
     if failed > 0 {
-        ui.label(muted(
-            ui,
-            format!("{failed} 点で計算できませんでした（グラフでは空白になります）"),
-        ));
+        ui.label(muted(ui, tn!("scan.progress.failed_points", failed)));
     }
 }
 
@@ -550,7 +540,7 @@ fn format_values(scan: &Scan, index: usize) -> String {
         .zip(&scan.axes)
         .map(|(v, a)| format!("{} = {}", a.label, format_value(*v, a.unit())))
         .collect::<Vec<_>>()
-        .join("、")
+        .join(t!("scan.window.values_separator"))
 }
 
 fn format_value(v: f64, unit: &str) -> String {
@@ -567,13 +557,13 @@ fn save_csv(scan: &Scan) -> (String, bool) {
         .set_file_name("scan.csv")
         .save_file()
     else {
-        return ("書き出しを取り消しました".into(), false);
+        return (t!("scan.export.cancelled").into(), false);
     };
     // A BOM so that Excel reads the Japanese header as UTF-8.
     let text = format!("\u{feff}{}", scan.to_csv());
     match std::fs::write(&path, text) {
-        Ok(()) => (format!("{} に書き出しました", path.display()), false),
-        Err(e) => (format!("書き出せませんでした: {e}"), true),
+        Ok(()) => (t!("scan.export.done", path = path.display()), false),
+        Err(e) => (t!("scan.export.failed", error = e), true),
     }
 }
 
@@ -594,7 +584,7 @@ fn apply_point(doc: &mut Document, index: usize) -> String {
                     .try_for_each(|(p, &v)| p.write_design(d, v))
             });
             match result {
-                Ok(()) => format!("スキャンの点を適用しました: {described}"),
+                Ok(()) => t!("scan.apply.done", values = described),
                 Err(e) => e.to_string(),
             }
         }
@@ -602,16 +592,16 @@ fn apply_point(doc: &mut Document, index: usize) -> String {
             let coords = match run.source.at(&values) {
                 Ok(Point::Coords(c)) => c,
                 Ok(Point::Rebuilt { .. }) => return String::new(),
-                Err(e) => return format!("適用できませんでした: {e}"),
+                Err(e) => return t!("scan.apply.failed", error = e),
             };
             let Some((model, edit3d)) = doc.three_d.model_and_edit() else {
-                return "3D モデルがありません".into();
+                return t!("scan.apply.no_model").into();
             };
             if coords.len() != model.atoms.len() {
-                return "3D モデルが変わったため適用できません".into();
+                return t!("scan.apply.model_changed").into();
             }
-            edit3d.apply(model, coords, "スキャン点の適用");
-            format!("スキャンの点を適用しました: {described}")
+            edit3d.apply(model, coords, t!("scan.apply.undo_label"));
+            t!("scan.apply.done", values = described)
         }
     }
 }
@@ -765,7 +755,9 @@ fn curve(ui: &mut egui::Ui, scan: &Scan, relative: bool, y_title: &str) -> Optio
                     Text::new(
                         "minimum_label",
                         PlotPoint::new(p[0], p[1]),
-                        RichText::new("  最小").color(min_color).strong(),
+                        RichText::new(format!("  {}", t!("scan.plot.minimum")))
+                            .color(min_color)
+                            .strong(),
                     )
                     .anchor(egui::Align2::LEFT_BOTTOM),
                 );
@@ -867,7 +859,9 @@ fn heatmap(ui: &mut egui::Ui, scan: &Scan, relative: bool, z_title: &str) -> Opt
                         Text::new(
                             "minimum_label",
                             PlotPoint::new(p[0], p[1]),
-                            RichText::new(" 最小").color(marker).strong(),
+                            RichText::new(format!(" {}", t!("scan.plot.minimum")))
+                                .color(marker)
+                                .strong(),
                         )
                         .anchor(egui::Align2::LEFT_BOTTOM),
                     );
@@ -895,8 +889,8 @@ fn finish_interaction(
 ) -> Option<usize> {
     let index = hovered?;
     let energy = match scan.shown(index, relative) {
-        None => "未計算".to_owned(),
-        Some(e) if e.is_nan() => "計算できませんでした".to_owned(),
+        None => t!("scan.plot.not_computed").to_owned(),
+        Some(e) if e.is_nan() => t!("scan.plot.failed").to_owned(),
         Some(e) => format!(
             "{}E = {e:.3} {}",
             if relative { "Δ" } else { "" },
@@ -908,7 +902,7 @@ fn finish_interaction(
         .iter()
         .zip(&scan.axes)
         .map(|(v, a)| format!("{} = {}", a.label, format_value(*v, a.unit())))
-        .chain([energy, "クリックで構造に適用".to_owned()])
+        .chain([energy, t!("scan.plot.click_to_apply").to_owned()])
         .collect();
     response.clone().on_hover_ui_at_pointer(|ui| {
         for line in &lines {
@@ -1081,10 +1075,10 @@ mod tests {
         };
         for dark in [false, true] {
             let text = frame(&mut win, &mut doc, ViewMode::ThreeD, dark);
-            assert!(text.contains("パラメータスキャン"), "{text}");
-            assert!(text.contains("13 / 13 点"), "{text}");
-            assert!(text.contains("1 点で計算できませんでした"), "{text}");
-            assert!(text.contains("最小"), "{text}");
+            assert!(text.contains("Parameter scan"), "{text}");
+            assert!(text.contains("13 / 13 points"), "{text}");
+            assert!(text.contains("1 point could not be computed"), "{text}");
+            assert!(text.contains("Minimum"), "{text}");
         }
 
         let rise = Param::Step {
@@ -1109,8 +1103,8 @@ mod tests {
         ));
         for dark in [false, true] {
             let text = frame(&mut win, &mut doc, ViewMode::Assembly, dark);
-            assert!(text.contains("9 / 12 点"), "{text}");
-            assert!(text.contains("最小"), "{text}");
+            assert!(text.contains("9 / 12 points"), "{text}");
+            assert!(text.contains("Minimum"), "{text}");
         }
     }
 
@@ -1122,9 +1116,9 @@ mod tests {
             ..Default::default()
         };
         let text = frame(&mut win, &mut doc, ViewMode::TwoD, false);
-        assert!(text.contains("3D 表示"), "{text}");
+        assert!(text.contains("3D view"), "{text}");
         let text = frame(&mut win, &mut doc, ViewMode::ThreeD, false);
-        assert!(text.contains("3D モデルがありません"), "{text}");
+        assert!(text.contains("No 3D model"), "{text}");
     }
 
     /// Applying a point of an assembly scan is one undo step; of a model scan it sets the
@@ -1160,7 +1154,7 @@ mod tests {
         ));
         let before = doc.assembly.design.clone();
         let message = apply_point(&mut doc, 3);
-        assert!(message.contains("適用しました"), "{message}");
+        assert!(message.contains("Applied"), "{message}");
         assert_eq!(rise.read_design(&doc.assembly.design), Some(4.0));
         assert_eq!(twist.read_design(&doc.assembly.design), Some(30.0));
         assert!(doc.assembly.undo());
@@ -1177,7 +1171,7 @@ mod tests {
         let (m, edit3d) = doc.three_d.model_and_edit().unwrap();
         let now = dihedral.read_coords(&edit::coords(m)).unwrap();
         assert!((now - 60.0).abs() < 1e-6, "{now}");
-        assert_eq!(edit3d.undo(m).as_deref(), Some("スキャン点の適用"));
+        assert_eq!(edit3d.undo(m).as_deref(), Some("Apply scan point"));
         let back = dihedral.read_coords(&edit::coords(m)).unwrap();
         assert!(
             (back - 180.0).abs() < 1e-6 || (back + 180.0).abs() < 1e-6,

@@ -46,9 +46,7 @@ pub fn show(ui: &mut egui::Ui, mol: &Molecule, selection: &HashSet<u32>, config:
         state.copied = None;
         state.source = Some(target.clone());
         if target.atoms.len() > MAX_ATOMS {
-            state.result = Some(Err(format!(
-                "構造が大きすぎます（原子 {MAX_ATOMS} 個まで）"
-            )));
+            state.result = Some(Err(tn!("smiles.row.too_large", MAX_ATOMS)));
         } else {
             state.result = None;
             let generation = state.generation;
@@ -79,25 +77,27 @@ pub fn show(ui: &mut egui::Ui, mol: &Molecule, selection: &HashSet<u32>, config:
                 None => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.weak("計算中…");
+                        ui.weak(t!("smiles.row.computing"));
                     });
                 }
                 Some(Ok(smiles)) => {
                     let text = smiles.clone();
                     ui.horizontal_wrapped(|ui| {
                         ui.add(egui::Label::new(egui::RichText::new(&text).monospace()).wrap());
-                        let copy = ui.small_button("📋").on_hover_text("SMILES をコピー");
+                        let copy = ui
+                            .small_button("📋")
+                            .on_hover_text(t!("smiles.row.copy_tip"));
                         if copy.clicked() {
                             ui.ctx().copy_text(text.clone());
                             clicked = Some(text.clone());
                         }
                     });
                     if let Some(copied) = &copied {
-                        ui.weak(format!("コピーしました: {copied}"));
+                        ui.weak(t!("smiles.row.copied", smiles = copied));
                     }
                 }
                 Some(Err(reason)) => {
-                    ui.weak(format!("— (未対応: {reason})"));
+                    ui.weak(t!("smiles.row.unsupported", reason = reason));
                 }
             });
             ui.end_row();

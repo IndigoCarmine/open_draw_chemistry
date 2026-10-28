@@ -156,7 +156,11 @@ fn running_overlay(ui: &egui::Ui) {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("処理中…").size(11.0).color(dark::TEXT));
+                        ui.label(
+                            RichText::new(t!("three_d.view.working"))
+                                .size(11.0)
+                                .color(dark::TEXT),
+                        );
                     });
                 });
         });
@@ -175,10 +179,14 @@ pub fn edit_panel(
     ui.spacing_mut().item_spacing.y = 5.0;
     // Headings in the text colour, as the analysis panel's (`strong` would be the accent).
     let heading = ui.visuals().widgets.noninteractive.fg_stroke.color;
-    ui.label(RichText::new("3D 編集").size(15.0).color(heading));
+    ui.label(
+        RichText::new(t!("three_d.view.title"))
+            .size(15.0)
+            .color(heading),
+    );
     ui.add_space(2.0);
 
-    section(ui, "表示");
+    section(ui, t!("three_d.view.section_display"));
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt("style3d")
             .selected_text(view.style.label())
@@ -187,30 +195,33 @@ pub fn edit_panel(
                     ui.selectable_value(&mut view.style, style, style.label());
                 }
             });
-        ui.toggle_value(&mut view.numbers, "原子番号")
-            .on_hover_text("すべての原子に番号を表示");
+        ui.toggle_value(&mut view.numbers, t!("three_d.view.atom_numbers"))
+            .on_hover_text(t!("three_d.view.atom_numbers_tip"));
     });
     contacts::toggles(ui, &mut view.interactions);
     if ui
-        .add_enabled(view.viewport.is_some(), egui::Button::new("視点をリセット"))
-        .on_hover_text("何もない所をダブルクリックでも")
+        .add_enabled(
+            view.viewport.is_some(),
+            egui::Button::new(t!("three_d.view.reset_view")),
+        )
+        .on_hover_text(t!("three_d.view.reset_view_tip"))
         .clicked()
         && let Some(viewport) = &mut view.viewport
     {
         viewport.reset_view();
     }
 
-    section(ui, "モデル");
+    section(ui, t!("three_d.view.section_model"));
     model_section(ui, doc.as_deref(), &ink, out);
 
     if let Some(doc) = doc.as_deref_mut()
         && doc.three_d.shown_model().is_some()
     {
-        section(ui, "編集");
+        section(ui, t!("three_d.view.section_edit"));
         tools(ui, doc, view, &ink);
     }
 
-    section(ui, "エクスポート");
+    section(ui, t!("three_d.view.section_export"));
     let has_model = doc.as_deref().is_some_and(|d| d.three_d.model().is_some());
     ui.horizontal_wrapped(|ui| {
         for export in Export3d::ALL {
@@ -219,8 +230,8 @@ pub fn edit_panel(
                     has_model,
                     egui::Button::new(format!(".{}", export.extension())),
                 )
-                .on_hover_text(format!("{} に書き出す", export.description()))
-                .on_disabled_hover_text("書き出す 3D モデルがありません")
+                .on_hover_text(t!("three_d.view.export_tip", format = export.description()))
+                .on_disabled_hover_text(t!("three_d.view.export_no_model"))
                 .clicked()
             {
                 out.push(Command::Export3d(export));
@@ -312,7 +323,8 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
         Ok(frame) => frame,
         Err(e) => {
             ui.label(
-                RichText::new(format!("3D 表示に失敗しました: {e}")).color(theme::ORANGE_ON_DARK),
+                RichText::new(t!("three_d.view.render_failed", error = e))
+                    .color(theme::ORANGE_ON_DARK),
             );
             return;
         }
@@ -469,7 +481,11 @@ fn overlay(
         }
     }
     if let Some(p) = anchor.and_then(at) {
-        tag(p + vec2(7.0, 4.0), "固定".to_owned(), ANCHOR_STROKE);
+        tag(
+            p + vec2(7.0, 4.0),
+            t!("three_d.view.fixed").to_owned(),
+            ANCHOR_STROKE,
+        );
     }
 
     // The atom under the pointer, with its distance from the last one picked.
@@ -516,12 +532,16 @@ fn shortcuts(ui: &egui::Ui, doc: &mut Document) {
 
 fn history(model: &mut Model3d, edit3d: &mut three_d::Edit3d, redo: bool) {
     let label = if redo {
-        edit3d.redo(model).map(|l| format!("やり直しました：{l}"))
+        edit3d
+            .redo(model)
+            .map(|l| t!("three_d.view.redone", label = l))
     } else {
-        edit3d.undo(model).map(|l| format!("元に戻しました：{l}"))
+        edit3d
+            .undo(model)
+            .map(|l| t!("three_d.view.undone", label = l))
     };
     edit3d.report = Some((
-        label.unwrap_or_else(|| "3D の編集履歴はありません".to_owned()),
+        label.unwrap_or_else(|| t!("three_d.view.no_history").to_owned()),
         false,
     ));
 }
@@ -529,7 +549,7 @@ fn history(model: &mut Model3d, edit3d: &mut three_d::Edit3d, redo: bool) {
 /// The tools for editing the model by hand, in the right panel.
 fn tools(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, ink: &Ink) {
     let Some((model, edit3d)) = doc.three_d.model_and_edit() else {
-        ui.label(ink.muted("最適化中は編集できません"));
+        ui.label(ink.muted(t!("three_d.view.busy_optimizing")));
         return;
     };
     history_row(ui, model, edit3d);
@@ -557,14 +577,9 @@ fn contacts_rows(
         return;
     }
     let found = view.contacts_for(model);
-    let clicked = contacts::list(
-        ui,
-        found,
-        show,
-        "",
-        "水素結合はクリックで D・H・A を選択（角度を表示）",
-        |a| edit::atom_label(model, a),
-    );
+    let clicked = contacts::list(ui, found, show, "", t!("three_d.view.hbond_hint"), |a| {
+        edit::atom_label(model, a)
+    });
     if let Some(contacts::Clicked::HBond(k)) = clicked
         && let Some(hb) = found.hbonds.get(k)
     {
@@ -577,26 +592,32 @@ fn history_row(ui: &mut egui::Ui, model: &mut Model3d, edit3d: &mut three_d::Edi
     ui.horizontal(|ui| {
         let undo_tip = edit3d
             .undo_label()
-            .map_or("元に戻す操作はありません".to_owned(), |l| {
-                format!("元に戻す：{l}（Ctrl+Z）")
+            .map_or(t!("three_d.view.undo_none").to_owned(), |l| {
+                t!("three_d.view.undo_tip", label = l)
             });
         if ui
-            .add_enabled(edit3d.can_undo(), egui::Button::new("↶ 元に戻す").small())
+            .add_enabled(
+                edit3d.can_undo(),
+                egui::Button::new(t!("three_d.view.undo")).small(),
+            )
             .on_hover_text(undo_tip)
-            .on_disabled_hover_text("元に戻す操作はありません")
+            .on_disabled_hover_text(t!("three_d.view.undo_none"))
             .clicked()
         {
             history(model, edit3d, false);
         }
         let redo_tip = edit3d
             .redo_label()
-            .map_or("やり直す操作はありません".to_owned(), |l| {
-                format!("やり直す：{l}（Ctrl+Y）")
+            .map_or(t!("three_d.view.redo_none").to_owned(), |l| {
+                t!("three_d.view.redo_tip", label = l)
             });
         if ui
-            .add_enabled(edit3d.can_redo(), egui::Button::new("↷ やり直し").small())
+            .add_enabled(
+                edit3d.can_redo(),
+                egui::Button::new(t!("three_d.view.redo")).small(),
+            )
             .on_hover_text(redo_tip)
-            .on_disabled_hover_text("やり直す操作はありません")
+            .on_disabled_hover_text(t!("three_d.view.redo_none"))
             .clicked()
         {
             history(model, edit3d, true);
@@ -606,9 +627,7 @@ fn history_row(ui: &mut egui::Ui, model: &mut Model3d, edit3d: &mut three_d::Edi
 
 fn selection_row(ui: &mut egui::Ui, model: &Model3d, edit3d: &mut three_d::Edit3d, ink: &Ink) {
     if edit3d.picked.is_empty() && edit3d.anchor.is_none() {
-        ui.label(ink.muted(
-            "原子をクリックで選択（4 つまで）・結合をクリックで両端を選択・右クリックで原子を固定",
-        ));
+        ui.label(ink.muted(t!("three_d.view.pick_hint")));
         return;
     }
     ui.horizontal_wrapped(|ui| {
@@ -618,22 +637,30 @@ fn selection_row(ui: &mut egui::Ui, model: &Model3d, edit3d: &mut three_d::Edit3
                 .iter()
                 .map(|&i| edit::atom_label(model, i))
                 .collect();
-            ui.label(RichText::new("選択").size(11.0).color(ink.muted));
+            ui.label(
+                RichText::new(t!("three_d.view.selection"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
             ui.label(RichText::new(names.join(" – ")).size(12.0).color(ink.pick));
-            if ui.small_button("解除").clicked() {
+            if ui.small_button(t!("three_d.view.clear")).clicked() {
                 edit3d.clear_picks();
                 edit3d.report = None;
             }
         }
         if let Some(anchor) = edit3d.anchor {
-            ui.label(RichText::new("固定").size(11.0).color(ink.muted));
+            ui.label(
+                RichText::new(t!("three_d.view.fixed"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
             ui.label(
                 RichText::new(edit::atom_label(model, anchor))
                     .size(12.0)
                     .color(ink.anchor),
             )
-            .on_hover_text("編集ではこの原子を含まない側が動きます");
-            if ui.small_button("解除").clicked() {
+            .on_hover_text(t!("three_d.view.anchor_tip"));
+            if ui.small_button(t!("three_d.view.clear")).clicked() {
                 edit3d.anchor = None;
             }
         }
@@ -661,14 +688,14 @@ fn value_row(
         *value = (edit3d.picked.clone(), format_value(measure));
     }
     let (name, unit) = match target {
-        Target::BondLength(_) => ("結合長", "Å"),
-        Target::Distance(_) => ("距離", "Å"),
-        Target::Angle(_) => ("結合角", "°"),
-        Target::Dihedral(_) => ("二面角", "°"),
+        Target::BondLength(_) => (t!("three_d.view.bond_length"), "Å"),
+        Target::Distance(_) => (t!("three_d.view.distance"), "Å"),
+        Target::Angle(_) => (t!("three_d.view.bond_angle"), "°"),
+        Target::Dihedral(_) => (t!("three_d.view.dihedral"), "°"),
         Target::Unbonded => match measure {
-            Measure::Distance(_) => ("距離", "Å"),
-            Measure::Angle(_) => ("角度", "°"),
-            Measure::Dihedral(_) => ("二面角", "°"),
+            Measure::Distance(_) => (t!("three_d.view.distance"), "Å"),
+            Measure::Angle(_) => (t!("three_d.view.angle"), "°"),
+            Measure::Dihedral(_) => (t!("three_d.view.dihedral"), "°"),
         },
         Target::None => return,
     };
@@ -677,7 +704,7 @@ fn value_row(
         ui.label(RichText::new(name).size(11.0).color(ink.muted));
         ui.label(RichText::new(measure.to_string()).size(13.0).strong());
         if target == Target::Unbonded {
-            ui.label(muted("（結合でつながった並びではないため測定のみ）"));
+            ui.label(muted(t!("three_d.view.measure_only")));
             return;
         }
         ui.label(RichText::new("→").color(ink.muted));
@@ -688,75 +715,79 @@ fn value_row(
         );
         ui.label(RichText::new(unit).size(11.0));
         let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if ui.button("設定").clicked() || entered {
+        if ui.button(t!("three_d.view.set")).clicked() || entered {
             match parse_value(&value.1) {
                 Some(v) => apply = Some(v),
                 None => {
-                    edit3d.report = Some(("数値を入力してください".to_owned(), true));
+                    edit3d.report = Some((t!("three_d.view.enter_number").to_owned(), true));
                 }
             }
         }
     });
-    let presets: &[(&str, f64)] = match target {
-        Target::Angle(_) => &[
+    let presets: Vec<(&str, f64)> = match target {
+        Target::Angle(_) => vec![
             ("sp³ 109.5°", 109.5),
             ("sp² 120°", 120.0),
-            ("直線 180°", 180.0),
+            (t!("three_d.view.preset_linear"), 180.0),
         ],
-        Target::Dihedral(_) => &[
-            ("シス 0°", 0.0),
-            ("ゴーシュ 60°", 60.0),
-            ("ゴーシュ −60°", -60.0),
-            ("アンチ 180°", 180.0),
+        Target::Dihedral(_) => vec![
+            (t!("three_d.view.preset_cis"), 0.0),
+            (t!("three_d.view.preset_gauche_plus"), 60.0),
+            (t!("three_d.view.preset_gauche_minus"), -60.0),
+            (t!("three_d.view.preset_anti"), 180.0),
         ],
-        _ => &[],
+        _ => Vec::new(),
     };
     if !presets.is_empty() {
         ui.horizontal_wrapped(|ui| {
-            for (label, v) in presets {
-                if ui.small_button(*label).clicked() {
+            for &(label, v) in &presets {
+                if ui.small_button(label).clicked() {
                     value.1 = format!("{v}");
-                    apply = Some(*v);
+                    apply = Some(v);
                 }
             }
         });
     }
     if let Target::Distance([a, b]) = target {
         ui.horizontal_wrapped(|ui| {
-            ui.label(muted("間の単結合を回して"));
-            if ui.small_button("できるだけ遠く").clicked() {
+            ui.label(muted(t!("three_d.view.turn_between")));
+            if ui.small_button(t!("three_d.view.farthest")).clicked() {
                 edit::solve(model, edit3d, a, b, Goal::Farthest);
             }
-            if ui.small_button("できるだけ近く").clicked() {
+            if ui.small_button(t!("three_d.view.closest")).clicked() {
                 edit::solve(model, edit3d, a, b, Goal::Closest);
             }
         });
     }
     if edit::picked_rotor(model, &edit3d.picked).is_some() {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("回転").size(11.0).color(ink.muted));
+            ui.label(
+                RichText::new(t!("three_d.view.rotate"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
             for step in [-STEP_COARSE, -STEP, STEP, STEP_COARSE] {
                 if ui.small_button(format!("{step:+}°")).clicked() {
                     edit::rotate_picked(model, edit3d, step);
                 }
             }
-            ui.label(muted("ホイールでも回転（Shift 1°・Ctrl 15°）"));
+            ui.label(muted(t!("three_d.view.wheel_hint")));
         });
     } else if let [b, c] = edit3d.picked[..]
         && graph.bonded(b, c)
         && let Err(reason) = geom::is_rotatable(&graph, b, c, edit::bond_order(model, b, c))
     {
-        ui.label(muted(&format!("回転：{reason}")));
+        ui.label(muted(&t!("three_d.view.cannot_rotate", reason = reason)));
     }
     ui.horizontal_wrapped(|ui| {
         ui.checkbox(
             &mut edit3d.lock_on_set,
-            RichText::new("設定した値を最適化でも保つ").size(11.0),
+            RichText::new(t!("three_d.view.lock_on_set")).size(11.0),
         )
-        .on_hover_text("設定するたびに、その値の制約を追加します");
+        .on_hover_text(t!("three_d.view.lock_on_set_tip"));
         if ui
-            .small_button("現在値で制約")
-            .on_hover_text("選んだ原子の今の値を、最適化で保つ制約にします（1 原子なら固定）")
+            .small_button(t!("three_d.view.constrain_current"))
+            .on_hover_text(t!("three_d.view.constrain_current_tip"))
             .clicked()
         {
             let picked = edit3d.picked.clone();
@@ -779,9 +810,9 @@ fn constraints_section(
 ) {
     if let [atom] = edit3d.picked[..]
         && ui
-            .small_button(format!(
-                "{} を最適化で動かさない",
-                edit::atom_label(model, atom)
+            .small_button(t!(
+                "three_d.view.fix_atom",
+                atom = edit::atom_label(model, atom)
             ))
             .clicked()
     {
@@ -792,20 +823,24 @@ fn constraints_section(
     }
     let coords = edit::coords(model);
     egui::CollapsingHeader::new(
-        RichText::new(format!("最適化の制約（{}）", edit3d.constraints.len())).size(12.0),
+        RichText::new(t!(
+            "three_d.view.constraints_header",
+            count = edit3d.constraints.len()
+        ))
+        .size(12.0),
     )
     .default_open(true)
     .show(ui, |ui| {
         ui.checkbox(
             &mut edit3d.use_constraints,
-            RichText::new("最適化で制約を使う").size(11.0),
+            RichText::new(t!("three_d.view.use_constraints")).size(11.0),
         );
         let mut remove = None;
         for (n, c) in edit3d.constraints.iter().enumerate() {
             ui.horizontal(|ui| {
                 if ui
                     .small_button("×")
-                    .on_hover_text("この制約を削除")
+                    .on_hover_text(t!("three_d.view.remove_constraint"))
                     .clicked()
                 {
                     remove = Some(n);
@@ -830,9 +865,11 @@ fn constraints_section(
                     };
                     let color = if off > tolerance { ink.warn } else { ink.muted };
                     ui.label(
-                        RichText::new(format!(
-                            "目標 {target:.2}{u}・現在 {now:.2}{u}",
-                            u = c.unit()
+                        RichText::new(t!(
+                            "three_d.view.constraint_status",
+                            target = format!("{target:.2}"),
+                            now = format!("{now:.2}"),
+                            unit = c.unit()
                         ))
                         .size(11.0)
                         .color(color),
@@ -853,16 +890,16 @@ fn clash_row(ui: &mut egui::Ui, model: &Model3d, view: &mut View3d, ink: &Ink) {
     let clashes = view.clashes_for(model);
     match clashes.first() {
         None => {
-            ui.label(ink.muted("原子の衝突はありません"));
+            ui.label(ink.muted(t!("three_d.view.no_clashes")));
         }
         Some(worst) => {
             ui.label(
-                RichText::new(format!(
-                    "原子の衝突 {} 件（最も近い {}···{} {:.2} Å）— 構造最適化で解消できます",
+                RichText::new(tn!(
+                    "three_d.view.clashes",
                     clashes.len(),
-                    edit::atom_label(model, worst.a),
-                    edit::atom_label(model, worst.b),
-                    worst.distance
+                    a = edit::atom_label(model, worst.a),
+                    b = edit::atom_label(model, worst.b),
+                    distance = format!("{:.2}", worst.distance)
                 ))
                 .size(11.0)
                 .color(ink.clash),
@@ -910,7 +947,11 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
     let running = job.is_some_and(|j| j.is_running());
     ui.add_enabled_ui(doc.is_some() && !running, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("力場").size(11.0).color(ink.muted));
+            ui.label(
+                RichText::new(t!("three_d.view.force_field"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
             let current = job.map(|j| j.force_field).unwrap_or_default();
             let mut chosen = current;
             egui::ComboBox::from_id_salt("force_field")
@@ -926,8 +967,8 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
         });
         ui.horizontal_wrapped(|ui| {
             if ui
-                .button("2D から再生成")
-                .on_hover_text("2D の構造から 3D モデルを作り直します")
+                .button(t!("three_d.view.regenerate"))
+                .on_hover_text(t!("three_d.view.regenerate_tip"))
                 .clicked()
             {
                 out.push(Command::Generate3d);
@@ -937,15 +978,17 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
                     .map_or(0, |m| j.edit.active_constraints(m.atoms.len()).len())
             });
             let tip = if constraints > 0 {
-                format!("制約 {constraints} 件を保って最適化します")
+                tn!("three_d.view.optimize_constrained_tip", constraints)
             } else {
-                "力場で構造を最適化します".to_owned()
+                t!("three_d.view.optimize_tip").to_owned()
             };
             let optimize = ui
                 .add_enabled(
                     job.is_some_and(|j| j.model().is_some()),
-                    egui::Button::new(RichText::new("構造最適化").color(Color32::WHITE))
-                        .fill(theme::ORANGE_DEEP),
+                    egui::Button::new(
+                        RichText::new(t!("three_d.view.optimize")).color(Color32::WHITE),
+                    )
+                    .fill(theme::ORANGE_DEEP),
                 )
                 .on_hover_text(tip);
             if optimize.clicked() {
@@ -967,36 +1010,38 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
     }
     let Some(m) = model else {
         if !running {
-            ui.label(ink.muted(
-                "2D 画面で分子を右クリックして「3D化」、または「2D から再生成」で 3D モデルを作ります",
-            ));
+            ui.label(ink.muted(t!("three_d.view.no_model_hint")));
         }
         return;
     };
     let pending = job.is_some_and(|j| j.energy_pending());
     let energy = if pending {
-        format!("E = {:.1} {}（再計算中）", m.energy, m.energy_unit)
+        t!(
+            "three_d.view.energy_recalculating",
+            energy = format!("{:.1}", m.energy),
+            unit = m.energy_unit
+        )
     } else {
         format!("E = {:.1} {}", m.energy, m.energy_unit)
     };
     ui.label(RichText::new(energy).monospace().size(12.0));
-    let mut about = format!(
-        "{}・{} 原子（うち H {}）",
-        m.formula,
+    let mut about = tn!(
+        "three_d.view.about",
         m.atoms.len(),
-        m.hydrogen_count()
+        formula = m.formula,
+        hydrogens = m.hydrogen_count()
     );
     if job.is_some_and(|j| j.scope().is_some()) {
-        about += "・描画の一部の分子";
+        about += t!("three_d.view.about_part");
     }
     ui.label(ink.muted(&about));
     if doc.is_some_and(|d| d.three_d.is_stale(&d.editor.molecule)) {
         ui.label(
-            RichText::new("2D が変更されています")
+            RichText::new(t!("three_d.view.stale"))
                 .size(11.0)
                 .color(ink.warn),
         )
-        .on_hover_text("「2D から再生成」で 3D モデルを描き直した構造に合わせます");
+        .on_hover_text(t!("three_d.view.stale_tip"));
     }
 }
 
@@ -1004,9 +1049,7 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
 fn summary(ui: &mut egui::Ui, state: Option<&JobState>, stale: bool, can_render: bool) {
     match state {
         None | Some(JobState::Idle) => {
-            ui.label(muted(
-                "2D 画面で分子を右クリックして「3D化」、または右パネルの「2D から再生成」で\n2D の構造から 3D モデルを生成します",
-            ));
+            ui.label(muted(t!("three_d.view.idle_hint")));
         }
         Some(JobState::Running(task)) => {
             ui.spinner();
@@ -1018,7 +1061,7 @@ fn summary(ui: &mut egui::Ui, state: Option<&JobState>, stale: bool, can_render:
                     .size(13.0)
                     .color(theme::ORANGE_ON_DARK),
             );
-            ui.label(muted("構造を確認して「2D から再生成」でやり直してください"));
+            ui.label(muted(t!("three_d.view.retry_hint")));
         }
         Some(JobState::Done(model)) => {
             let row = |ui: &mut egui::Ui, key: &str, value: String| {
@@ -1030,31 +1073,37 @@ fn summary(ui: &mut egui::Ui, state: Option<&JobState>, stale: bool, can_render:
                 .num_columns(2)
                 .spacing(vec2(16.0, 6.0))
                 .show(ui, |ui| {
-                    row(ui, "分子式", model.formula.clone());
+                    row(ui, t!("three_d.view.formula"), model.formula.clone());
                     row(
                         ui,
-                        "原子数",
-                        format!("{}（うち H {}）", model.atoms.len(), model.hydrogen_count()),
+                        t!("three_d.view.atom_count"),
+                        t!(
+                            "three_d.view.atom_count_value",
+                            atoms = model.atoms.len(),
+                            hydrogens = model.hydrogen_count()
+                        ),
                     );
                     row(
                         ui,
-                        "エネルギー",
+                        t!("three_d.view.energy"),
                         format!("{:.1} {}", model.energy, model.energy_unit),
                     );
-                    row(ui, "力場", model.force_field.id().to_owned());
+                    row(
+                        ui,
+                        t!("three_d.view.force_field"),
+                        model.force_field.id().to_owned(),
+                    );
                 });
             ui.add_space(10.0);
             if stale {
                 ui.label(
-                    RichText::new("2D の構造が変更されています。「2D から再生成」で更新できます")
+                    RichText::new(t!("three_d.view.stale_long"))
                         .size(12.0)
                         .color(theme::ORANGE_ON_DARK),
                 );
             }
             if !can_render {
-                ui.label(muted(
-                    "3D 表示には wgpu レンダラーが必要です（この環境では使えません）",
-                ));
+                ui.label(muted(t!("three_d.view.no_wgpu")));
             }
         }
     }

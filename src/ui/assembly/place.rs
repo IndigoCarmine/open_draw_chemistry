@@ -180,9 +180,9 @@ pub(super) fn overlay(
         return;
     };
     let hint = if state.design.manual_index(m).is_some() {
-        "Alt+ドラッグで回転、Shift+ドラッグで移動（Esc で選択解除）"
+        t!("assembly.place.hint_manual")
     } else {
-        "この分子は手順で配置されています。動かすには右パネル「配置」の「手動配置にする」"
+        t!("assembly.place.hint_step")
     };
     let pos = Pos2::new(frame.rect.left() + 10.0, frame.rect.bottom() - 24.0);
     tag(&painter, pos, hint.to_owned(), dark::TEXT);
@@ -207,7 +207,7 @@ pub(super) fn section(
     let mut action = None;
     let components = &state.design.components;
     if components.is_empty() {
-        ui.label(ink.muted("単量体を加えると、ここで分子を 1 つずつ置けます"));
+        ui.label(ink.muted(t!("assembly.place.empty")));
         return;
     }
     if view.add_component >= components.len() {
@@ -223,12 +223,10 @@ pub(super) fn section(
                 }
             })
             .response
-            .on_hover_text("置く単量体。ゲスト分子は「単量体」の「ファイルから追加…」で加えてから選びます");
+            .on_hover_text(t!("assembly.place.component_tip"));
         if ui
-            .button("追加")
-            .on_hover_text(
-                "選んだ単量体を 1 分子、手で動かせる分子として置きます。\n選択中の分子の隣（選択がなければ画面の中心）の、重ならない場所に置きます",
-            )
+            .button(t!("assembly.place.add"))
+            .on_hover_text(t!("assembly.place.add_tip"))
             .clicked()
         {
             action = Some(Action::Add(view.add_component));
@@ -238,7 +236,7 @@ pub(super) fn section(
     let built = state.built().ok();
     let steps = state.design.step_molecule_count();
     if state.design.manual.is_empty() {
-        ui.label(ink.muted("手で置いた分子はありません"));
+        ui.label(ink.muted(t!("assembly.place.no_manual")));
     }
     egui::ScrollArea::vertical()
         .id_salt("assembly_manual_list")
@@ -254,9 +252,14 @@ pub(super) fn section(
                 if ui
                     .selectable_label(
                         state.selected == Some(m),
-                        format!("{}. {name}（分子 {}）", k + 1, m + 1),
+                        t!(
+                            "assembly.place.manual_item",
+                            index = k + 1,
+                            name = name,
+                            molecule = m + 1
+                        ),
                     )
-                    .on_hover_text("クリックで選択")
+                    .on_hover_text(t!("assembly.place.click_to_select"))
                     .clicked()
                 {
                     state.selected = Some(m);
@@ -265,15 +268,10 @@ pub(super) fn section(
         });
     if !state.design.excluded.is_empty() {
         ui.horizontal_wrapped(|ui| {
-            ui.label(ink.muted(format!(
-                "手順から外した分子：{} 個",
-                state.design.excluded.len()
-            )));
+            ui.label(ink.muted(tn!("assembly.place.excluded", state.design.excluded.len())));
             if ui
-                .small_button("手順に戻す")
-                .on_hover_text(
-                    "削除・手動配置で手順から外した分子を、すべて手順の位置に戻します\n（手動配置にした分子はそのまま残ります）",
-                )
+                .small_button(t!("assembly.place.restore"))
+                .on_hover_text(t!("assembly.place.restore_tip"))
                 .clicked()
             {
                 action = Some(Action::Restore);
@@ -288,22 +286,25 @@ pub(super) fn section(
         ui.add_space(2.0);
         match state.design.manual_index(m) {
             Some(k) => {
-                ui.label(RichText::new(format!("分子 {}（手動配置 {}）", m + 1, k + 1)).strong());
+                ui.label(
+                    RichText::new(t!(
+                        "assembly.place.manual_title",
+                        molecule = m + 1,
+                        index = k + 1
+                    ))
+                    .strong(),
+                );
                 if pose_editor(ui, state, k) {
                     state.touch();
                 }
-                ui.label(ink.muted(
-                    "ビューアで Alt+ドラッグ：重心まわりに回転、Shift+ドラッグ：画面と平行に移動",
-                ));
+                ui.label(ink.muted(t!("assembly.place.drag_hint")));
             }
             None => {
-                ui.label(RichText::new(format!("分子 {}（手順で配置）", m + 1)).strong());
-                ui.label(ink.muted("手順で配置された分子は手順のパラメータで決まります"));
+                ui.label(RichText::new(t!("assembly.place.step_title", molecule = m + 1)).strong());
+                ui.label(ink.muted(t!("assembly.place.step_note")));
                 if ui
-                    .button("手動配置にする")
-                    .on_hover_text(
-                        "この分子を手順から外し、同じ位置の手動配置の分子にします。\n以後は個別に動かせます（元に戻すで取り消せます）",
-                    )
+                    .button(t!("assembly.place.detach"))
+                    .on_hover_text(t!("assembly.place.detach_tip"))
                     .clicked()
                 {
                     action = Some(Action::Detach(m));
@@ -312,23 +313,27 @@ pub(super) fn section(
         }
         ui.horizontal_wrapped(|ui| {
             if ui
-                .button("複製")
-                .on_hover_text("この分子と同じ向きの分子を、隣の重ならない場所に置きます")
+                .button(t!("assembly.place.duplicate"))
+                .on_hover_text(t!("assembly.place.duplicate_tip"))
                 .clicked()
             {
                 action = Some(Action::Duplicate(m));
             }
             let tip = if state.design.manual_index(m).is_some() {
-                "この分子を削除します"
+                t!("assembly.place.remove_manual_tip")
             } else {
-                "この分子を手順から外します（「手順に戻す」で戻せます）"
+                t!("assembly.place.remove_step_tip")
             };
-            if ui.button("削除").on_hover_text(tip).clicked() {
+            if ui
+                .button(t!("assembly.place.remove"))
+                .on_hover_text(tip)
+                .clicked()
+            {
                 action = Some(Action::Remove(m));
             }
         });
     } else {
-        ui.label(ink.muted("ビューアで原子をクリックすると、その分子を選択します"));
+        ui.label(ink.muted(t!("assembly.place.select_hint")));
     }
 
     if let Some(action) = action {
@@ -350,19 +355,19 @@ fn pose_editor(ui: &mut egui::Ui, state: &mut AssemblyState, k: usize) -> bool {
         .show(ui, |ui| {
             changed |= triple(
                 ui,
-                "位置",
+                t!("assembly.place.position"),
                 &mut pose.position,
                 0.05,
                 " Å",
-                "分子の重心の座標",
+                t!("assembly.place.position_tip"),
             );
             changed |= triple(
                 ui,
-                "回転",
+                t!("assembly.place.rotation"),
                 &mut pose.euler_deg,
                 0.5,
                 "°",
-                "重心まわりの回転。x → y → z 軸の順に回します（外因性 XYZ オイラー角）",
+                t!("assembly.place.rotation_tip"),
             );
         });
     if changed {
@@ -461,7 +466,7 @@ fn act(action: Action, state: &mut AssemblyState, view: &mut AssemblyView, built
             if let Some(m) = put(state, view, built, c, math::IDENTITY) {
                 let name = &state.design.components[c].name;
                 view.report = Some((
-                    format!("「{name}」を分子 {} として置きました", m + 1),
+                    t!("assembly.place.report.added", name = name, molecule = m + 1),
                     false,
                 ));
             }
@@ -472,10 +477,10 @@ fn act(action: Action, state: &mut AssemblyState, view: &mut AssemblyView, built
             };
             if let Some(copy) = put(state, view, built, source.component, source.transform.rot) {
                 view.report = Some((
-                    format!(
-                        "分子 {} を複製し、分子 {} として置きました",
-                        m + 1,
-                        copy + 1
+                    t!(
+                        "assembly.place.report.duplicated",
+                        source = m + 1,
+                        molecule = copy + 1
                     ),
                     false,
                 ));
@@ -484,17 +489,17 @@ fn act(action: Action, state: &mut AssemblyState, view: &mut AssemblyView, built
         Action::Remove(m) => {
             if state.edit(|d| d.remove_molecule(m)) {
                 state.selected = None;
-                view.report = Some((format!("分子 {} を削除しました", m + 1), false));
+                view.report = Some((t!("assembly.place.report.removed", molecule = m + 1), false));
             }
         }
         Action::Detach(m) => {
             if let Some(moved) = state.edit(|d| d.detach(m)) {
                 state.selected = Some(moved);
                 view.report = Some((
-                    format!(
-                        "分子 {} を手動配置にしました（分子 {}）。Alt／Shift+ドラッグや数値で動かせます",
-                        m + 1,
-                        moved + 1
+                    t!(
+                        "assembly.place.report.detached",
+                        source = m + 1,
+                        molecule = moved + 1
                     ),
                     false,
                 ));
@@ -503,7 +508,7 @@ fn act(action: Action, state: &mut AssemblyState, view: &mut AssemblyView, built
         Action::Restore => {
             state.edit(|d| d.excluded.clear());
             state.selected = None;
-            view.report = Some(("手順から外した分子を戻しました".to_owned(), false));
+            view.report = Some((t!("assembly.place.report.restored").to_owned(), false));
         }
     }
 }
@@ -522,55 +527,69 @@ pub(super) fn clash_info(
         CLASH_ON_LIGHT
     };
     let Some((clashes, current)) = view.clashes.get(ui.ctx(), state.id(), &built) else {
-        ui.label(ink.muted("分子間の近接：確認中…"));
+        ui.label(ink.muted(t!("assembly.place.clash.checking")));
         return;
     };
-    let pending = if current { "" } else { "（更新中…）" };
+    let pending = if current {
+        ""
+    } else {
+        t!("assembly.place.clash.updating")
+    };
     if clashes.pairs.is_empty() {
-        ui.label(ink.muted(format!("分子間の近接：なし{pending}")));
+        ui.label(ink.muted(t!("assembly.place.clash.none", pending = pending)));
         return;
     }
-    let more = if clashes.truncated { " 以上" } else { "" };
+    let more = if clashes.truncated {
+        t!("assembly.place.clash.at_least")
+    } else {
+        ""
+    };
     ui.label(
-        RichText::new(format!(
-            "分子間で近すぎる原子：{} 組{more}{pending}",
-            clashes.pairs.len()
+        RichText::new(tn!(
+            "assembly.place.clash.count",
+            clashes.pairs.len(),
+            more = more,
+            pending = pending
         ))
         .size(12.0)
         .color(warn),
     )
-    .on_hover_text("ファンデルワールス半径の和の 0.75 倍（水素結合は 0.55 倍）より近い、別の分子の原子の組。近い順");
+    .on_hover_text(t!("assembly.place.clash.tip"));
     let label = |a: usize| {
         let m = built.molecule_of_atom[a];
-        format!(
-            "分子 {} {}{}",
-            m + 1,
-            built.atoms[a].element,
-            a - built.molecule_start[m] + 1
+        t!(
+            "assembly.place.clash.atom",
+            molecule = m + 1,
+            element = built.atoms[a].element,
+            index = a - built.molecule_start[m] + 1
         )
     };
     for c in clashes.pairs.iter().take(LISTED_CLASHES) {
         let image = if clash::through_image(&built, c) {
-            "（周期像）"
+            t!("assembly.place.clash.periodic_image")
         } else {
             ""
         };
-        let text = format!(
-            "{} – {}{image}：{:.2} Å",
-            label(c.a),
-            label(c.b),
-            c.distance
+        let text = t!(
+            "assembly.place.clash.pair",
+            a = label(c.a),
+            b = label(c.b),
+            image = image,
+            distance = format!("{:.2}", c.distance)
         );
         if ui
             .add(egui::Button::new(RichText::new(text).size(11.0).color(warn)).frame(false))
-            .on_hover_text("クリックで前の分子を選択")
+            .on_hover_text(t!("assembly.place.clash.pick_tip"))
             .clicked()
         {
             state.selected = Some(built.molecule_of_atom[c.a]);
         }
     }
     if clashes.pairs.len() > LISTED_CLASHES {
-        ui.label(ink.muted(format!("ほか {} 組", clashes.pairs.len() - LISTED_CLASHES)));
+        ui.label(ink.muted(tn!(
+            "assembly.place.clash.more",
+            clashes.pairs.len() - LISTED_CLASHES
+        )));
     }
 }
 

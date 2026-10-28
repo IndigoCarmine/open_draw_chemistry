@@ -38,11 +38,12 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(e) => write!(f, "{e}"),
-            Error::Invalid(e) => write!(f, "集合体のファイルとして読み込めません（{e}）"),
-            Error::Newer(v) => write!(
-                f,
-                "新しい版のアプリで保存されたファイルです（形式 {v}、この版は {VERSION} まで）"
-            ),
+            Error::Invalid(e) => f.write_str(&t!("assembly.error.file_invalid", detail = e)),
+            Error::Newer(v) => f.write_str(&t!(
+                "assembly.error.file_newer",
+                version = v,
+                supported = VERSION
+            )),
         }
     }
 }
@@ -68,7 +69,11 @@ pub fn from_str(text: &str) -> Result<Design, Error> {
     match version.version {
         Some(v) if v > VERSION => return Err(Error::Newer(v)),
         Some(_) => {}
-        None => return Err(Error::Invalid("version がありません".to_owned())),
+        None => {
+            return Err(Error::Invalid(
+                t!("assembly.error.file_no_version").to_owned(),
+            ));
+        }
     }
     let contents: FileContents =
         serde_json::from_str(text).map_err(|e| Error::Invalid(e.to_string()))?;
@@ -144,6 +149,7 @@ mod tests {
 
     #[test]
     fn other_files_and_newer_versions_are_refused() {
+        let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
         assert!(matches!(from_str("not json"), Err(Error::Invalid(_))));
         assert!(matches!(from_str("{}"), Err(Error::Invalid(_))));
         let newer = from_str(r#"{"version": 99, "components": []}"#).unwrap_err();

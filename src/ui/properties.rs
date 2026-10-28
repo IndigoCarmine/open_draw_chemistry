@@ -19,9 +19,9 @@ const BUTTON: f32 = 22.0;
 /// The panel's name in `view`.
 pub fn title(view: ViewMode) -> &'static str {
     match view {
-        ViewMode::TwoD => "解析",
-        ViewMode::ThreeD => "3D 編集",
-        ViewMode::Assembly => "集合体",
+        ViewMode::TwoD => t!("properties.title.analysis"),
+        ViewMode::ThreeD => t!("properties.title.edit_3d"),
+        ViewMode::Assembly => t!("properties.title.assembly"),
     }
 }
 
@@ -45,13 +45,13 @@ pub fn properties_unscrolled(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui:
     );
     contents(ui);
     let mut corner = ui.new_child(UiBuilder::new().max_rect(button_rect));
-    collapse_button(&mut corner, Icon::ChevronsRight, "パネルを畳む")
+    collapse_button(&mut corner, Icon::ChevronsRight, t!("properties.collapse"))
 }
 
 /// Draws the collapsed strip of the panel named `title`. Returns `true` when it asks to
 /// expand the panel again.
 pub fn collapsed(ui: &mut egui::Ui, title: &str) -> bool {
-    let tip = format!("{title}パネルを開く");
+    let tip = t!("properties.expand", title = title);
     ui.vertical_centered(|ui| {
         let expand = collapse_button(ui, Icon::ChevronsLeft, &tip);
         ui.add_space(6.0);
@@ -105,6 +105,10 @@ mod tests {
 
     #[test]
     fn the_panel_is_named_after_what_it_holds() {
+        assert_eq!(title(ViewMode::TwoD), "Analysis");
+        assert_eq!(title(ViewMode::ThreeD), "3D editing");
+        assert_eq!(title(ViewMode::Assembly), "Assembly");
+        let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
         assert_eq!(title(ViewMode::TwoD), "解析");
         assert_eq!(title(ViewMode::ThreeD), "3D 編集");
         assert_eq!(title(ViewMode::Assembly), "集合体");

@@ -28,8 +28,8 @@ impl Task {
     /// The task in progress, for the UI.
     pub fn running_label(self) -> &'static str {
         match self {
-            Task::Generate => "3D モデルを生成しています…",
-            Task::Optimize => "構造を最適化しています…",
+            Task::Generate => t!("three_d.job.generating"),
+            Task::Optimize => t!("three_d.job.optimizing"),
         }
     }
 }
@@ -203,7 +203,7 @@ impl Job {
             Err(e) => {
                 self.state = match self.previous.take() {
                     Some(model) => JobState::Done(model),
-                    None => JobState::Failed(format!("処理を開始できませんでした: {e}")),
+                    None => JobState::Failed(t!("three_d.job.start_failed", error = e)),
                 };
             }
         }
@@ -231,20 +231,22 @@ impl Job {
         self.result = None;
         let previous = self.previous.take();
         let message = match (&outcome, task) {
-            (Ok(model), Task::Generate) => format!(
-                "3D モデルを生成しました（{}、{} 原子）",
-                model.formula,
-                model.atoms.len()
+            (Ok(model), Task::Generate) => tn!(
+                "three_d.job.generated",
+                model.atoms.len(),
+                formula = model.formula
             ),
-            (Ok(model), Task::Optimize) => format!(
-                "構造を最適化しました（E = {:.1} {}）",
-                model.energy, model.energy_unit
+            (Ok(model), Task::Optimize) => t!(
+                "three_d.job.optimized",
+                energy = format!("{:.1}", model.energy),
+                unit = model.energy_unit
             ),
             (Err(e), _) => e.to_string(),
         };
         self.state = match (outcome, task, previous) {
             (Ok(model), Task::Optimize, Some(before)) => {
-                self.edit.record_replacement(&before, &model, "構造最適化");
+                self.edit
+                    .record_replacement(&before, &model, t!("three_d.job.undo_optimize"));
                 JobState::Done(model)
             }
             (Ok(model), _, _) => {
@@ -438,7 +440,10 @@ mod tests {
 
         assert!(job.edit.can_undo());
         let (model, edit3d) = job.model_and_edit().unwrap();
-        assert_eq!(edit3d.undo(model).as_deref(), Some("構造最適化"));
+        assert_eq!(
+            edit3d.undo(model).as_deref(),
+            Some(t!("three_d.job.undo_optimize"))
+        );
         assert_eq!(model.energy, energy_edited);
     }
 }

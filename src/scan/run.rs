@@ -70,8 +70,10 @@ impl Run {
     pub fn start(source: Source, axes: &[Axis], force_field: ForceField) -> Result<Run, String> {
         let atoms = source.atom_count();
         if atoms > MAX_ATOMS {
-            return Err(format!(
-                "原子が多すぎます（{atoms} 個）。スキャンできるのは {MAX_ATOMS} 個までです。繰り返し数を減らしてください"
+            return Err(t!(
+                "scan.error.too_many_atoms",
+                atoms = atoms,
+                max = MAX_ATOMS
             ));
         }
         let points = grid(axes);
@@ -170,7 +172,7 @@ impl Run {
             drifted: false,
         };
         if let Err(e) = spawned {
-            run.error = Some(format!("スキャンを開始できませんでした: {e}"));
+            run.error = Some(t!("scan.error.start_failed", error = e));
             run.receiver = None;
             run.finished = Some(Instant::now());
         }
@@ -304,20 +306,24 @@ fn model_of(source: &Source) -> Option<&crate::three_d::Model3d> {
     }
 }
 
-/// `d` as "1 分 05 秒", "12.3 秒" or "0.04 秒".
+/// `d` as "1 min 05 s", "12.3 s" or "0.04 s" (in Japanese "1 分 05 秒", "12.3 秒", "0.04 秒").
 pub fn format_duration(d: Duration) -> String {
     let s = d.as_secs_f64();
     if s < 10.0 {
-        format!("{s:.2} 秒")
+        t!("scan.duration.seconds", seconds = format!("{s:.2}"))
     } else if s < 60.0 {
-        format!("{s:.1} 秒")
+        t!("scan.duration.seconds", seconds = format!("{s:.1}"))
     } else if s < 3600.0 {
-        format!("{} 分 {:02} 秒", (s / 60.0) as u64, (s % 60.0) as u64)
+        t!(
+            "scan.duration.minutes",
+            minutes = (s / 60.0) as u64,
+            seconds = format!("{:02}", (s % 60.0) as u64)
+        )
     } else {
-        format!(
-            "{} 時間 {:02} 分",
-            (s / 3600.0) as u64,
-            ((s % 3600.0) / 60.0) as u64
+        t!(
+            "scan.duration.hours",
+            hours = (s / 3600.0) as u64,
+            minutes = format!("{:02}", ((s % 3600.0) / 60.0) as u64)
         )
     }
 }
@@ -486,11 +492,20 @@ mod tests {
         let Err(message) = Run::start(source, &[dihedral_axis(3)], ForceField::Uff) else {
             panic!("a scan of too many atoms started");
         };
-        assert!(message.contains("原子が多すぎます"), "{message}");
+        assert!(message.contains("Too many atoms"), "{message}");
+    }
+
+    #[test]
+    fn durations_read_in_english() {
+        assert_eq!(format_duration(Duration::from_millis(12_340)), "12.3 s");
+        assert_eq!(format_duration(Duration::from_millis(42)), "0.04 s");
+        assert_eq!(format_duration(Duration::from_secs(65)), "1 min 05 s");
+        assert_eq!(format_duration(Duration::from_secs(7_260)), "2 h 01 min");
     }
 
     #[test]
     fn durations_read_in_japanese() {
+        let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
         assert_eq!(format_duration(Duration::from_millis(12_340)), "12.3 秒");
         assert_eq!(format_duration(Duration::from_millis(42)), "0.04 秒");
         assert_eq!(format_duration(Duration::from_secs(65)), "1 分 05 秒");

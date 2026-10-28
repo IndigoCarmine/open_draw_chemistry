@@ -27,12 +27,15 @@ const DRAWN: usize = 400;
 const LABELLED: usize = 8;
 const LISTED: usize = 6;
 
-pub const HBOND_TIP: &str = "N・O・F に付いた H と、別の N・O・F（受容体）の組を水色の点線で表示。\n\
-    H···A ≤ 2.5 Å、D···A ≤ 3.5 Å、角 D–H···A ≥ 120°。同じ分子内では 3 結合以内の組を除きます";
-pub const PI_TIP: &str = "芳香環（5・6 員環、平面、4n+2 電子）どうしの重なりを、環の重心を結ぶ黄色の点線で表示。\n\
-    平行：重心間 ≤ 4.4 Å、面のなす角 ≤ 30°、横のずれ ≤ 2.0 Å。\n\
-    T 字：重心間 ≤ 5.5 Å、角 60–90°、ずれ ≤ 2.0 Å（Marcou & Rognan 2007、PLIP に準拠）。\n\
-    縮環した環どうし・結合でつながった環どうしは数えません";
+/// What counts as a hydrogen bond, for the tooltips.
+pub fn hbond_tip() -> &'static str {
+    t!("interactions.hbond_tip")
+}
+
+/// What counts as a π-stack, for the tooltips.
+pub fn pi_tip() -> &'static str {
+    t!("interactions.pi_tip")
+}
 
 /// Which contacts the viewer shows (remembered with the view's other options).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,10 +66,10 @@ impl ShowInteractions {
 /// The two checkboxes of the 表示 section.
 pub fn toggles(ui: &mut egui::Ui, show: &mut ShowInteractions) {
     ui.horizontal_wrapped(|ui| {
-        ui.checkbox(&mut show.hbonds, "水素結合")
-            .on_hover_text(HBOND_TIP);
-        ui.checkbox(&mut show.pi_stacking, "π スタッキング")
-            .on_hover_text(PI_TIP);
+        ui.checkbox(&mut show.hbonds, t!("interactions.hbonds"))
+            .on_hover_text(hbond_tip());
+        ui.checkbox(&mut show.pi_stacking, t!("interactions.pi_stacking"))
+            .on_hover_text(pi_tip());
     });
 }
 
@@ -145,13 +148,13 @@ fn inks(ui: &egui::Ui) -> (Color32, Color32) {
 
 /// One hydrogen bond as text, its atoms named by `label`.
 pub fn hbond_text(hb: &HBond, label: &impl Fn(usize) -> String) -> String {
-    format!(
-        "{}–{}···{}：{:.2} Å（{:.0}°）",
-        label(hb.donor),
-        label(hb.hydrogen),
-        label(hb.acceptor),
-        hb.distance,
-        hb.angle
+    t!(
+        "interactions.hbond_entry",
+        donor = label(hb.donor),
+        hydrogen = label(hb.hydrogen),
+        acceptor = label(hb.acceptor),
+        distance = format!("{:.2}", hb.distance),
+        angle = format!("{:.0}", hb.angle)
     )
 }
 
@@ -164,13 +167,13 @@ pub fn stack_text(found: &Interactions, s: &PiStack, label: &impl Fn(usize) -> S
             .and_then(|r| r.atoms.first())
             .map_or_else(String::new, |&a| label(a))
     };
-    format!(
-        "環 {} – 環 {}：{:.2} Å {}（{:.0}°）",
-        ring(s.a),
-        ring(s.b),
-        s.distance,
-        s.kind.label(),
-        s.angle
+    t!(
+        "interactions.stack_entry",
+        ring_a = ring(s.a),
+        ring_b = ring(s.b),
+        distance = format!("{:.2}", s.distance),
+        kind = s.kind.label(),
+        angle = format!("{:.0}", s.angle)
     )
 }
 
@@ -194,7 +197,11 @@ pub fn list(
     label: impl Fn(usize) -> String,
 ) -> Option<Clicked> {
     let (hbond_ink, pi_ink) = inks(ui);
-    let more = if found.truncated { " 以上" } else { "" };
+    let more = if found.truncated {
+        t!("interactions.or_more")
+    } else {
+        ""
+    };
     let mut clicked = None;
     let mut entry = |ui: &mut egui::Ui, text: String, color: Color32, what: Clicked| {
         if ui
@@ -207,20 +214,22 @@ pub fn list(
     };
     if show.hbonds {
         ui.label(
-            RichText::new(format!(
-                "水素結合：{} 本{more}{pending}",
-                found.hbonds.len()
+            RichText::new(tn!(
+                "interactions.hbond_count",
+                found.hbonds.len(),
+                more = more,
+                pending = pending
             ))
             .size(12.0)
             .color(hbond_ink),
         )
-        .on_hover_text(HBOND_TIP);
+        .on_hover_text(hbond_tip());
         for (k, hb) in found.hbonds.iter().take(LISTED).enumerate() {
             entry(ui, hbond_text(hb, &label), hbond_ink, Clicked::HBond(k));
         }
         if found.hbonds.len() > LISTED {
             ui.label(
-                RichText::new(format!("ほか {} 本", found.hbonds.len() - LISTED))
+                RichText::new(tn!("interactions.more_hbonds", found.hbonds.len() - LISTED))
                     .size(11.0)
                     .color(hbond_ink),
             );
@@ -228,20 +237,22 @@ pub fn list(
     }
     if show.pi_stacking {
         ui.label(
-            RichText::new(format!(
-                "π スタッキング：{} 組{more}{pending}",
-                found.stacks.len()
+            RichText::new(tn!(
+                "interactions.stack_count",
+                found.stacks.len(),
+                more = more,
+                pending = pending
             ))
             .size(12.0)
             .color(pi_ink),
         )
-        .on_hover_text(PI_TIP);
+        .on_hover_text(pi_tip());
         for (k, s) in found.stacks.iter().take(LISTED).enumerate() {
             entry(ui, stack_text(found, s, &label), pi_ink, Clicked::Stack(k));
         }
         if found.stacks.len() > LISTED {
             ui.label(
-                RichText::new(format!("ほか {} 組", found.stacks.len() - LISTED))
+                RichText::new(tn!("interactions.more_stacks", found.stacks.len() - LISTED))
                     .size(11.0)
                     .color(pi_ink),
             );

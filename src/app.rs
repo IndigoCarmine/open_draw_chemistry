@@ -117,7 +117,7 @@ impl Default for OpenDrawApp {
             config: Config::default(),
             analysis: AnalysisPanel::default(),
             custom_element: String::new(),
-            status: "準備完了".to_owned(),
+            status: String::new(),
             untitled: 0,
             pending_close: None,
             quit_confirmed: false,
@@ -164,9 +164,16 @@ impl OpenDrawApp {
         crate::i18n::set_language(lang);
 
         // ─── chembuider-rs language hook ─────────────────────────────────────────────
-        // The one place the library's UI language (its analysis panel, …) is set. The
-        // library does not have a language API yet; its analysis panel only switches between
-        // Japanese and English. When the API lands, pass `lang` (or its code) here instead.
+        // The one place the library's UI language (its analysis panel, …) is set. The pinned
+        // library has no language API yet; its analysis panel only switches between Japanese
+        // and English.
+        // TODO(chembuider-rs i18n): once the rev with `chembuider_rs::i18n` is pinned, replace
+        // the line below with
+        //     if let Some(l) = chembuider_rs::i18n::Language::from_tag(lang.code()) {
+        //         chembuider_rs::i18n::set_language(l);
+        //     }
+        // (`Lang::code()` gives the same tags as `Language::tag()`), and consider
+        // `chembuider_rs::widget::fonts::add_cjk_ui_font` in place of `crate::i18n::fonts`.
         self.analysis.ja = lang == Lang::Ja;
     }
 
@@ -199,10 +206,10 @@ impl OpenDrawApp {
             Some(Kind::Document(format)) => format,
             Some(Kind::Structure3d(format)) => return self.open_3d(path, format),
             None => {
-                self.status = format!(
-                    "{} を開けませんでした: {}",
-                    path.display(),
-                    io::Error::UnknownFormat
+                self.status = t!(
+                    "app.status.open_failed",
+                    path = path.display(),
+                    error = io::Error::UnknownFormat
                 );
                 return;
             }
@@ -214,12 +221,12 @@ impl OpenDrawApp {
                 let name = doc.title();
                 self.add_opened(doc, path);
                 self.status = if summary.is_empty() {
-                    format!("{name} を開きました")
+                    t!("app.status.opened", name = name)
                 } else {
-                    format!("{name} を開きました（{summary}）")
+                    t!("app.status.opened_summary", name = name, summary = summary)
                 };
             }
-            Err(e) => self.status = format!("{} を開けませんでした: {e}", path.display()),
+            Err(e) => self.status = t!("app.status.open_failed", path = path.display(), error = e),
         }
     }
 
@@ -229,7 +236,7 @@ impl OpenDrawApp {
         let opened = match io::load_3d(path) {
             Ok(opened) => opened,
             Err(e) => {
-                self.status = format!("{} を開けませんでした: {e}", path.display());
+                self.status = t!("app.status.open_failed", path = path.display(), error = e);
                 return;
             }
         };
@@ -242,17 +249,17 @@ impl OpenDrawApp {
         if has_model {
             self.view = ViewMode::ThreeD;
         }
-        let mut status = format!("{name} を開きました");
+        let mut status = t!("app.status.opened", name = name);
         if records > 1 {
-            status += &format!("（{records} 件の構造のうち最初の 1 件のみ）");
+            status += &tn!("app.status.opened_first_record", records);
         }
         if !has_model {
-            status += "。座標が平面のため 3D モデルは「2D から 3D を生成」で作成してください";
+            status += t!("app.status.opened_flat");
         }
         if projected {
-            status += "。2D 配置は 3D 座標の投影です（クリーンアップで整えられます）";
+            status += t!("app.status.opened_projected");
         }
-        status += "。保存は CDX/CDXML への「名前を付けて保存」になります";
+        status += t!("app.status.opened_save_note");
         self.status = status;
     }
 
@@ -281,9 +288,9 @@ impl OpenDrawApp {
             .copied()
             .collect();
         let mut dialog = rfd::FileDialog::new()
-            .add_filter("対応するすべての形式", &all)
+            .add_filter(t!("dialog.filter.all_supported"), &all)
             .add_filter("ChemDraw", &chemdraw)
-            .add_filter("3D 構造 (MOL2, PDB, XYZ, MOL, SDF)", &Format3d::EXTENSIONS);
+            .add_filter(t!("dialog.filter.structure_3d"), &Format3d::EXTENSIONS);
         if let Some(dir) = self.recent.first().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
         }
@@ -302,13 +309,13 @@ impl OpenDrawApp {
             Ok(true) => {
                 let doc = &self.docs[index];
                 let path = doc.path.clone().expect("a saved document has a path");
-                self.status = format!("{} を保存しました", doc.title());
+                self.status = t!("app.status.saved", name = doc.title());
                 self.remember(&path);
                 true
             }
             Ok(false) => self.save_doc_as(index),
             Err(e) => {
-                self.status = format!("保存できませんでした: {e}");
+                self.status = t!("app.status.save_failed", error = e);
                 false
             }
         }
@@ -343,12 +350,12 @@ impl OpenDrawApp {
         });
         match self.docs[index].save_as(&path, format) {
             Ok(()) => {
-                self.status = format!("{} を保存しました", self.docs[index].title());
+                self.status = t!("app.status.saved", name = self.docs[index].title());
                 self.remember(&path);
                 true
             }
             Err(e) => {
-                self.status = format!("保存できませんでした: {e}");
+                self.status = t!("app.status.save_failed", error = e);
                 false
             }
         }
@@ -359,7 +366,7 @@ impl OpenDrawApp {
         let bytes = match io::export(export, &doc.editor.molecule) {
             Ok(bytes) => bytes,
             Err(e) => {
-                self.status = format!("エクスポートできませんでした: {e}");
+                self.status = t!("app.status.export_failed", error = e);
                 return;
             }
         };
@@ -376,8 +383,8 @@ impl OpenDrawApp {
             return;
         };
         self.status = match std::fs::write(&path, bytes) {
-            Ok(()) => format!("{} に書き出しました", path.display()),
-            Err(e) => format!("エクスポートできませんでした: {e}"),
+            Ok(()) => t!("app.status.exported", path = path.display()),
+            Err(e) => t!("app.status.export_failed", error = e),
         };
     }
 
@@ -385,13 +392,13 @@ impl OpenDrawApp {
     fn export_3d(&mut self, export: Export3d) {
         let Some(doc) = self.active_doc() else { return };
         let Some(model) = doc.three_d.model() else {
-            self.status = "エクスポートする 3D モデルがありません".to_owned();
+            self.status = t!("app.status.no_3d_model_to_export").to_owned();
             return;
         };
         let text = match three_d::export(model, export) {
             Ok(text) => text,
             Err(e) => {
-                self.status = format!("エクスポートできませんでした: {e}");
+                self.status = t!("app.status.export_failed", error = e);
                 return;
             }
         };
@@ -408,8 +415,8 @@ impl OpenDrawApp {
             return;
         };
         self.status = match std::fs::write(&path, text) {
-            Ok(()) => format!("{} に書き出しました", path.display()),
-            Err(e) => format!("エクスポートできませんでした: {e}"),
+            Ok(()) => t!("app.status.exported", path = path.display()),
+            Err(e) => t!("app.status.export_failed", error = e),
         };
     }
 
@@ -523,11 +530,11 @@ impl OpenDrawApp {
                 self.status = if command == Command::CopyIupacName {
                     crate::iupac::name(&doc.editor, config).map(|name| {
                         ctx.copy_text(name.clone());
-                        format!("IUPAC 名をコピーしました: {name}")
+                        t!("app.status.iupac_copied", name = name)
                     })
                 } else {
                     crate::iupac::insert_name(&mut doc.editor, config)
-                        .map(|name| format!("IUPAC 名を挿入しました: {name}"))
+                        .map(|name| t!("app.status.iupac_inserted", name = name))
                 }
                 .unwrap_or_else(|message| message);
             }
@@ -547,10 +554,10 @@ impl OpenDrawApp {
                     doc.assembly.undo()
                 };
                 self.status = match (done, redo) {
-                    (true, false) => "集合体の編集を元に戻しました",
-                    (true, true) => "集合体の編集をやり直しました",
-                    (false, false) => "元に戻す操作はありません",
-                    (false, true) => "やり直す操作はありません",
+                    (true, false) => t!("app.status.assembly_undone"),
+                    (true, true) => t!("app.status.assembly_redone"),
+                    (false, false) => t!("app.status.nothing_to_undo"),
+                    (false, true) => t!("app.status.nothing_to_redo"),
                 }
                 .to_owned();
             }
@@ -584,16 +591,16 @@ impl OpenDrawApp {
                 // A message of the paste's own (an embedded object it cannot read).
                 let mut failure = None;
                 let message = match command {
-                    Command::Undo => (!editor.undo()).then_some("元に戻す操作はありません"),
-                    Command::Redo => (!editor.redo()).then_some("やり直す操作はありません"),
+                    Command::Undo => (!editor.undo()).then_some(t!("app.status.nothing_to_undo")),
+                    Command::Redo => (!editor.redo()).then_some(t!("app.status.nothing_to_redo")),
                     Command::Copy => Some(if crate::ole::copy(editor, ctx) {
-                        crate::ole::COPIED_MESSAGE
+                        crate::ole::copied_message()
                     } else {
-                        "コピーするものがありません"
+                        t!("app.status.nothing_to_copy")
                     }),
                     Command::Paste => match crate::ole::paste(editor) {
-                        Ok(true) => Some("貼り付けました"),
-                        Ok(false) => Some("クリップボードに構造がありません"),
+                        Ok(true) => Some(t!("app.status.pasted")),
+                        Ok(false) => Some(t!("app.status.no_structure_on_clipboard")),
                         Err(message) => {
                             failure = Some(message);
                             None
@@ -628,7 +635,11 @@ impl OpenDrawApp {
             three_d::JobState::Failed(message) => message.clone(),
             three_d::JobState::Running(task) => {
                 match three_d::molfile::polymer_note(&doc.editor.molecule) {
-                    Some(note) => format!("{}（{note}）", task.running_label()),
+                    Some(note) => t!(
+                        "app.status.running_with_note",
+                        label = task.running_label(),
+                        note = note
+                    ),
                     None => task.running_label().to_owned(),
                 }
             }
@@ -645,18 +656,18 @@ impl OpenDrawApp {
         };
         self.view = ViewMode::Assembly;
         if !doc.assembly.is_empty() {
-            self.status = "集合体画面に切り替えました".to_owned();
+            self.status = t!("app.status.assembly_shown").to_owned();
             return;
         }
         let Some(model) = doc.three_d.model() else {
-            self.status = "単量体にする 3D モデルがありません。先に「3D」メニューの「2D から 3D を生成」で 3D モデルを作成してください".to_owned();
+            self.status = t!("app.status.no_model_for_monomer").to_owned();
             return;
         };
         let component = Component::from_model(ui::assembly::model_name(doc), model);
-        self.status = format!(
-            "「{}」（{} 原子）を単量体にして集合体を作成しました。右パネルで手順（環状・積層・配列）を追加してください",
-            component.name,
-            component.atoms.len()
+        self.status = tn!(
+            "app.status.assembly_created",
+            component.atoms.len(),
+            name = component.name
         );
         doc.assembly.edit(|d| d.components.push(component));
     }
@@ -674,7 +685,7 @@ impl OpenDrawApp {
 
     fn assembly_add_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("3D 構造 (MOL2, PDB, XYZ, MOL, SDF)", &Format3d::EXTENSIONS)
+            .add_filter(t!("dialog.filter.structure_3d"), &Format3d::EXTENSIONS)
             .pick_file()
         else {
             return;
@@ -684,15 +695,15 @@ impl OpenDrawApp {
                 let Some(doc) = self.active_doc_mut() else {
                     return;
                 };
-                let message = format!(
-                    "単量体「{}」（{} 原子）を追加しました",
-                    component.name,
-                    component.atoms.len()
+                let message = tn!(
+                    "app.status.monomer_added",
+                    component.atoms.len(),
+                    name = component.name
                 );
                 doc.assembly.edit(|d| d.components.push(component));
                 self.status = message;
             }
-            Err(e) => self.status = format!("{} を読み込めませんでした: {e}", path.display()),
+            Err(e) => self.status = t!("app.status.load_failed", path = path.display(), error = e),
         }
     }
 
@@ -704,11 +715,11 @@ impl OpenDrawApp {
         let built = match doc.assembly.built() {
             Ok(built) if !built.is_empty() => built,
             Ok(_) => {
-                self.status = "書き出す集合体がありません".to_owned();
+                self.status = t!("app.status.no_assembly_to_export").to_owned();
                 return;
             }
             Err(e) => {
-                self.status = format!("書き出せませんでした: {e}");
+                self.status = t!("app.status.write_failed", error = e);
                 return;
             }
         };
@@ -721,20 +732,20 @@ impl OpenDrawApp {
         };
         let text = assembly::export::export(export, &built, &doc.assembly.design, &stem);
         self.status = match std::fs::write(&path, text) {
-            Ok(()) => format!(
-                "{} に書き出しました（{} 分子、{} 原子）",
-                path.display(),
-                built.molecule_count(),
-                built.atoms.len()
+            Ok(()) => t!(
+                "app.status.assembly_exported",
+                path = path.display(),
+                molecules = built.molecule_count(),
+                atoms = built.atoms.len()
             ),
-            Err(e) => format!("書き出せませんでした: {e}"),
+            Err(e) => t!("app.status.write_failed", error = e),
         };
     }
 
     fn save_assembly(&mut self) {
         let Some(doc) = self.active_doc() else { return };
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("集合体 (Open DrawChemistry)", &[assembly::file::EXTENSION])
+            .add_filter(t!("dialog.filter.assembly"), &[assembly::file::EXTENSION])
             .set_file_name(format!(
                 "{}.{}",
                 Self::assembly_stem(doc),
@@ -745,14 +756,14 @@ impl OpenDrawApp {
             return;
         };
         self.status = match assembly::file::save(&path, &doc.assembly.design) {
-            Ok(()) => format!("集合体を {} に保存しました", path.display()),
-            Err(e) => format!("集合体を保存できませんでした: {e}"),
+            Ok(()) => t!("app.status.assembly_saved", path = path.display()),
+            Err(e) => t!("app.status.assembly_save_failed", error = e),
         };
     }
 
     fn open_assembly(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("集合体 (Open DrawChemistry)", &[assembly::file::EXTENSION])
+            .add_filter(t!("dialog.filter.assembly"), &[assembly::file::EXTENSION])
             .pick_file()
         else {
             return;
@@ -770,9 +781,9 @@ impl OpenDrawApp {
             Ok(design) => {
                 doc.assembly.replace(design);
                 self.view = ViewMode::Assembly;
-                self.status = format!("集合体 {} を開きました", path.display());
+                self.status = t!("app.status.assembly_opened", path = path.display());
             }
-            Err(e) => self.status = format!("{} を開けませんでした: {e}", path.display()),
+            Err(e) => self.status = t!("app.status.open_failed", path = path.display(), error = e),
         }
     }
 
@@ -874,27 +885,27 @@ impl OpenDrawApp {
             ui.set_width(360.0);
             match pending {
                 PendingClose::Tab(i) => {
-                    ui.heading("変更を保存しますか？");
-                    ui.label(format!(
-                        "「{}」には保存されていない変更があります。",
-                        self.docs[i].title()
+                    ui.heading(t!("dialog.unsaved.tab_title"));
+                    ui.label(t!(
+                        "dialog.unsaved.tab_message",
+                        name = self.docs[i].title()
                     ));
                 }
                 PendingClose::Quit => {
                     let count = self.docs.iter().filter(|d| d.is_dirty()).count();
-                    ui.heading("終了する前に保存しますか？");
-                    ui.label(format!("保存されていない文書が {count} 件あります。"));
+                    ui.heading(t!("dialog.unsaved.quit_title"));
+                    ui.label(tn!("dialog.unsaved.quit_message", count));
                 }
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("保存").clicked() {
+                if ui.button(t!("dialog.unsaved.save")).clicked() {
                     choice = Some(Choice::Save);
                 }
-                if ui.button("保存しない").clicked() {
+                if ui.button(t!("dialog.unsaved.discard")).clicked() {
                     choice = Some(Choice::Discard);
                 }
-                if ui.button("キャンセル").clicked() {
+                if ui.button(t!("common.cancel")).clicked() {
                     choice = Some(Choice::Cancel);
                 }
             });
@@ -961,25 +972,25 @@ impl OpenDrawApp {
         let result = match &action {
             FragmentAction::AddFromSelection(name) => self
                 .active_doc()
-                .ok_or_else(|| "文書が開かれていません".to_owned())
+                .ok_or_else(|| t!("app.status.no_document").to_owned())
                 .and_then(|doc| fragments::selection_fragment(&doc.editor, name))
                 .and_then(|def| {
                     store.save(&def)?;
-                    Ok(format!(
-                        "断片「{}」を追加しました（{} 原子）",
-                        def.name,
-                        def.atoms.len()
+                    Ok(tn!(
+                        "app.status.fragment_added",
+                        def.atoms.len(),
+                        name = def.name
                     ))
                 }),
             FragmentAction::Delete(name) => store
                 .delete(name)
-                .map(|()| format!("断片「{name}」を削除しました")),
+                .map(|()| t!("app.status.fragment_deleted", name = name)),
             FragmentAction::Rename { from, to } => store
                 .rename(from, to)
-                .map(|()| format!("「{from}」を「{to}」に名前変更しました")),
+                .map(|()| t!("app.status.fragment_renamed", from = from, to = to)),
             FragmentAction::OpenFolder => match store.dir() {
                 Some(dir) => fragments::open_in_file_manager(dir).map(|()| String::new()),
-                None => Err("ユーザー設定フォルダーが見つかりません".to_owned()),
+                None => Err(t!("app.status.settings_folder_missing").to_owned()),
             },
         };
         if result.is_ok() && matches!(action, FragmentAction::AddFromSelection(_)) {
@@ -999,7 +1010,7 @@ impl OpenDrawApp {
 
     fn about_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_about;
-        egui::Window::new("バージョン情報")
+        egui::Window::new(t!("dialog.about.title"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1023,7 +1034,7 @@ fn read_component(path: &Path) -> Result<Component, String> {
     let opened = three_d::read::read(format, &text).map_err(|e| e.to_string())?;
     let model = opened
         .model
-        .ok_or_else(|| "座標が平面のため 3D 構造として使えません".to_owned())?;
+        .ok_or_else(|| t!("app.status.flat_coordinates").to_owned())?;
     let name = path.file_stem().map_or_else(
         || "monomer".to_owned(),
         |s| s.to_string_lossy().into_owned(),
@@ -1065,7 +1076,7 @@ fn editor_canvas(
         match bond {
             Some(bond) => chosen = bond_menu(ui, bond, true),
             None => {
-                ui.weak("結合を右クリックすると種類を変更できます");
+                ui.weak(t!("app.canvas.bond_hint"));
             }
         }
         ui.separator();
@@ -1076,9 +1087,12 @@ fn editor_canvas(
             clicked,
         );
         if ui
-            .add_enabled(target.is_some(), egui::Button::new("3D化"))
+            .add_enabled(
+                target.is_some(),
+                egui::Button::new(t!("app.canvas.make_3d")),
+            )
             .on_hover_text(make_3d_tip(editor, clicked))
-            .on_disabled_hover_text("描画が空です")
+            .on_disabled_hover_text(t!("app.canvas.drawing_empty"))
             .clicked()
         {
             make_3d = target;
@@ -1101,11 +1115,11 @@ fn editor_canvas(
 fn make_3d_tip(editor: &chembuider_rs::ChemStructEditor, clicked: Option<u32>) -> &'static str {
     let exists = |id: &u32| editor.molecule.atom_by_id(*id).is_some();
     if editor.selected_atoms.iter().any(exists) {
-        "選択した原子を含む分子の 3D モデルを作り、3D 画面に表示します"
+        t!("app.canvas.make_3d_selection_tip")
     } else if clicked.as_ref().is_some_and(exists) {
-        "この分子の 3D モデルを作り、3D 画面に表示します"
+        t!("app.canvas.make_3d_molecule_tip")
     } else {
-        "描画全体の 3D モデルを作り、3D 画面に表示します"
+        t!("app.canvas.make_3d_drawing_tip")
     }
 }
 
@@ -1116,16 +1130,14 @@ fn welcome(ui: &mut egui::Ui, out: &mut Vec<Command>) {
             ui.add_space(ui.available_height() / 3.0);
             ui.heading(crate::APP_NAME);
             ui.add_space(12.0);
-            if ui.button("新規作成").clicked() {
+            if ui.button(t!("app.welcome.new")).clicked() {
                 out.push(Command::New);
             }
-            if ui.button("ファイルを開く…").clicked() {
+            if ui.button(t!("app.welcome.open")).clicked() {
                 out.push(Command::Open);
             }
             ui.add_space(8.0);
-            ui.weak(
-                "CDX / CDXML や 3D 構造（MOL2・PDB・XYZ・MOL・SDF）のファイルをここにドロップして開くこともできます",
-            );
+            ui.weak(t!("app.welcome.drop_hint"));
         });
     });
 }
@@ -1472,7 +1484,7 @@ mod tests {
         assert_eq!(doc.editor.molecule.atoms.len(), 3);
         assert_eq!(app.view, ViewMode::ThreeD, "the 3D view is shown");
         assert_eq!(app.recent, vec![path.clone()]);
-        assert!(app.status.contains("名前を付けて保存"), "{}", app.status);
+        assert!(app.status.contains("Save as…"), "{}", app.status);
         // Opening it again switches to it rather than reading it twice.
         app.new_document();
         app.open_path(&path);
@@ -1524,7 +1536,7 @@ mod tests {
         app.new_document();
         app.active = 2;
         app.remove_tab(0);
-        assert_eq!(app.docs[app.active].title(), "無題 3");
+        assert_eq!(app.docs[app.active].title(), "Untitled 3");
         app.remove_tab(1);
         assert_eq!(app.active, 0);
         app.remove_tab(0);
@@ -1578,6 +1590,8 @@ mod tests {
     /// The 3D menu's generate → (poll) → optimise path, and the panel drawing the result.
     #[test]
     fn the_3d_menu_generates_and_optimises_in_the_background() {
+        // The 3D job's messages, checked in Japanese.
+        let _lang = crate::i18n::ScopedLanguage::new(Lang::Ja);
         let ctx = egui::Context::default();
         let mut app = app_with_one_untitled();
         let mol = &mut app.docs[0].editor.molecule;
@@ -1744,7 +1758,7 @@ mod tests {
 
         app.run(&ctx, Command::CreateAssembly);
         assert_eq!(app.view, ViewMode::Assembly);
-        assert!(app.status.contains("2D から 3D を生成"), "{}", app.status);
+        assert!(app.status.contains("Generate 3D from 2D"), "{}", app.status);
         assert!(app.docs[0].assembly.is_empty());
 
         let drawing = app.docs[0].editor.molecule.clone();
@@ -1818,7 +1832,7 @@ mod tests {
         assert!(app.docs[0].assembly.is_empty());
 
         app.open_assembly_path(&dir.join("missing.odasm"));
-        assert!(app.status.contains("開けませんでした"), "{}", app.status);
+        assert!(app.status.contains("Could not open"), "{}", app.status);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1843,5 +1857,65 @@ mod tests {
         let app = app_with_one_untitled();
         let editor = &app.docs[0].editor;
         assert_eq!(three_d::part::target(&editor.molecule, [], None), None);
+    }
+
+    /// The language list (behind the toolbar's globe button and in the View menu) offers every
+    /// language; choosing one switches the UI to it, and the choice is saved.
+    #[test]
+    fn choosing_a_language_switches_the_ui_and_is_remembered() {
+        let ctx = egui::Context::default();
+        let mut app = OpenDrawApp::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let input = |events: Vec<egui::Event>| egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+
+        // A headless frame of the toolbar (with its globe button) and of the language list,
+        // whose rows are the languages in order.
+        let mut out = Vec::new();
+        let mut list = egui::Rect::NOTHING;
+        let frame = |events, out: &mut Vec<Command>, list: &mut egui::Rect| {
+            let state = app.menu_state();
+            let mut output = ctx.run_ui(input(events), |ui| {
+                ui::menu::toolbar(ui, &state, out);
+                let top = ui.next_widget_position();
+                ui.vertical(|ui| ui::menu::language_list(ui, state.language, out));
+                *list = egui::Rect::from_min_max(top, ui.min_rect().max);
+            });
+            output.textures_delta.clear();
+        };
+        frame(Vec::new(), &mut out, &mut list);
+        assert!(out.is_empty());
+        assert!(list.height() > 0.0);
+
+        // Click the row of Deutsch.
+        let index = Lang::ALL.iter().position(|&l| l == Lang::De).unwrap();
+        let row = list.height() / Lang::ALL.len() as f32;
+        let pos = egui::pos2(list.left() + 8.0, list.top() + row * (index as f32 + 0.5));
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(pos)], &mut out, &mut list);
+        frame(vec![press(true)], &mut out, &mut list);
+        frame(vec![press(false)], &mut out, &mut list);
+        assert_eq!(out, vec![Command::SetLanguage(Lang::De)]);
+
+        for command in out {
+            app.run(&ctx, command);
+        }
+        assert_eq!(app.language, Some(Lang::De));
+        assert_eq!(crate::i18n::language(), Lang::De);
+        assert_eq!(app.menu_state().language, Lang::De);
+
+        let mut storage = SavedState(String::new());
+        eframe::set_value(&mut storage, eframe::APP_KEY, &app);
+        assert!(storage.0.contains("\"de\""), "{}", storage.0);
+        let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert_eq!(back.language, Some(Lang::De));
     }
 }

@@ -68,10 +68,15 @@ pub const PROG_ID: &str = "OpenDrawChemistry.Document.1";
 pub const PROG_ID_CURRENT: &str = "OpenDrawChemistry.Document";
 /// ChemDraw's ProgIDs (32- and 64-bit ChemDraw); either registered means ChemDraw is installed.
 pub const CHEMDRAW_PROG_IDS: [&str; 2] = ["ChemDraw.Document.6.0", "ChemDraw_x64.Document.6.0"];
-/// The user type of [`CLSID`] (what Insert Object lists).
-pub const USER_TYPE: &str = "Open DrawChemistry 構造式";
-/// The short user type (the object's verbs menu).
-pub const USER_TYPE_SHORT: &str = "構造式";
+/// The user type of [`CLSID`] (what Insert Object lists), in the UI language.
+pub fn user_type() -> &'static str {
+    t!("ole.server.user_type")
+}
+
+/// The short user type (the object's verbs menu), in the UI language.
+pub fn user_type_short() -> &'static str {
+    t!("ole.server.user_type_short")
+}
 /// The clipboard format the CONTENTS stream holds, as ChemDraw names it.
 pub const CDX_FORMAT_NAME: &str = "ChemDraw Interchange Format";
 
