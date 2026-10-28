@@ -363,6 +363,28 @@ pub fn icon_button(
     enabled: bool,
     tooltip: &str,
 ) -> Response {
+    icon_button_with_glyph(
+        ui,
+        icon,
+        (size, (size.x.min(size.y) * 0.46).round()),
+        frame,
+        selected,
+        enabled,
+        tooltip,
+    )
+}
+
+/// An icon button with independently specified (cell size, glyph side length).
+/// The whole cell remains the interaction target.
+pub fn icon_button_with_glyph(
+    ui: &mut Ui,
+    icon: Icon,
+    (size, glyph_side): (Vec2, f32),
+    frame: Frame,
+    selected: bool,
+    enabled: bool,
+    tooltip: &str,
+) -> Response {
     let sense = if enabled {
         Sense::click()
     } else {
@@ -398,8 +420,7 @@ pub fn icon_button(
             Stroke::new(1.0, border),
             egui::StrokeKind::Inside,
         );
-        let side = (size.x.min(size.y) * 0.46).round();
-        let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(side));
+        let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(glyph_side));
         paint(painter, icon_rect, icon, color);
     }
     response.on_hover_text(tooltip)

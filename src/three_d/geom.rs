@@ -282,12 +282,23 @@ pub fn moving_side(
     b: usize,
     anchor: Option<usize>,
 ) -> Result<(usize, Vec<usize>), EditError> {
+    moving_side_avoiding(graph, a, b, anchor.as_slice())
+}
+
+/// [`moving_side`] keeping every atom of `pinned` still: the smaller side holding none of
+/// them; [`EditError::AnchorBlocks`] when both sides hold one.
+pub fn moving_side_avoiding(
+    graph: &Graph,
+    a: usize,
+    b: usize,
+    pinned: &[usize],
+) -> Result<(usize, Vec<usize>), EditError> {
     if !graph.bonded(a, b) {
         return Err(EditError::NotBonded);
     }
     let side_b = graph.side(a, b).ok_or(EditError::InRing)?;
     let side_a = graph.side(b, a).ok_or(EditError::InRing)?;
-    let ok = |side: &Vec<usize>| anchor.is_none_or(|x| !side.contains(&x));
+    let ok = |side: &Vec<usize>| !side.iter().any(|x| pinned.contains(x));
     let mut options = Vec::new();
     if ok(&side_b) {
         options.push((a, side_b));
@@ -350,10 +361,22 @@ pub fn rotate_bond(
     degrees: f64,
     anchor: Option<usize>,
 ) -> Result<Vec<Vec3>, EditError> {
+    rotate_bond_avoiding(coords, graph, b, c, degrees, anchor.as_slice())
+}
+
+/// [`rotate_bond`] keeping every atom of `pinned` still (see [`moving_side_avoiding`]).
+pub fn rotate_bond_avoiding(
+    coords: &[Vec3],
+    graph: &Graph,
+    b: usize,
+    c: usize,
+    degrees: f64,
+    pinned: &[usize],
+) -> Result<Vec<Vec3>, EditError> {
     if !degrees.is_finite() {
         return Err(EditError::BadTarget);
     }
-    let (pivot, moving) = moving_side(graph, b, c, anchor)?;
+    let (pivot, moving) = moving_side_avoiding(graph, b, c, pinned)?;
     let axis = unit(sub(coords[c], coords[b])).ok_or(EditError::Degenerate)?;
     let radians = if pivot == b { degrees } else { -degrees }.to_radians();
     let mut out = coords.to_vec();
@@ -369,6 +392,17 @@ pub fn set_dihedral(
     degrees: f64,
     anchor: Option<usize>,
 ) -> Result<Vec<Vec3>, EditError> {
+    set_dihedral_avoiding(coords, graph, atoms, degrees, anchor.as_slice())
+}
+
+/// [`set_dihedral`] keeping every atom of `pinned` still.
+pub fn set_dihedral_avoiding(
+    coords: &[Vec3],
+    graph: &Graph,
+    atoms: [usize; 4],
+    degrees: f64,
+    pinned: &[usize],
+) -> Result<Vec<Vec3>, EditError> {
     if !graph.is_chain(&atoms) {
         return Err(EditError::NotBonded);
     }
@@ -377,7 +411,7 @@ pub fn set_dihedral(
     }
     let [a, b, c, d] = atoms;
     let current = dihedral(coords[a], coords[b], coords[c], coords[d]);
-    rotate_bond(coords, graph, b, c, wrap_degrees(degrees - current), anchor)
+    rotate_bond_avoiding(coords, graph, b, c, wrap_degrees(degrees - current), pinned)
 }
 
 /// Set the a–b bond length to `length` Å by sliding one side along the bond.
@@ -389,10 +423,22 @@ pub fn set_bond_length(
     length: f64,
     anchor: Option<usize>,
 ) -> Result<Vec<Vec3>, EditError> {
+    set_bond_length_avoiding(coords, graph, a, b, length, anchor.as_slice())
+}
+
+/// [`set_bond_length`] keeping every atom of `pinned` still.
+pub fn set_bond_length_avoiding(
+    coords: &[Vec3],
+    graph: &Graph,
+    a: usize,
+    b: usize,
+    length: f64,
+    pinned: &[usize],
+) -> Result<Vec<Vec3>, EditError> {
     if !(length.is_finite() && length > 0.0) {
         return Err(EditError::BadTarget);
     }
-    let (pivot, moving) = moving_side(graph, a, b, anchor)?;
+    let (pivot, moving) = moving_side_avoiding(graph, a, b, pinned)?;
     let end = if pivot == a { b } else { a };
     let dir = unit(sub(coords[end], coords[pivot])).ok_or(EditError::Degenerate)?;
     let shift = scale(dir, length - distance(coords[a], coords[b]));
@@ -412,17 +458,23 @@ pub fn set_angle(
     degrees: f64,
     anchor: Option<usize>,
 ) -> Result<Vec<Vec3>, EditError> {
+    set_angle_avoiding(coords, graph, atoms, degrees, anchor.as_slice())
+}
+
+/// For the angle a–b–c (a chain), the arm that swings: of the c arm (bond b–c) and the a arm
+/// (bond b–a), the smaller one that is not in a ring and holds none of `pinned`. Returns
+/// `(end, moving)`: the arm's end atom and the atoms on its side, that end included.
+pub fn swinging_arm(
+    graph: &Graph,
+    atoms: [usize; 3],
+    pinned: &[usize],
+) -> Result<(usize, Vec<usize>), EditError> {
     if !graph.is_chain(&atoms) {
         return Err(EditError::NotBonded);
     }
-    if !(degrees.is_finite() && (0.0..=180.0).contains(&degrees)) {
-        return Err(EditError::BadTarget);
-    }
     let [a, b, c] = atoms;
-    // Either arm can swing: the c arm (bond b–c) or the a arm (bond b–a). Prefer the smaller
-    // one that does not hold the anchor and is not in a ring.
     let arm = |end: usize| graph.side(b, end).filter(|s| !s.contains(&b));
-    let fits = |side: &Vec<usize>| anchor.is_none_or(|x| !side.contains(&x));
+    let fits = |side: &Vec<usize>| !side.iter().any(|x| pinned.contains(x));
     let mut options: Vec<(usize, Vec<usize>)> = [c, a]
         .into_iter()
         .filter_map(|end| arm(end).map(|s| (end, s)))
@@ -431,10 +483,28 @@ pub fn set_angle(
         return Err(EditError::InRing);
     }
     options.retain(|(_, s)| fits(s));
-    let (end, moving) = options
+    options
         .into_iter()
         .min_by_key(|(_, s)| s.len())
-        .ok_or(EditError::AnchorBlocks)?;
+        .ok_or(EditError::AnchorBlocks)
+}
+
+/// [`set_angle`] keeping every atom of `pinned` still (see [`swinging_arm`]).
+pub fn set_angle_avoiding(
+    coords: &[Vec3],
+    graph: &Graph,
+    atoms: [usize; 3],
+    degrees: f64,
+    pinned: &[usize],
+) -> Result<Vec<Vec3>, EditError> {
+    if !graph.is_chain(&atoms) {
+        return Err(EditError::NotBonded);
+    }
+    if !(degrees.is_finite() && (0.0..=180.0).contains(&degrees)) {
+        return Err(EditError::BadTarget);
+    }
+    let [a, b, c] = atoms;
+    let (end, moving) = swinging_arm(graph, atoms, pinned)?;
     let other = if end == c { a } else { c };
 
     let u = sub(coords[other], coords[b]);
@@ -878,6 +948,42 @@ mod tests {
                 assert!(same_point(out[x], coords[x]), "the anchor moved");
             }
         }
+    }
+
+    /// Several pinned atoms: the side holding none moves, even the larger one; with pinned
+    /// atoms on both sides nothing can.
+    #[test]
+    fn the_side_without_pinned_atoms_moves() {
+        let (coords, graph) = butane();
+        // C2–C3 with C3's hydrogen (5) and C0's (4) pinned: no side is free.
+        assert_eq!(
+            moving_side_avoiding(&graph, 2, 3, &[5, 4]),
+            Err(EditError::AnchorBlocks)
+        );
+        assert_eq!(
+            set_dihedral_avoiding(&coords, &graph, [0, 1, 2, 3], 60.0, &[5, 4]),
+            Err(EditError::AnchorBlocks)
+        );
+        // Pinning only atoms of the smaller side moves the larger one.
+        let out = set_bond_length_avoiding(&coords, &graph, 2, 3, 1.7, &[3, 5]).unwrap();
+        assert!(close(distance(out[2], out[3]), 1.7, 1e-9));
+        assert!(same_point(out[3], coords[3]) && same_point(out[5], coords[5]));
+        let out = set_dihedral_avoiding(&coords, &graph, [0, 1, 2, 3], -75.0, &[3, 5]).unwrap();
+        assert!(close(dihedral(out[0], out[1], out[2], out[3]), -75.0, 1e-9));
+        assert!(same_point(out[3], coords[3]) && same_point(out[5], coords[5]));
+        // An angle swings the arm holding no pinned atom; both arms pinned blocks it.
+        let out = set_angle_avoiding(&coords, &graph, [1, 2, 3], 100.0, &[3]).unwrap();
+        assert!(close(angle(out[1], out[2], out[3]), 100.0, 1e-6));
+        assert!(same_point(out[3], coords[3]) && same_point(out[2], coords[2]));
+        assert_eq!(
+            swinging_arm(&graph, [1, 2, 3], &[0, 5]),
+            Err(EditError::AnchorBlocks)
+        );
+        // No pins: the same as no anchor.
+        assert_eq!(
+            moving_side_avoiding(&graph, 2, 3, &[]),
+            moving_side(&graph, 2, 3, None)
+        );
     }
 
     #[test]

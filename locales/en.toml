@@ -604,7 +604,8 @@ section_model = "Model"
 section_edit = "Edit"
 section_export = "Export"
 # How the 3D model is drawn: small spheres joined by sticks, cheap to render.
-style_light = "Spheres (light)"
+style_ball_and_stick = "Ball-and-stick"
+style_spheres = "Spheres"
 style_wireframe = "Wireframe"
 # Toggle button: show a number label on each atom.
 atom_numbers = "Atom numbers"
@@ -1153,6 +1154,9 @@ no_operations = "There are no symmetry operations (at least x,y,z is needed)"
 no_identity = "Include the identity operation x,y,z"
 
 [scan.window]
+color_auto = "Auto"
+color_min = "Min"
+color_max = "Max"
 # Title of the parameter scan window.
 title = "Parameter scan"
 no_document = "No document is open"
@@ -1196,6 +1200,30 @@ minimum = "Minimum: E = {energy} {unit} at {values}"
 plot_help = "Click a point (cell) to apply its parameter values to the structure (undoable). Scroll to zoom, drag to pan, double-click to reset the view"
 # Joins "parameter = value" items in a list (note the space after the comma).
 values_separator = ", "
+# Checkbox: minimise everything but the scanned parameters at every point (a relaxed scan).
+relax = "Relax the other degrees of freedom"
+relax_tip = "At every point, hold the scanned parameters (and the restraints set in the 3D view) and optimize everything else, then take the energy of the optimized structure. Each point starts from its neighbor's optimized structure. Much slower than a single-point scan"
+relax_assembly_tip = "Relaxing is available for the 3D model's bond lengths, angles and dihedrals only, not for the assembly"
+# Replaces "summary" when relaxing; {total}: number of grid points; {atoms}: number of atoms; {unit}: energy unit.
+summary_relaxed = "Points: {total} · atoms: {atoms} · optimized at each point with the scanned parameters held ({unit})"
+relax_model_only = "Only a scan of the 3D model can be relaxed"
+# {atoms}: atoms in the structure; {max}: the most a relaxed scan accepts.
+relax_too_many_atoms = "Too many atoms to relax ({atoms}). A relaxed scan takes at most {max} atoms"
+# {points}: grid points asked for; {max}: the most a relaxed scan accepts.
+relax_too_many_points = "Too many points to relax ({points}). A relaxed scan takes at most {max} points"
+relax_conflict = "OpenBabel cannot hold a bond angle and a dihedral together while optimizing (the dihedral would not be held). Scan or restrain only one of them"
+# Shown when some relaxed points ran out of optimization steps before converging.
+unconverged_points = { one = "{n} point did not converge within the optimization steps (ringed in the plot)", other = "{n} points did not converge within the optimization steps (ringed in the plot)" }
+# Tooltip line of a point whose optimization did not converge.
+unconverged = "Not converged (optimization ran out of steps)"
+# {param}: the scanned parameter's name. Shown when atoms fixed in the 3D view are on both sides of it.
+relax_fixed_both_sides = "Atoms fixed in the 3D view are on both sides of {param}, so it cannot be set without moving one of them. Unfix the atoms on one side to relax this scan"
+# {points}: grid points; {atoms}: atoms; {low}–{high}: the estimated time; {max}: the most points a relaxed scan of this size takes.
+relax_too_much_work = "Too long to relax: {points} points of {atoms} atoms would take about {low}–{high}. At this size a relaxed scan takes at most {max} points"
+# Before a relaxed scan starts. {low}–{high}: the estimated time.
+relax_estimate = "Estimated time: {low}–{high}"
+# Replaces relax_estimate for a long relaxed scan. {cancel}: how long Cancel can take to stop it.
+relax_long = "Long run: estimated {low}–{high}. It runs in the background; Cancel stops it within about {cancel} and keeps the points done"
 
 [scan.progress]
 # Progress bar text; {elapsed} is a duration such as "12.3 s".

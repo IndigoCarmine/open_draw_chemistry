@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use chembuider_rs::config::{FragmentDef, StyleConfig};
-use chembuider_rs::widget::SCALE_FACTOR;
 use chembuider_rs::widget::scene::{MoleculeScene, RenderTransform};
+use chembuider_rs::widget::{DEFAULT_BOND_LENGTH, SCALE_FACTOR};
 use egui::{Color32, Rect, Stroke, vec2};
 
 use crate::fragments::{Entry, Source, check_name};
@@ -48,7 +48,7 @@ pub struct ManagerContext<'a> {
     pub dir: Option<&'a std::path::Path>,
 }
 
-const THUMB: egui::Vec2 = egui::vec2(72.0, 44.0);
+const THUMB: egui::Vec2 = egui::vec2(140.0, 88.0);
 
 impl FragmentManager {
     /// Report the outcome of the action the window last returned.
@@ -70,7 +70,7 @@ impl FragmentManager {
         let mut open = self.open;
         egui::Window::new(t!("fragments.manager.title"))
             .open(&mut open)
-            .default_size([460.0, 560.0])
+            .default_size([620.0, 640.0])
             .resizable(true)
             .show(ctx, |ui| action = self.contents(ui, cx));
         self.open = open;
@@ -253,6 +253,33 @@ impl FragmentManager {
     }
 }
 
+fn thumbnail_transform(
+    rect: Rect,
+    min: [f32; 2],
+    max: [f32; 2],
+    style: &StyleConfig,
+) -> RenderTransform {
+    let inner = rect.shrink(9.0);
+    let span = vec2((max[0] - min[0]).max(1e-3), (max[1] - min[1]).max(1e-3));
+    // At most the canvas's own scale at 40 % zoom: a lone atom is not blown up.
+    let coord_scale = (inner.width() / span.x)
+        .min(inner.height() / span.y)
+        .min(SCALE_FACTOR * 0.4);
+    // Scene labels use label_size * visual_scale; bonds use molecule units * coord_scale.
+    // Keep the readability floor only while a label fits within a standard bond.
+    let label_scale_limit = DEFAULT_BOND_LENGTH * coord_scale / style.label_size;
+    let readability_floor = 0.55_f32.min(label_scale_limit);
+    let visual_scale = (coord_scale / SCALE_FACTOR)
+        .max(readability_floor)
+        .min(label_scale_limit);
+    let mid = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0];
+    RenderTransform {
+        coord_scale,
+        offset: rect.center().to_vec2() - vec2(mid[0], mid[1]) * coord_scale,
+        visual_scale,
+    }
+}
+
 /// A small drawing of `def` in `rect`, laid out by chembuider-rs's scene builder (the same
 /// geometry as the canvas), with the attach atom ringed in orange.
 fn thumbnail(ui: &egui::Ui, rect: Rect, def: &FragmentDef, style: &StyleConfig) {
@@ -279,19 +306,7 @@ fn thumbnail(ui: &egui::Ui, rect: Rect, def: &FragmentDef, style: &StyleConfig) 
     else {
         return;
     };
-    let inner = rect.shrink(9.0);
-    let span = vec2((max[0] - min[0]).max(1e-3), (max[1] - min[1]).max(1e-3));
-    // At most the canvas's own scale at 40 % zoom: a lone atom is not blown up.
-    let coord_scale = (inner.width() / span.x)
-        .min(inner.height() / span.y)
-        .min(SCALE_FACTOR * 0.4);
-    let mid = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0];
-    let xf = RenderTransform {
-        coord_scale,
-        offset: rect.center().to_vec2() - vec2(mid[0], mid[1]) * coord_scale,
-        // Labels stay readable even when the structure is shrunk a lot.
-        visual_scale: (coord_scale / SCALE_FACTOR).max(0.55),
-    };
+    let xf = thumbnail_transform(rect, min, max, style);
     let scene = MoleculeScene::build(&mol, style, xf, |job| -> Arc<egui::Galley> {
         painter.layout_job(job)
     });
@@ -331,6 +346,71 @@ fn thumbnail(ui: &egui::Ui, rect: Rect, def: &FragmentDef, style: &StyleConfig) 
 mod tests {
     use super::*;
     use crate::fragments::FragmentStore;
+
+    fn builtin_bounds(name: &str) -> ([f32; 2], [f32; 2]) {
+        let dir = std::env::temp_dir().join(format!("odc-thumb-{}", std::process::id()));
+        let entries = FragmentStore::at(dir).entries();
+        let def = &entries
+            .iter()
+            .find(|entry| entry.def.name == name)
+            .unwrap_or_else(|| panic!("missing built-in {name}"))
+            .def;
+        let mol = def.to_fragment().to_molecule();
+        let mut min = mol.atoms[0].pos;
+        let mut max = min;
+        for atom in &mol.atoms {
+            for k in 0..2 {
+                min[k] = min[k].min(atom.pos[k]);
+                max[k] = max[k].max(atom.pos[k]);
+            }
+        }
+        (min, max)
+    }
+
+    #[test]
+    fn thumbnail_labels_do_not_exceed_bond_length() {
+        for name in ["Ph", "Boc", "CO2Me", "TMS"] {
+            let (min, max) = builtin_bounds(name);
+            for size in [THUMB, vec2(24.0, 24.0)] {
+                for label_size in [StyleConfig::default().label_size, 200.0] {
+                    let style = StyleConfig {
+                        label_size,
+                        ..StyleConfig::default()
+                    };
+                    let xf = thumbnail_transform(
+                        Rect::from_min_size(egui::Pos2::ZERO, size),
+                        min,
+                        max,
+                        &style,
+                    );
+                    let label_height = style.label_size * xf.visual_scale;
+                    let bond_length = DEFAULT_BOND_LENGTH * xf.coord_scale;
+                    assert!(
+                        label_height <= bond_length + 1e-5,
+                        "{name}: label {label_height} exceeds bond {bond_length}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn single_atom_thumbnail_does_not_enlarge_labels() {
+        let (min, max) = builtin_bounds("Me");
+        assert_eq!(min, max);
+        let old_inner = Rect::from_min_size(egui::Pos2::ZERO, vec2(72.0, 44.0)).shrink(9.0);
+        let old_coord_scale = (old_inner.width() / (max[0] - min[0]).max(1e-3))
+            .min(old_inner.height() / (max[1] - min[1]).max(1e-3))
+            .min(SCALE_FACTOR * 0.4);
+        let old_visual_scale = (old_coord_scale / SCALE_FACTOR).max(0.55);
+        let xf = thumbnail_transform(
+            Rect::from_min_size(egui::Pos2::ZERO, THUMB),
+            min,
+            max,
+            &StyleConfig::default(),
+        );
+        assert!(xf.visual_scale <= old_visual_scale);
+    }
 
     /// The window, with every built-in thumbnail, draws headlessly without panicking.
     #[test]

@@ -1217,9 +1217,9 @@ impl eframe::App for OpenDrawApp {
             // The drawing tools only act on the canvas, which the other views replace.
             if view.is_drawing() {
                 egui::Panel::left("palette")
-                    .frame(bar(visuals.panel_fill, 8, 10))
+                    .frame(bar(visuals.panel_fill, 0, 0).inner_margin(ui::palette::PALETTE_MARGIN))
                     .resizable(false)
-                    .exact_size(112.0)
+                    .exact_size(ui::palette::PALETTE_WIDTH)
                     .show(ui, |ui| {
                         ui::palette::palette(
                             ui,
@@ -1379,18 +1379,21 @@ mod tests {
         fn flush(&mut self) {}
     }
 
-    /// 3D styles that were dropped load as the light spheres; the state around them (and the
-    /// styles that remain) loads as saved.
+    /// Every 3D style name saved by an earlier version loads as the style that draws it now:
+    /// the old light style (ball-and-stick with small atoms) and ball-and-stick as
+    /// ball-and-stick, the sphere styles as spheres, an unknown name as the default. The state
+    /// around them loads as saved.
     #[test]
-    fn a_dropped_3d_style_loads_as_light_spheres() {
+    fn a_saved_3d_style_loads_as_the_style_that_draws_it() {
         use crate::ui::viewport3d::Style3d;
         for (saved, expected) in [
-            ("BallStick", Style3d::Light),
-            ("SpaceFilling", Style3d::Light),
-            ("Spheres", Style3d::Light),
-            ("SomethingNewer", Style3d::Light),
-            ("Light", Style3d::Light),
+            ("Light", Style3d::BallAndStick),
+            ("BallStick", Style3d::BallAndStick),
+            ("BallAndStick", Style3d::BallAndStick),
+            ("Spheres", Style3d::Spheres),
+            ("SpaceFilling", Style3d::Spheres),
             ("Wireframe", Style3d::Wireframe),
+            ("SomethingNewer", Style3d::default()),
         ] {
             let storage = SavedState(format!(
                 "(show_properties: false, view3d: (style: {saved}, numbers: true))"
@@ -1401,14 +1404,24 @@ mod tests {
             assert!(app.view3d.numbers, "{saved}");
             assert!(!app.show_properties, "{saved}");
         }
+        // The default looks as it did before: ball-and-stick.
+        assert_eq!(Style3d::default(), Style3d::BallAndStick);
+    }
 
-        // And the choice round-trips.
-        let mut storage = SavedState(String::new());
-        let mut app = OpenDrawApp::default();
-        app.view3d.style = Style3d::Wireframe;
-        eframe::set_value(&mut storage, eframe::APP_KEY, &app);
-        let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
-        assert_eq!(back.view3d.style, Style3d::Wireframe);
+    /// Each 3D style, in the 3D view and the assembly view, is saved and restored as chosen.
+    #[test]
+    fn the_3d_style_round_trips() {
+        use crate::ui::viewport3d::Style3d;
+        for style in Style3d::ALL {
+            let mut storage = SavedState(String::new());
+            let mut app = OpenDrawApp::default();
+            app.view3d.style = style;
+            app.assembly_view.style = style;
+            eframe::set_value(&mut storage, eframe::APP_KEY, &app);
+            let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+            assert_eq!(back.view3d.style, style);
+            assert_eq!(back.assembly_view.style, style);
+        }
     }
 
     /// A file holding one carbon atom, in a fresh directory.

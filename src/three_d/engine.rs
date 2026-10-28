@@ -151,7 +151,7 @@ pub fn energy(molfile: &str, force_field: ForceField) -> Result<f64, Error> {
 /// restraints (harmonic) still behave. Measured in chem_3d_builder_rs.
 const FORCE_FACTOR: f64 = 1.0e8;
 
-fn to_openbabel(constraints: &[Constraint], atoms: u32) -> Constraints {
+pub(super) fn to_openbabel(constraints: &[Constraint], atoms: u32) -> Constraints {
     let mut ob = Constraints::new();
     let n = atoms as usize;
     // Indices are checked against the molecule, so the casts below cannot truncate.
