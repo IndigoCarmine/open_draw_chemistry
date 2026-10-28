@@ -1038,3 +1038,15 @@ hbond_count = { one = "Legami a idrogeno: {n}{more}{pending}", other = "Legami a
 more_hbonds = { one = "Ancora {n}", other = "Altri {n}" }
 stack_count = { one = "Impilamento π: {n}{more}{pending}", other = "Impilamento π: {n}{more}{pending}" }
 more_stacks = { one = "Ancora {n}", other = "Altri {n}" }
+
+[assembly.measure]
+tool = "Misura"
+tool_tip = "Fai clic su atomi di qualsiasi molecola per misurare distanza, angolo o diedro tra di essi (M). Esc per terminare"
+prompt = "Fai clic sugli atomi: 2 per una distanza, 3 per un angolo, 4 per un diedro. Fai di nuovo clic su un atomo scelto per rilasciarlo"
+title = "Misura"
+atom = "{atom} (n. {n})"
+copy = "Copia"
+copy_tip = "Copia gli atomi e il valore"
+copied = "Misura copiata"
+clear = "Cancella"
+images_hidden = "Le immagini periodiche sono nascoste durante la misura"

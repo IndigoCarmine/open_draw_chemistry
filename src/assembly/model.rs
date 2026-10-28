@@ -459,6 +459,68 @@ pub struct Instance {
     pub transform: Rigid,
 }
 
+/// One molecule of the assembly named by where it comes from rather than by its place in the
+/// build, so the name still holds when molecules before it are removed or added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Origin {
+    /// A copy the steps make, by its index among all their copies (the excluded ones counted,
+    /// as [`Design::excluded`] names them). Detached into a hand-placed molecule, it is that
+    /// molecule.
+    Step(usize),
+    /// A hand-placed molecule, by its id in [`Design::manual`] (see [`Ids`]).
+    Manual(u64),
+}
+
+/// Ids that stay with the items of a list (the monomers, the hand-placed molecules) while
+/// items before them are removed — unlike their indices, which shift.
+///
+/// Items are named by their index until one is removed: an item past the assigned ids has
+/// the id `next + (its index - assigned.len())`, so appending an item (which the app may do
+/// to the list directly) changes no item's id. Removing one, through [`Ids::remove`], first
+/// gives every item its id for good. A design never edited that way, an old file's included,
+/// needs none stored. An id is never handed out twice within a design's history: `next` only
+/// grows.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ids {
+    /// The ids of the first items, in order.
+    assigned: Vec<u64>,
+    /// The id of the first item past them.
+    next: u64,
+}
+
+impl Ids {
+    fn is_unused(&self) -> bool {
+        self.assigned.is_empty() && self.next == 0
+    }
+
+    /// The id of item `k`.
+    pub fn id(&self, k: usize) -> u64 {
+        match k.checked_sub(self.assigned.len()) {
+            None => self.assigned[k],
+            Some(past) => self.next + past as u64,
+        }
+    }
+
+    /// The item with id `id` in a list of `len` items, if it is still there.
+    pub fn index(&self, id: u64, len: usize) -> Option<usize> {
+        let k = match self.assigned.iter().position(|&a| a == id) {
+            Some(k) => k,
+            None => self.assigned.len() + usize::try_from(id.checked_sub(self.next)?).ok()?,
+        };
+        (k < len).then_some(k)
+    }
+
+    /// Note that item `k` of a list of `len` is removed.
+    fn remove(&mut self, len: usize, k: usize) {
+        while self.assigned.len() < len {
+            self.assigned.push(self.next);
+            self.next += 1;
+        }
+        self.assigned.remove(k);
+    }
+}
+
 /// Everything that determines the assembly: what is saved, and what undo restores.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -474,6 +536,18 @@ pub struct Design {
     /// (counting the excluded ones), sorted. The index stays when the steps change, so it then
     /// names whichever copy has that place; indices past the steps' count are ignored.
     pub excluded: Vec<usize>,
+    /// The ids of [`Design::components`]. Remove a component with
+    /// [`Design::remove_component`] so they stay right.
+    #[serde(skip_serializing_if = "Ids::is_unused")]
+    pub component_ids: Ids,
+    /// The ids of [`Design::manual`]. Remove a hand-placed molecule with
+    /// [`Design::remove_molecule`] so they stay right.
+    #[serde(skip_serializing_if = "Ids::is_unused")]
+    pub manual_ids: Ids,
+    /// The hand-placed molecules detached from the steps ([`Design::detach`]): each one's id
+    /// and the step copy it was, by [`Design::excluded`]'s index.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub detached: Vec<(u64, usize)>,
 }
 
 impl Design {
@@ -685,28 +759,108 @@ impl Design {
         Some(copy)
     }
 
+    /// Which copy molecule `m` of the build is, by a name that survives the design changing
+    /// around it (see [`Origin`]). A molecule detached from the steps keeps the name of the
+    /// copy it was, so it is the same before and after [`Design::detach`] (and its undo).
+    pub fn origin_of(&self, m: usize) -> Option<Origin> {
+        if let Some(k) = self.manual_index(m) {
+            let id = self.manual_ids.id(k);
+            return Some(match self.detached.iter().find(|&&(d, _)| d == id) {
+                Some(&(_, copy)) => Origin::Step(copy),
+                None => Origin::Manual(id),
+            });
+        }
+        self.step_copy_index(m).map(Origin::Step)
+    }
+
+    /// The molecule of the build that `origin` is, if the design still makes it.
+    pub fn molecule_of(&self, origin: Origin) -> Option<usize> {
+        match origin {
+            Origin::Step(c) => {
+                if let Some(&(id, _)) = self.detached.iter().find(|&&(_, from)| from == c) {
+                    return self.molecule_of(Origin::Manual(id));
+                }
+                if c >= self.all_step_copies() || self.excluded.binary_search(&c).is_ok() {
+                    return None;
+                }
+                Some(c - self.excluded.iter().take_while(|&&e| e < c).count())
+            }
+            Origin::Manual(id) => self
+                .manual_ids
+                .index(id, self.manual.len())
+                .map(|k| self.manual_molecule(k)),
+        }
+    }
+
+    /// The id of component `i` (see [`Ids`]).
+    pub fn component_id(&self, i: usize) -> u64 {
+        self.component_ids.id(i)
+    }
+
+    /// The component with id `id`, if the design still has it.
+    pub fn component_index(&self, id: u64) -> Option<usize> {
+        self.component_ids.index(id, self.components.len())
+    }
+
     /// Turn molecule `m`, made by the steps, into a hand-placed one where it is, so it can be
-    /// moved on its own: the steps leave it out and [`Design::manual`] gains it. Returns its
-    /// new molecule index, or `None` when `m` is not a step's molecule.
+    /// moved on its own: the steps leave it out and [`Design::manual`] gains it, remembering
+    /// which copy it was (so [`Origin::Step`] still finds it). Returns its new molecule index,
+    /// or `None` when `m` is not a step's molecule.
     pub fn detach(&mut self, m: usize) -> Option<usize> {
         let copy = self.step_copy_index(m)?;
         let instance = self.step_copies().swap_remove(copy);
         self.exclude(copy);
         self.manual.push(instance);
-        Some(self.manual_molecule(self.manual.len() - 1))
+        let k = self.manual.len() - 1;
+        self.detached.push((self.manual_ids.id(k), copy));
+        Some(self.manual_molecule(k))
     }
 
     /// Remove molecule `m`: a hand-placed one is deleted, a step's is left out of the steps.
     /// Returns whether there was such a molecule.
     pub fn remove_molecule(&mut self, m: usize) -> bool {
         if let Some(k) = self.manual_index(m) {
-            self.manual.remove(k);
+            self.remove_manual(k);
             true
         } else if let Some(copy) = self.step_copy_index(m) {
             self.exclude(copy);
             true
         } else {
             false
+        }
+    }
+
+    /// Delete hand-placed molecule `k`.
+    fn remove_manual(&mut self, k: usize) {
+        let id = self.manual_ids.id(k);
+        self.manual_ids.remove(self.manual.len(), k);
+        self.manual.remove(k);
+        self.detached.retain(|&(d, _)| d != id);
+    }
+
+    /// Remove component `i` and the hand-placed molecules of it. When it is the base, the
+    /// steps copy the one before it (or the next, for the first).
+    pub fn remove_component(&mut self, i: usize) {
+        if i >= self.components.len() {
+            return;
+        }
+        self.component_ids.remove(self.components.len(), i);
+        self.components.remove(i);
+        let mut k = 0;
+        while k < self.manual.len() {
+            if self.manual[k].component == i {
+                self.remove_manual(k);
+            } else {
+                k += 1;
+            }
+        }
+        for m in &mut self.manual {
+            if m.component > i {
+                m.component -= 1;
+            }
+        }
+        if self.base > i || self.base >= self.components.len() {
+            self.base = self.base.saturating_sub(1);
         }
     }
 
@@ -743,6 +897,10 @@ pub struct AssemblyState {
     /// Tells this state apart from every other in the process (a viewer showing several
     /// documents' assemblies in turn keys on it).
     id: u64,
+    /// Which design is open: changed by [`AssemblyState::replace`] and kept by every edit, so
+    /// the designs sharing it are one design's history, in which an item's id
+    /// ([`Ids`]) always names the same item. Unique in the process.
+    lineage: u64,
     pub design: Design,
     /// The molecule selected in the viewer, as an index into the build's molecules.
     pub selected: Option<usize>,
@@ -750,11 +908,18 @@ pub struct AssemblyState {
     committed: Design,
     /// The design has changed since [`AssemblyState::committed`].
     pending: bool,
-    undo: Vec<Design>,
-    redo: Vec<Design>,
+    /// The designs undo and redo restore, each with its lineage.
+    undo: Vec<(Design, u64)>,
+    redo: Vec<(Design, u64)>,
     revision: u64,
     /// The last build and the revision it was made at (see [`super::build`]).
     pub(super) cache: Option<super::build::Cached>,
+}
+
+/// A lineage no state has had (see [`AssemblyState::lineage`]).
+fn new_lineage() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Default for AssemblyState {
@@ -769,6 +934,7 @@ impl AssemblyState {
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
             id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            lineage: new_lineage(),
             committed: design.clone(),
             design,
             selected: None,
@@ -783,6 +949,13 @@ impl AssemblyState {
     /// Unique to this state.
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Which design is open (see [`AssemblyState::lineage`]): what refers to the design's items
+    /// by id, such as the atoms picked to measure, holds only while it is the same. Undo and
+    /// redo across an opened file bring back the lineage of the design they restore.
+    pub fn lineage(&self) -> u64 {
+        self.lineage
     }
 
     /// Changes with every change to the design.
@@ -802,7 +975,7 @@ impl AssemblyState {
             return;
         }
         let previous = std::mem::replace(&mut self.committed, self.design.clone());
-        self.undo.push(previous);
+        self.undo.push((previous, self.lineage));
         if self.undo.len() > HISTORY_LIMIT {
             self.undo.remove(0);
         }
@@ -829,11 +1002,12 @@ impl AssemblyState {
     /// Go back one step. Returns whether there was one.
     pub fn undo(&mut self) -> bool {
         self.settle();
-        let Some(previous) = self.undo.pop() else {
+        let Some((previous, lineage)) = self.undo.pop() else {
             return false;
         };
         let current = std::mem::replace(&mut self.design, previous);
-        self.redo.push(current);
+        self.redo
+            .push((current, std::mem::replace(&mut self.lineage, lineage)));
         self.committed = self.design.clone();
         self.revision += 1;
         true
@@ -841,19 +1015,22 @@ impl AssemblyState {
 
     pub fn redo(&mut self) -> bool {
         self.settle();
-        let Some(next) = self.redo.pop() else {
+        let Some((next, lineage)) = self.redo.pop() else {
             return false;
         };
         let current = std::mem::replace(&mut self.design, next);
-        self.undo.push(current);
+        self.undo
+            .push((current, std::mem::replace(&mut self.lineage, lineage)));
         self.committed = self.design.clone();
         self.revision += 1;
         true
     }
 
-    /// Replace the design (an opened file) as one undo step.
+    /// Replace the design (an opened file) as one undo step. The new design is another
+    /// lineage: its ids are its own, not the replaced design's.
     pub fn replace(&mut self, design: Design) {
         self.edit(|d| *d = design);
+        self.lineage = new_lineage();
         self.selected = None;
     }
 
@@ -1004,6 +1181,7 @@ mod tests {
             steps: vec![Step::new_ring(), Step::new_stack()],
             manual: Vec::new(),
             excluded: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -1113,6 +1291,30 @@ mod tests {
         }
         assert_eq!(d.step_molecule_count(), 1);
         assert_eq!(d.instances().len(), 1 + d.manual.len());
+    }
+
+    #[test]
+    fn opening_a_file_starts_another_lineage_that_undo_and_redo_cross() {
+        let mut state = AssemblyState::with_design(design_with_two_steps());
+        let first = state.lineage();
+        state.edit(|d| d.steps.pop());
+        assert_eq!(state.lineage(), first, "an edit is the same design");
+        state.replace(design_with_two_steps());
+        let opened = state.lineage();
+        assert_ne!(opened, first);
+        assert!(state.undo());
+        assert_eq!(state.lineage(), first);
+        assert!(state.undo());
+        assert_eq!(state.lineage(), first);
+        assert!(state.redo() && state.redo());
+        assert_eq!(state.lineage(), opened);
+        // Opening the same design again is still another.
+        state.replace(design_with_two_steps());
+        assert_ne!(state.lineage(), opened);
+        assert_ne!(
+            AssemblyState::with_design(design_with_two_steps()).lineage(),
+            state.lineage()
+        );
     }
 
     #[test]

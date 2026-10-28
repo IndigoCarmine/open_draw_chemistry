@@ -1035,3 +1035,15 @@ hbond_count = { one = "Wasserstoffbrücken: {n}{more}{pending}", other = "Wasser
 more_hbonds = { one = "{n} weitere", other = "{n} weitere" }
 stack_count = { one = "π-Stapelung: {n}{more}{pending}", other = "π-Stapelung: {n}{more}{pending}" }
 more_stacks = { one = "{n} weitere", other = "{n} weitere" }
+
+[assembly.measure]
+tool = "Messen"
+tool_tip = "Atome beliebiger Moleküle anklicken, um Abstand, Winkel oder Diederwinkel zwischen ihnen zu messen (M). Esc beendet"
+prompt = "Atome anklicken: 2 für einen Abstand, 3 für einen Winkel, 4 für einen Diederwinkel. Ein gewähltes Atom erneut anklicken, um es abzuwählen"
+title = "Messung"
+atom = "{atom} (Nr. {n})"
+copy = "Kopieren"
+copy_tip = "Atome und Wert kopieren"
+copied = "Messwert kopiert"
+clear = "Leeren"
+images_hidden = "Periodische Bilder sind beim Messen ausgeblendet"
