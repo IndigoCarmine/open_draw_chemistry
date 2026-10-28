@@ -388,7 +388,7 @@ pub fn palette(
                         let response = icons::icon_button_with_glyph(
                             ui,
                             icon,
-                            (cell, BASE_ICON_SIZE * PALETTE_SCALE),
+                            (cell, (BASE_ICON_SIZE * PALETTE_SCALE).round()),
                             Frame::Tile,
                             selected,
                             !planned,
@@ -550,16 +550,16 @@ mod tests {
         let mut targets = Vec::new();
         for clipped in &output.shapes {
             let bounds = clipped.shape.visual_bounding_rect();
-            if let egui::epaint::Shape::Rect(rect) = &clipped.shape {
-                if (rect.rect.height() - CELL_HEIGHT).abs() < 1.0 {
-                    cells.push(rect.rect);
-                    targets.push(rect.rect);
-                }
+            if let egui::epaint::Shape::Rect(rect) = &clipped.shape
+                && (rect.rect.height() - CELL_HEIGHT).abs() < 1.0
+            {
+                cells.push(rect.rect);
+                targets.push(rect.rect);
             }
-            if let egui::epaint::Shape::Rect(rect) = &clipped.shape {
-                if (rect.rect.height() - BUTTON_HEIGHT).abs() < 1.0 {
-                    targets.push(rect.rect);
-                }
+            if let egui::epaint::Shape::Rect(rect) = &clipped.shape
+                && (rect.rect.height() - BUTTON_HEIGHT).abs() < 1.0
+            {
+                targets.push(rect.rect);
             }
             if bounds.is_positive() {
                 assert!(
