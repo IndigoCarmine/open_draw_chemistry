@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # Download the prebuilt OpenBabel that openbabel-sys links against, so building this app
-# needs neither CMake nor the 10–20 minute OpenBabel source build.
+# needs neither CMake nor the 10–20 minute OpenBabel source build. OpenBabel is required:
+# without it the app does not build.
 #
-# The archive is unpacked into third_party/openbabel-prebuilt/, which .cargo/config.toml
-# hands to openbabel-sys through OPENBABEL_SYS_PREBUILT_DIR. Run it once after cloning (and
-# again after bumping openbabel_rs); CI runs it before every build.
+#   scripts/fetch-openbabel.sh                    # the host's target, into third_party/openbabel-prebuilt
+#   scripts/fetch-openbabel.sh <triple>           # another target, into third_party/openbabel-prebuilt-<triple>
+#   scripts/fetch-openbabel.sh <triple> <dir>     # another target, into <dir>
 #
-#   scripts/fetch-openbabel.sh            # the host's target
-#   scripts/fetch-openbabel.sh <triple>   # another target (cross-compiling)
+# The host's archive lands in third_party/openbabel-prebuilt/, which .cargo/config.toml hands
+# to openbabel-sys through OPENBABEL_SYS_PREBUILT_DIR. Any other target gets a directory of its
+# own, so that several can sit side by side (the macOS release builds x86_64 and aarch64 one
+# after the other); point OPENBABEL_SYS_PREBUILT_DIR at it for that `cargo build --target`.
+# Run it once after cloning (and again after bumping openbabel_rs); CI runs it before every build.
 #
-# Prebuilts exist for x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu and
-# aarch64-apple-darwin. On any other target this script says so and exits 0 without
-# unpacking anything; build there with `--no-default-features` (no 3D generation) or install
-# CMake and let openbabel-sys build OpenBabel from source (see README).
+# Prebuilts exist for x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-apple-darwin and
+# x86_64-apple-darwin. On any other target, install CMake and let openbabel-sys build OpenBabel
+# from source (with OPENBABEL_SYS_PREBUILT_DIR set to an empty value; see README).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-dest="$root/third_party/openbabel-prebuilt"
 repo="IndigoCarmine/openbabel_rs"
 
 # The archive must come from the very openbabel-sys being built (its build script checks), so
@@ -27,16 +29,24 @@ if [ -z "$tag" ]; then
   exit 1
 fi
 
-triple="${1:-$(rustc -vV | sed -n 's/^host: //p')}"
+host="$(rustc -vV | sed -n 's/^host: //p')"
+triple="${1:-$host}"
+if [ -n "${2:-}" ]; then
+  dest="$2"
+elif [ "$triple" = "$host" ]; then
+  dest="$root/third_party/openbabel-prebuilt"
+else
+  dest="$root/third_party/openbabel-prebuilt-$triple"
+fi
 archive="openbabel-sys-$triple.tar.gz"
 
 case "$triple" in
-  x86_64-pc-windows-msvc | x86_64-unknown-linux-gnu | aarch64-apple-darwin) ;;
+  x86_64-pc-windows-msvc | x86_64-unknown-linux-gnu | aarch64-apple-darwin | x86_64-apple-darwin) ;;
   *)
-    echo "warning: openbabel_rs $tag has no prebuilt for $triple." >&2
-    echo "         Build with --no-default-features, or install CMake to build OpenBabel from source" >&2
-    echo "         (and unset OPENBABEL_SYS_PREBUILT_DIR)." >&2
-    exit 0
+    echo "error: openbabel_rs $tag has no prebuilt for $triple." >&2
+    echo "       Install CMake and build OpenBabel from source instead:" >&2
+    echo "       OPENBABEL_SYS_PREBUILT_DIR= cargo build" >&2
+    exit 1
     ;;
 esac
 

@@ -42,6 +42,9 @@ fn native_options() -> eframe::NativeOptions {
 }
 
 fn main() -> eframe::Result<()> {
+    // First, while the process is single-threaded: where the installed OpenBabel is.
+    open_draw_chemistry::three_d::runtime::init();
+
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
     #[cfg(windows)]

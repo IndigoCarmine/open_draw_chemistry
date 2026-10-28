@@ -11,11 +11,11 @@ use egui_plot::{Heatmap, Line, MarkerShape, Plot, PlotPoint, PlotPoints, Points,
 use super::{Command, ViewMode};
 use crate::document::Document;
 use crate::scan::param::design_params;
-use crate::scan::run::{format_duration, unavailable_message};
+use crate::scan::run::format_duration;
 use crate::scan::source::{Point, Source};
 use crate::scan::{self, Axis, MAX_POINTS, Param, Run, Scan};
 use crate::theme;
-use crate::three_d::{self, ForceField, edit};
+use crate::three_d::{ForceField, edit};
 
 /// What a scan varies, following the view it is opened from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,9 +161,6 @@ fn body(
     out: &mut Vec<Command>,
 ) -> Option<String> {
     ui.spacing_mut().item_spacing.y = 6.0;
-    if !three_d::AVAILABLE {
-        ui.label(RichText::new(unavailable_message()).color(warn_color(ui)));
-    }
     let Some(doc) = doc else {
         ui.label(muted(ui, "文書が開かれていません"));
         return None;
@@ -359,7 +356,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     }
 
     ui.horizontal(|ui| {
-        let ready = three_d::AVAILABLE && axes.len() == wanted && !same && !too_large;
+        let ready = axes.len() == wanted && !same && !too_large;
         if running {
             if ui.button("キャンセル").clicked()
                 && let Some(run) = &mut doc.scan
@@ -368,11 +365,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
             }
         } else if ui
             .add_enabled(ready, egui::Button::new("スキャン開始"))
-            .on_disabled_hover_text(if three_d::AVAILABLE {
-                "スキャンするパラメータを選んでください"
-            } else {
-                unavailable_message()
-            })
+            .on_disabled_hover_text("スキャンするパラメータを選んでください")
             .clicked()
         {
             start(win, doc, target, &axes, force_field);
@@ -980,7 +973,7 @@ fn format_energy(v: f64) -> String {
 mod tests {
     use super::*;
     use crate::scan::ScanAxis;
-    use crate::three_d::{Atom3d, Bond3d, Model3d};
+    use crate::three_d::{self, Atom3d, Bond3d, Model3d};
 
     fn chain_model() -> Model3d {
         let pos = [
@@ -1122,7 +1115,7 @@ mod tests {
     }
 
     #[test]
-    fn without_a_view_or_openbabel_the_window_says_so() {
+    fn without_a_view_the_window_says_so() {
         let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
         let mut win = ScanWindow {
             open: true,
@@ -1130,11 +1123,6 @@ mod tests {
         };
         let text = frame(&mut win, &mut doc, ViewMode::TwoD, false);
         assert!(text.contains("3D 表示"), "{text}");
-        assert_eq!(
-            text.contains("OpenBabel が必要です"),
-            !three_d::AVAILABLE,
-            "{text}"
-        );
         let text = frame(&mut win, &mut doc, ViewMode::ThreeD, false);
         assert!(text.contains("3D モデルがありません"), "{text}");
     }

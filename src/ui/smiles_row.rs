@@ -96,9 +96,6 @@ pub fn show(ui: &mut egui::Ui, mol: &Molecule, selection: &HashSet<u32>, config:
                         ui.weak(format!("コピーしました: {copied}"));
                     }
                 }
-                Some(Err(reason)) if reason == smiles::NEEDS_OPENBABEL => {
-                    ui.weak(reason);
-                }
                 Some(Err(reason)) => {
                     ui.weak(format!("— (未対応: {reason})"));
                 }

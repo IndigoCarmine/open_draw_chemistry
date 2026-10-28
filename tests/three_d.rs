@@ -1,6 +1,5 @@
 //! 2D → 3D through OpenBabel: drawn and ChemDraw-made structures come out as sane 3D models,
 //! and a model survives being exported and read back.
-#![cfg(feature = "openbabel")]
 
 use std::path::Path;
 

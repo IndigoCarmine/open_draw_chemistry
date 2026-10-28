@@ -34,9 +34,11 @@ moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_r
 # The viewer's vector types, needed to drive its camera and renderer directly.
 lin_alg = { version = "1.4.3", features = ["computer_graphics"] }
 
-# 2D → 3D generation and force-field optimisation (see `src/three_d/`). Behind the `openbabel`
-# feature because it needs a prebuilt OpenBabel (`scripts/fetch-openbabel.sh`) or CMake.
-openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.3", optional = true }
+# 2D → 3D generation, force-field optimisation, SMILES and 3D file reading (see `src/three_d/`).
+# Required: openbabel-sys links the prebuilt OpenBabel that `scripts/fetch-openbabel.sh`
+# downloads (or builds OpenBabel from source with CMake). Every release ships its libraries,
+# plugins and data beside the executable (see .github/workflows/release.yml).
+openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.4" }
 
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -70,12 +72,6 @@ windows-core = "0.62.2"
 [patch.crates-io]
 winit = { git = "https://github.com/IndigoCarmine/winit", branch = "wayland-native-dnd" }
 egui-winit = { git = "https://github.com/IndigoCarmine/egui-winit", branch = "main" }
-
-[features]
-default = ["openbabel"]
-# 3D generation through OpenBabel. Without it the app builds anywhere and the 3D panel says that
-# generation is unavailable (the macOS x86_64 release slice, which has no prebuilt OpenBabel).
-openbabel = ["dep:openbabel"]
 
 [build-dependencies]
 winresource = "0.1.34"
