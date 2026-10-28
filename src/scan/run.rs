@@ -60,7 +60,9 @@ pub struct Progress {
 pub struct Relax {
     /// Restraints kept at every point besides the scanned parameters — those set in the 3D
     /// view (fixed atoms, held lengths…). One over the same atoms as a scanned parameter gives
-    /// way to the scanned value.
+    /// way to the scanned value. Of the 3D model only: a scan of the assembly holds its
+    /// molecules' centroids and orientations instead (see [`super::source::Placed`]) and leaves
+    /// these out.
     pub constraints: Vec<Constraint>,
     /// The most minimiser steps per point; a point still moving after them is unconverged.
     pub steps: u32,
@@ -177,34 +179,49 @@ impl Run {
         Ok(Self::spawn(source, axes, force_field, work))
     }
 
-    /// Start a relaxed scan of the 3D model: at every point the scanned parameters are set
-    /// and held while everything else is minimised under `relax`, and the energy is that of
-    /// the minimised structure. Each point starts from its neighbour's minimised structure:
-    /// one step back along the last axis it is not at the start of ([`previous_neighbour`] —
-    /// the previous point, else the first of the previous row, of the previous slab…).
+    /// Start a relaxed scan: at every point the scanned parameters are set and held while
+    /// everything else is minimised under `relax`, and the energy is that of the minimised
+    /// structure. Each point starts from its neighbour's minimised structure: one step back
+    /// along the last axis it is not at the start of ([`previous_neighbour`] — the previous
+    /// point, else the first of the previous row, of the previous slab…).
     ///
-    /// The atoms fixed in `relax` stay where they were when the scan started at every point:
-    /// each parameter is set by moving a side that holds none of them (the anchor's side too
-    /// when there is no other, the minimiser moving the anchor anyway), so a scan whose fixed
-    /// atoms sit on both sides of a parameter — which only the minimiser could reach, if at
-    /// all — is refused, as are a source other than the model, a scan beyond
-    /// [`super::relax_refusal`]'s limits and restraints OpenBabel cannot hold together.
+    /// Of the 3D model, the atoms fixed in `relax` stay where they were when the scan started
+    /// at every point: each parameter is set by moving a side that holds none of them (the
+    /// anchor's side too when there is no other, the minimiser moving the anchor anyway), so a
+    /// scan whose fixed atoms sit on both sides of a parameter — which only the minimiser could
+    /// reach, if at all — is refused, as are restraints OpenBabel cannot hold together.
+    ///
+    /// Of the assembly, every molecule keeps the place and orientation the design at the
+    /// point's values gives it — the centroid of its atoms and their best-fitting turn — while
+    /// its shape relaxes freely (see [`super::source::Placed`] and [`Evaluator::relax_held`]);
+    /// the neighbour's shapes are moved to the point's places to start from, and the point is
+    /// relaxed from its rigid structure as well when that start does not end converged at most
+    /// as high as the rigid structure (see [`relax_placed`]), so no point's energy is above the
+    /// rigid scan's. A point whose atoms differ from the start's (see [`Point::Rebuilt`]) has
+    /// no neighbour of the same atoms: it is relaxed on its own from its rigid structure, on a
+    /// molecule read for it.
+    ///
+    /// Either is refused beyond [`super::relax_refusal`]'s limits, taken at the most atoms any
+    /// point has ([`Source::most_atoms`]: an assembly's points can have more than its design).
     pub fn start_relaxed(
         source: Source,
         axes: &[Axis],
         force_field: ForceField,
         relax: Relax,
     ) -> Result<Run, String> {
-        if !matches!(source, Source::Model { .. }) {
-            return Err(t!("scan.window.relax_model_only").into());
-        }
         let total = total_points(axes);
-        if let Some(why) =
-            points_refusal(total).or_else(|| relax_refusal(source.atom_count(), total))
-        {
+        if let Some(why) = points_refusal(total) {
+            return Err(why);
+        }
+        // The points and the design's own atoms first: counting every point's atoms takes a
+        // while, more so for a grid far beyond a relaxed scan's.
+        if let Some(why) = relax_refusal(source.atom_count(), total) {
             return Err(why);
         }
         let points = grid(axes);
+        if let Some(why) = relax_refusal(source.most_atoms(&points), total) {
+            return Err(why);
+        }
         let params = source.params().to_vec();
         if let Some(values) = points.first()
             && edit::conflict(&relax.at(&params, values)).is_some()
@@ -217,20 +234,14 @@ impl Run {
         }
         let shape: Vec<usize> = axes.iter().map(Axis::count).collect();
         let work = move |source: &Source, send: &Sender<Message>, cancel: &AtomicBool| {
-            let Some((reference, mut evaluator)) = set_up(source, force_field, send) else {
-                return;
-            };
-            let start = evaluator.energy(&reference.coords);
-            let check_every = sentinel_every(&reference);
-            // Each point's minimised structure, for the points after it to start from (`None`
-            // when it failed: they start from the reference). At most `MAX_RELAX_WORK / atoms`
-            // atoms' coordinates in all.
-            let mut minimised: Vec<Option<Vec<Vec3>>> = vec![None; points.len()];
-            for (index, values) in points.iter().enumerate() {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
+            let steps = relax.steps;
+            let relax_point = |evaluator: &mut Evaluator,
+                               reference: &Reference,
+                               values: &[f64],
+                               from: Option<&[Vec3]>| {
+                if let Source::Assembly { .. } = source {
+                    return relax_placed(source, evaluator, values, from, steps, cancel);
                 }
-                let from = previous_neighbour(&shape, index).and_then(|n| minimised[n].as_deref());
                 let mut from = from.unwrap_or(&reference.coords).to_vec();
                 // The minimiser keeps the fixed atoms where they start; put them back where
                 // they were at the scan's start exactly, whatever it left them at.
@@ -241,40 +252,25 @@ impl Run {
                 }
                 let relaxed = match source.at_from(&from, values, &fixed) {
                     Ok(Point::Coords(coords)) => {
-                        evaluator.relax(&coords, &relax.at(&params, values), relax.steps, cancel)
+                        evaluator.relax(&coords, &relax.at(&params, values), steps, cancel)
                     }
                     Ok(Point::Rebuilt { .. }) | Err(_) => Relaxation::Failed,
                 };
-                let (energy, done) = match relaxed {
-                    Relaxation::Cancelled => break,
-                    Relaxation::Failed => (f64::NAN, None),
-                    Relaxation::Done {
-                        coords,
-                        energy,
-                        converged,
-                    } => {
-                        let message = Message::Relaxed {
-                            index,
-                            coords: coords.clone(),
-                            converged,
-                        };
-                        if send.send(message).is_err() {
-                            return;
-                        }
-                        (energy, Some(coords))
-                    }
+                let keep = match &relaxed {
+                    Relaxation::Done { coords, .. } => Some(coords.clone()),
+                    _ => None,
                 };
-                minimised[index] = done;
-                if send.send(Message::Point { index, energy }).is_err() {
-                    return;
-                }
-                if index % check_every == check_every - 1 {
-                    let end = evaluator.energy(&reference.coords);
-                    let _ = send.send(Message::Drift { start, end });
-                }
-            }
-            let end = evaluator.energy(&reference.coords);
-            let _ = send.send(Message::Drift { start, end });
+                (relaxed, keep)
+            };
+            relax_points(
+                source,
+                force_field,
+                &points,
+                &shape,
+                send,
+                cancel,
+                relax_point,
+            );
         };
         let mut run = Self::spawn(source, axes, force_field, work);
         run.scan.relaxed = true;
@@ -510,7 +506,162 @@ fn set_up(
     }
 }
 
-/// How often the starting structure is re-evaluated as a drift sentinel: after every point for
+/// The points of a relaxed scan, in grid order: each relaxed by `relax_point` (given the
+/// evaluator set up for the reference, the reference, the point's values and what its
+/// neighbour kept — see [`Run::start_relaxed`]), which returns how it went and what the points
+/// after it are to start from (`None` when they cannot: they start afresh). Sends each point's
+/// structure, energy and convergence, and the drift sentinel, until done or cancelled.
+fn relax_points(
+    source: &Source,
+    force_field: ForceField,
+    points: &[Vec<f64>],
+    shape: &[usize],
+    send: &Sender<Message>,
+    cancel: &AtomicBool,
+    mut relax_point: impl FnMut(
+        &mut Evaluator,
+        &Reference,
+        &[f64],
+        Option<&[Vec3]>,
+    ) -> (Relaxation, Option<Vec<Vec3>>),
+) {
+    let Some((reference, mut evaluator)) = set_up(source, force_field, send) else {
+        return;
+    };
+    let start = evaluator.energy(&reference.coords);
+    let check_every = sentinel_every(&reference);
+    // What each point keeps for the points after it (its minimised structure). At most
+    // `MAX_RELAX_WORK / atoms` atoms' coordinates in all.
+    let mut kept: Vec<Option<Vec<Vec3>>> = vec![None; points.len()];
+    for (index, values) in points.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let from = previous_neighbour(shape, index).and_then(|n| kept[n].as_deref());
+        let (relaxed, keep) = relax_point(&mut evaluator, &reference, values, from);
+        let energy = match relaxed {
+            Relaxation::Cancelled => break,
+            Relaxation::Failed => f64::NAN,
+            Relaxation::Done {
+                coords,
+                energy,
+                converged,
+            } => {
+                let message = Message::Relaxed {
+                    index,
+                    coords,
+                    converged,
+                };
+                if send.send(message).is_err() {
+                    return;
+                }
+                energy
+            }
+        };
+        kept[index] = keep;
+        if send.send(Message::Point { index, energy }).is_err() {
+            return;
+        }
+        if index % check_every == check_every - 1 {
+            let end = evaluator.energy(&reference.coords);
+            let _ = send.send(Message::Drift { start, end });
+        }
+    }
+    let end = evaluator.energy(&reference.coords);
+    let _ = send.send(Message::Drift { start, end });
+}
+
+/// Relax the assembly's point at `values` (see [`Run::start_relaxed`]) on `evaluator`, set up
+/// for the reference, from the neighbour's molecule shapes `from` (else the rigid structure),
+/// holding every molecule in place ([`super::source::Placed::hold`]); or on its own when its
+/// atoms are other than the reference's. Returns the molecules' shapes to keep for the points
+/// after it.
+///
+/// A start from the neighbour's shapes can end above the rigid structure (shapes that do not
+/// suit this point, or too few steps to leave them): unless it converged at most as high as
+/// the rigid structure, the point is relaxed from the rigid structure too — which never ends
+/// above it — and the lower of the two kept.
+fn relax_placed(
+    source: &Source,
+    evaluator: &mut Evaluator,
+    values: &[f64],
+    from: Option<&[Vec3]>,
+    steps: u32,
+    cancel: &AtomicBool,
+) -> (Relaxation, Option<Vec<Vec3>>) {
+    let Ok(placed) = source.placed_at(values) else {
+        return (Relaxation::Failed, None);
+    };
+    let hold = |coords: &mut [Vec3]| placed.hold(coords);
+    let relaxed = match &placed.point {
+        Point::Coords(rigid) => {
+            // The neighbour's shapes, placed as the molecules are here.
+            match from.and_then(|shapes| placed.place(shapes)) {
+                None => evaluator.relax_held(rigid, steps, cancel, &hold),
+                Some(warm) => {
+                    let warmed = evaluator.relax_held(&warm, steps, cancel, &hold);
+                    let rigid_energy = evaluator.energy(rigid);
+                    match warmed {
+                        Relaxation::Done {
+                            energy,
+                            converged: true,
+                            ..
+                        } if energy <= rigid_energy => warmed,
+                        Relaxation::Cancelled => Relaxation::Cancelled,
+                        warmed => {
+                            let fresh = evaluator.relax_held(rigid, steps, cancel, &hold);
+                            lower(warmed, fresh)
+                        }
+                    }
+                }
+            }
+        }
+        Point::Rebuilt { atoms, bonds } => {
+            let force_field = evaluator.force_field();
+            relax_alone(atoms, bonds, &hold, force_field, steps, cancel)
+        }
+    };
+    let keep = match (&relaxed, &placed.point) {
+        (Relaxation::Done { coords, .. }, Point::Coords(_)) => Some(placed.to_local(coords)),
+        _ => None,
+    };
+    (relaxed, keep)
+}
+
+/// Of two relaxations of one point, the one of the lower energy (`b` on a tie); one that failed
+/// gives way to the other, and either cancelled cancels.
+fn lower(a: Relaxation, b: Relaxation) -> Relaxation {
+    match (&a, &b) {
+        (Relaxation::Cancelled, _) | (_, Relaxation::Cancelled) => Relaxation::Cancelled,
+        (Relaxation::Done { energy: x, .. }, Relaxation::Done { energy: y, .. }) if x < y => a,
+        (Relaxation::Done { .. }, Relaxation::Failed) => a,
+        _ => b,
+    }
+}
+
+/// Relax a structure other than the scan's reference (an assembly point with other atoms)
+/// from where `atoms` are, held by `hold`, on a molecule read for it; it fails when larger than
+/// a relaxed scan takes ([`super::MAX_RELAX_ATOMS`] — [`Run::start_relaxed`] refuses such a
+/// scan before it starts).
+fn relax_alone(
+    atoms: &[crate::three_d::Atom3d],
+    bonds: &[crate::three_d::Bond3d],
+    hold: &dyn Fn(&mut [Vec3]),
+    force_field: ForceField,
+    steps: u32,
+    cancel: &AtomicBool,
+) -> Relaxation {
+    if atoms.len() > super::MAX_RELAX_ATOMS {
+        return Relaxation::Failed;
+    }
+    let Ok(mut evaluator) = Evaluator::new(&energy::molfile(atoms, bonds), force_field) else {
+        return Relaxation::Failed;
+    };
+    let coords: Vec<Vec3> = atoms.iter().map(|a| a.pos).collect();
+    evaluator.relax_held(&coords, steps, cancel, hold)
+}
+
+// How often the starting structure is re-evaluated as a drift sentinel: after every point for
 /// a small structure (cheap), every tenth for a large one.
 fn sentinel_every(reference: &Reference) -> usize {
     if reference.atoms <= SENTINEL_EVERY_POINT_ATOMS {
@@ -913,8 +1064,10 @@ mod tests {
 #[cfg(test)]
 mod energy_tests {
     use super::*;
-    use crate::assembly::model::{Component, Design, Step};
-    use crate::scan::{MAX_POINTS, Param, StepField};
+    use crate::assembly::math;
+    use crate::assembly::model::{Component, Design, Instance, Step};
+    use crate::assembly::place::centroid;
+    use crate::scan::{MAX_POINTS, Param, PoseField, StepField};
     use crate::three_d::Model3d;
     use chembuider_rs::BondOrder;
 
@@ -1583,26 +1736,19 @@ mod energy_tests {
         };
         assert!(message.contains("angle"), "{message}");
 
-        let design = Design {
-            components: vec![benzene()],
-            steps: vec![Step::new_stack()],
-            ..Default::default()
-        };
-        let rise = Param::Step {
-            step: 0,
-            field: StepField::StackRise,
-        };
+        // An assembly is held to the same limits: 50 benzenes are 600 atoms.
         let axis = Axis {
-            param: rise.clone(),
+            param: stack_rise(),
             start: 3.0,
             end: 4.0,
             points: 3,
         };
-        let source = Source::assembly(&design, vec![rise]);
-        assert!(
-            Run::start_relaxed(source, &[axis], ForceField::Uff, Relax::new(vec![])).is_err(),
-            "an assembly is not relaxed"
-        );
+        let source = Source::assembly(&stack_of(benzene(), 50), vec![stack_rise()]);
+        let Err(message) = Run::start_relaxed(source, &[axis], ForceField::Uff, Relax::new(vec![]))
+        else {
+            panic!("an assembly of 600 atoms was relaxed");
+        };
+        assert!(message.contains("Too many atoms to relax"), "{message}");
 
         let mut big = model.clone();
         let atom = big.atoms[0].clone();
@@ -1610,6 +1756,742 @@ mod energy_tests {
         let source = Source::model(&big, None, vec![Param::Dihedral([0, 1, 2, 3])]);
         let axis = butane_dihedral_axis(3);
         assert!(Run::start_relaxed(source, &[axis], ForceField::Uff, Relax::new(vec![])).is_err());
+    }
+
+    fn stack_rise() -> Param {
+        Param::Step {
+            step: 0,
+            field: StepField::StackRise,
+        }
+    }
+
+    /// `n` copies of `component` stacked, 3.5 Å apart and untwisted.
+    fn stack_of(component: Component, n: u32) -> Design {
+        let mut stack = Step::new_stack();
+        if let Step::Stack(s) = &mut stack {
+            s.n = n;
+        }
+        Design {
+            components: vec![component],
+            steps: vec![stack],
+            ..Default::default()
+        }
+    }
+
+    /// `component` moved so that its centroid is at the origin.
+    fn centred(mut component: Component) -> Component {
+        let points: Vec<Vec3> = component.atoms.iter().map(|a| a.pos).collect();
+        let centre = centroid(&points);
+        for a in &mut component.atoms {
+            a.pos = math::sub(a.pos, centre);
+        }
+        component
+    }
+
+    /// Two stacked benzenes at z = 0 and 3.5 in a P-1 cell `reps` cells long in a: the
+    /// inversion copy of the upper one is at c − 3.5, the same molecule when c = 7 (the cell
+    /// then holds two molecules, else three).
+    fn inverted_stack(reps: u32, c: f64) -> Design {
+        let mut lattice = Step::new_lattice();
+        if let Step::Lattice(l) = &mut lattice {
+            l.symops = crate::assembly::symop::PRESETS[1].symops();
+            l.reps = [reps, 1, 1];
+            l.cell.c = c;
+        }
+        let mut design = stack_of(centred(benzene()), 2);
+        design.steps.push(lattice);
+        design
+    }
+
+    fn cell_c() -> Param {
+        Param::Step {
+            step: 1,
+            field: StepField::CellC,
+        }
+    }
+
+    /// `points` less their centroid.
+    fn about_centroid(points: &[Vec3]) -> Vec<Vec3> {
+        let c = centroid(points);
+        points.iter().map(|&p| math::sub(p, c)).collect()
+    }
+
+    /// The rotation fitting `now` (a molecule's atoms) best onto `want` (the same atoms), both
+    /// about their centroids: the molecule's orientation against `want`'s frame.
+    fn orientation(now: &[Vec3], want: &[Vec3]) -> math::Mat3 {
+        math::fit_rotation(&about_centroid(now), &about_centroid(want))
+    }
+
+    /// Every point of a relaxed assembly scan has its minimised structure, and in it every
+    /// molecule is where the design at the point's values places it: the centroid of all its
+    /// atoms on the rigid molecule's, and turned against it by no rotation (its best fit); and
+    /// — a check of that fit not by it — the Eckart condition: Σ (t − t̄) × (x − x̄) = 0.
+    fn assert_molecules_held(run: &Run) {
+        for i in 0..run.scan.total() {
+            let coords = run.structure(i).expect("a relaxed structure");
+            let placed = run.source.placed_at(&run.scan.values_at(i)).unwrap();
+            let rigid = placed.rigid();
+            assert_eq!(coords.len(), rigid.len(), "point {i}");
+            for atoms in placed.molecules() {
+                let (now, want) = (&coords[atoms.clone()], &rigid[atoms.clone()]);
+                let off = math::distance(centroid(now), centroid(want));
+                assert!(off < 1e-6, "point {i}, {atoms:?}: centroid {off} Å off");
+                let rot = orientation(now, want);
+                assert!(
+                    math::Rigid::rotation(rot).approx_eq(&math::Rigid::IDENTITY, 1e-6),
+                    "point {i}, {atoms:?}: turned {rot:?}"
+                );
+                let eckart = about_centroid(want)
+                    .iter()
+                    .zip(&about_centroid(now))
+                    .fold([0.0; 3], |s, (&t, &x)| math::add(s, math::cross(t, x)));
+                assert!(
+                    math::norm(eckart) < 1e-6,
+                    "point {i}, {atoms:?}: {eckart:?}"
+                );
+            }
+        }
+    }
+
+    /// A relaxed and a rigid scan of `source` over `axis` under `force_field`, both finished.
+    fn relaxed_and_rigid(source: &Source, axis: &Axis, force_field: ForceField) -> (Run, Run) {
+        let axes = std::slice::from_ref(axis);
+        let mut rigid = Run::start(source.clone(), axes, force_field).expect("rigid");
+        rigid.wait();
+        let mut relaxed = Run::start_relaxed(source.clone(), axes, force_field, Relax::new(vec![]))
+            .expect("relaxed");
+        relaxed.wait();
+        assert_eq!(relaxed.error, None);
+        assert!(relaxed.scan.relaxed && !rigid.scan.relaxed);
+        assert_eq!(relaxed.scan.done(), axis.points);
+        (relaxed, rigid)
+    }
+
+    /// Every relaxed point's energy is at most the rigid one's at the same point; and how much
+    /// the most relaxing lowered one.
+    fn assert_relaxed_below_rigid(relaxed: &Run, rigid: &Run) -> f64 {
+        let mut most = 0.0f64;
+        for i in 0..relaxed.scan.total() {
+            let (r, x) = (
+                rigid.scan.energies[i].unwrap(),
+                relaxed.scan.energies[i].unwrap(),
+            );
+            eprintln!(
+                "{:?} | rigid {r:>10.3} | relaxed {x:>10.3}",
+                relaxed.scan.values_at(i)
+            );
+            assert!(x.is_finite() && r.is_finite(), "point {i}: {r} {x}");
+            assert!(
+                x <= r + CONVERGED_WITHIN,
+                "point {i}: relaxed {x} above rigid {r}"
+            );
+            most = most.max(r - x);
+        }
+        most
+    }
+
+    /// A relaxed scan of a stacked benzene dimer's rise: at every point both molecules keep
+    /// the places the rise gives them — the centroid of one exactly `rise` above the other's —
+    /// while their shapes relax (MMFF94's benzene, under UFF), so every energy is at most the
+    /// rigid scan's.
+    #[test]
+    fn a_relaxed_stack_scan_holds_the_rise_and_lies_below_the_rigid_one() {
+        let source = Source::assembly(&stack_of(benzene(), 2), vec![stack_rise()]);
+        let axis = Axis {
+            param: stack_rise(),
+            start: 3.2,
+            end: 4.4,
+            points: 4,
+        };
+        let (relaxed, rigid) = relaxed_and_rigid(&source, &axis, ForceField::Uff);
+        assert_molecules_held(&relaxed);
+        for i in 0..4 {
+            let coords = relaxed.structure(i).unwrap();
+            let rise = relaxed.scan.values_at(i)[0];
+            let step = math::sub(centroid(&coords[12..]), centroid(&coords[..12]));
+            let off = math::distance(step, [0.0, 0.0, rise]);
+            assert!(
+                off < 1e-6,
+                "point {i}: the copies {step:?} apart, not {rise}"
+            );
+        }
+        let lowered = assert_relaxed_below_rigid(&relaxed, &rigid);
+        assert!(lowered > 0.1, "relaxing lowered no point: {lowered}");
+        assert!(
+            (0..4).all(|i| !relaxed.scan.is_unconverged(i)),
+            "a dimer converges within the budget"
+        );
+    }
+
+    /// A cell constant and a hand-placed molecule's position, relaxed: at every point the
+    /// copies' centroids are one cell apart, and the molecule's pose read back from its relaxed
+    /// atoms — the centroid of them all, and their best-fitting turn from its component's
+    /// atoms — is the scanned one.
+    #[test]
+    fn relaxed_scans_hold_cell_constants_and_hand_placed_poses() {
+        let mut lattice = Step::new_lattice();
+        if let Step::Lattice(l) = &mut lattice {
+            l.reps = [2, 1, 1];
+        }
+        let design = Design {
+            components: vec![benzene()],
+            steps: vec![lattice],
+            ..Default::default()
+        };
+        let a = Param::Step {
+            step: 0,
+            field: StepField::CellA,
+        };
+        let axis = Axis {
+            param: a.clone(),
+            start: 7.0,
+            end: 8.0,
+            points: 3,
+        };
+        let source = Source::assembly(&design, vec![a]);
+        let (relaxed, rigid) = relaxed_and_rigid(&source, &axis, ForceField::Uff);
+        assert_molecules_held(&relaxed);
+        for i in 0..3 {
+            let coords = relaxed.structure(i).unwrap();
+            let a = relaxed.scan.values_at(i)[0];
+            let step = math::sub(centroid(&coords[12..]), centroid(&coords[..12]));
+            let off = math::distance(step, [a, 0.0, 0.0]);
+            assert!(off < 1e-6, "point {i}: {step:?} apart, not {a}");
+        }
+        assert!(assert_relaxed_below_rigid(&relaxed, &rigid) > 0.1);
+
+        // A benzene placed by hand above the base one, tilted, scanned along z.
+        let component = benzene();
+        let local = crate::assembly::place::local_positions(&component);
+        let tilt = [10.0, 20.0, 30.0];
+        let pose = crate::assembly::place::Pose {
+            position: [0.0, 0.0, 3.8],
+            euler_deg: tilt,
+        };
+        let design = Design {
+            components: vec![component.clone()],
+            steps: Vec::new(),
+            manual: vec![Instance {
+                component: 0,
+                transform: crate::assembly::place::transform_of(&pose, centroid(&local)),
+            }],
+            ..Default::default()
+        };
+        let z = Param::Pose {
+            index: 0,
+            field: PoseField::Position(2),
+        };
+        let axis = Axis {
+            param: z.clone(),
+            start: 3.6,
+            end: 4.6,
+            points: 3,
+        };
+        let source = Source::assembly(&design, vec![z]);
+        let (relaxed, rigid) = relaxed_and_rigid(&source, &axis, ForceField::Uff);
+        assert_molecules_held(&relaxed);
+        let n = local.len();
+        for i in 0..3 {
+            let coords = relaxed.structure(i).unwrap();
+            let mine = &coords[n..];
+            assert!(
+                mine.iter().zip(&local).any(|(p, q)| {
+                    let (p, q) = (
+                        math::sub(*p, centroid(mine)),
+                        math::sub(*q, centroid(&local)),
+                    );
+                    (math::norm(p) - math::norm(q)).abs() > 1e-4
+                }),
+                "point {i}: its shape relaxed"
+            );
+            let want = relaxed.scan.values_at(i)[0];
+            let at = centroid(mine);
+            let off = math::distance(at, [0.0, 0.0, want]);
+            assert!(off < 1e-6, "point {i}: at {at:?}, not z = {want}");
+            let turned = orientation(&local, mine);
+            assert!(
+                math::Rigid::rotation(turned)
+                    .approx_eq(&math::Rigid::rotation(math::euler_xyz(tilt)), 1e-6),
+                "point {i}: turned {turned:?}"
+            );
+        }
+        assert!(assert_relaxed_below_rigid(&relaxed, &rigid) > 0.1);
+    }
+
+    /// An asymmetric, flexible molecule (1-chlorobutan-2-ol, MMFF94's) and a water drawn far
+    /// from its force-field shape (O–H 1.10 Å, H–O–H 120°) placed by hand above it, the water's
+    /// distance scanned under UFF: every molecule's centroid and orientation stay where the
+    /// design puts them, while the water's bonds and angle relax towards UFF's and the other
+    /// molecule's shape relaxes too.
+    #[test]
+    fn a_relaxed_scan_holds_centroids_and_orientations_and_relaxes_the_shapes() {
+        let mut drawing = chembuider_rs::Molecule::default();
+        let c1 = drawing.add_atom("Cl".to_owned(), [0.0, 0.0], 0);
+        let c2 = drawing.add_atom("C".to_owned(), [1.3, 0.75], 0);
+        let c3 = drawing.add_atom("C".to_owned(), [2.6, 0.0], 0);
+        let c4 = drawing.add_atom("C".to_owned(), [3.9, 0.75], 0);
+        let o = drawing.add_atom("O".to_owned(), [2.6, -1.5], 0);
+        for (a, b) in [(c1, c2), (c2, c3), (c3, c4), (c3, o)] {
+            drawing.add_bond(a, b, BondOrder::Single);
+        }
+        let flexible = Component::from_model("x", &generate(&drawing, ForceField::Mmff94));
+        let atom = |e: &str, pos| crate::three_d::Atom3d {
+            element: e.into(),
+            pos,
+        };
+        let half = 60f64.to_radians();
+        let water = Component {
+            name: "water".into(),
+            atoms: vec![
+                atom("O", [0.0, 0.0, 0.0]),
+                atom("H", [1.1 * half.sin(), 1.1 * half.cos(), 0.0]),
+                atom("H", [-1.1 * half.sin(), 1.1 * half.cos(), 0.0]),
+            ],
+            bonds: (1..3)
+                .map(|h| crate::three_d::Bond3d {
+                    begin: 0,
+                    end: h,
+                    order: 1,
+                })
+                .collect(),
+            orient: None,
+        };
+        let local: Vec<Vec3> = water.atoms.iter().map(|a| a.pos).collect();
+        let flexible_atoms: Vec<Vec3> = flexible.atoms.iter().map(|a| a.pos).collect();
+        // Above the molecule, clear of it however the generated structure is turned.
+        let above = centroid(&flexible_atoms);
+        let clear = crate::assembly::place::radius(&flexible_atoms) + 2.4;
+        let tilt = [0.0, 40.0, 10.0];
+        let pose_at = |z: f64| crate::assembly::place::Pose {
+            position: math::add(above, [0.5, 0.3, z]),
+            euler_deg: tilt,
+        };
+        let design = Design {
+            components: vec![flexible.clone(), water],
+            manual: vec![Instance {
+                component: 1,
+                transform: crate::assembly::place::transform_of(&pose_at(clear), centroid(&local)),
+            }],
+            ..Default::default()
+        };
+        let z = Param::Pose {
+            index: 0,
+            field: PoseField::Position(2),
+        };
+        let axis = Axis {
+            param: z.clone(),
+            start: above[2] + clear,
+            end: above[2] + clear + 1.0,
+            points: 3,
+        };
+        let source = Source::assembly(&design, vec![z]);
+        let (relaxed, rigid) = relaxed_and_rigid(&source, &axis, ForceField::Uff);
+        assert_molecules_held(&relaxed);
+        assert!(assert_relaxed_below_rigid(&relaxed, &rigid) > 0.1);
+        let n = flexible_atoms.len();
+        for i in 0..3 {
+            let coords = relaxed.structure(i).unwrap();
+            let mine = &coords[n..];
+            let want = pose_at(relaxed.scan.values_at(i)[0] - above[2]).position;
+            let off = math::distance(centroid(mine), want);
+            assert!(
+                off < 1e-6,
+                "point {i}: water at {:?}, not {want:?}",
+                centroid(mine)
+            );
+            let turned = orientation(&local, mine);
+            assert!(
+                math::Rigid::rotation(turned)
+                    .approx_eq(&math::Rigid::rotation(math::euler_xyz(tilt)), 1e-6),
+                "point {i}: water turned {turned:?}"
+            );
+            let bonds = [1, 2].map(|h| math::distance(mine[0], mine[h]));
+            let angle = crate::three_d::geom::angle(mine[1], mine[0], mine[2]);
+            eprintln!("point {i}: O–H {bonds:?} Å, H–O–H {angle:.1}°");
+            assert!(bonds.iter().all(|&r| r < 1.05), "point {i}: O–H {bonds:?}");
+            assert!(angle < 115.0, "point {i}: H–O–H {angle}°");
+            let moved = coords[..n]
+                .iter()
+                .zip(&flexible_atoms)
+                .enumerate()
+                .flat_map(|(a, (p, q))| {
+                    coords[..n]
+                        .iter()
+                        .zip(&flexible_atoms)
+                        .skip(a + 1)
+                        .map(move |(r, s)| (math::distance(*p, *r) - math::distance(*q, *s)).abs())
+                })
+                .fold(0.0f64, f64::max);
+            assert!(
+                moved > 0.01,
+                "point {i}: the flexible molecule's shape kept ({moved})"
+            );
+        }
+    }
+
+    /// A point whose atoms differ from the start's (a copy on a special position dropped as
+    /// the cell shrinks) is relaxed on its own, from its rigid structure, its molecules held
+    /// in place too.
+    #[test]
+    fn a_relaxed_point_with_other_atoms_is_relaxed_on_its_own() {
+        let axis = Axis {
+            param: cell_c(),
+            start: 7.0,
+            end: 13.0,
+            points: 3,
+        };
+        let source = Source::assembly(&inverted_stack(1, 10.0), vec![cell_c()]);
+        assert!(matches!(source.at(&[7.0]), Ok(Point::Rebuilt { .. })));
+        assert!(matches!(source.at(&[10.0]), Ok(Point::Coords(_))));
+        let (relaxed, rigid) = relaxed_and_rigid(&source, &axis, ForceField::Uff);
+        assert_molecules_held(&relaxed);
+        assert_eq!(
+            relaxed.structure(0).unwrap().len(),
+            24,
+            "two benzenes at c = 7"
+        );
+        assert_eq!(relaxed.structure(1).unwrap().len(), 36);
+        assert!(assert_relaxed_below_rigid(&relaxed, &rigid) > 0.1);
+    }
+
+    /// The work a relaxed scan of the assembly takes is that of its largest point, not of the
+    /// design as it is: from a cell where copies coincide (240 atoms, a scan the budget would
+    /// take) the larger cells part them (360 atoms, too much).
+    #[test]
+    fn a_relaxed_scan_is_refused_when_its_larger_points_are_too_much_work() {
+        let design = inverted_stack(10, 7.0);
+        let source = Source::assembly(&design, vec![cell_c()]);
+        let axis = Axis {
+            param: cell_c(),
+            start: 7.0,
+            end: 13.0,
+            points: MAX_POINTS,
+        };
+        let points = grid(std::slice::from_ref(&axis));
+        assert_eq!(source.atom_count(), 240);
+        assert_eq!(source.most_atoms(&points), 360);
+        assert!(matches!(source.at(&[10.0]), Ok(Point::Rebuilt { .. })));
+        assert_eq!(
+            relax_refusal(240, MAX_POINTS),
+            None,
+            "the design as it is fits"
+        );
+        let Err(message) = Run::start_relaxed(
+            source.clone(),
+            std::slice::from_ref(&axis),
+            ForceField::Uff,
+            Relax::new(Vec::new()),
+        ) else {
+            panic!("a relaxed scan of 200 points of up to 360 atoms started");
+        };
+        assert!(message.contains("Too long to relax"), "{message}");
+        assert!(message.contains("360 atoms"), "{message}");
+        // Without relaxing it runs.
+        assert!(Run::start(source.clone(), std::slice::from_ref(&axis), ForceField::Uff).is_ok());
+
+        // Too many points is told before any point's atoms are counted.
+        let cell_a = Param::Step {
+            step: 1,
+            field: StepField::CellA,
+        };
+        let axes = [
+            axis,
+            Axis {
+                param: cell_a,
+                start: 7.0,
+                end: 9.0,
+                points: MAX_POINTS,
+            },
+        ];
+        let Err(message) =
+            Run::start_relaxed(source, &axes, ForceField::Uff, Relax::new(Vec::new()))
+        else {
+            panic!(
+                "a relaxed scan of {} points started",
+                MAX_POINTS * MAX_POINTS
+            );
+        };
+        assert!(message.contains("Too many points"), "{message}");
+    }
+
+    /// A point started from a neighbour's shapes that are worse than its rigid structure — and
+    /// too few steps to recover — keeps no more than the rigid structure's energy: it is
+    /// relaxed from the rigid structure too, and the lower kept.
+    #[test]
+    fn a_warm_start_worse_than_the_rigid_point_is_not_kept() {
+        let source = Source::assembly(&stack_of(benzene(), 2), vec![stack_rise()]);
+        let reference = source.reference().unwrap();
+        let mut evaluator = Evaluator::new(&reference.molfile, ForceField::Uff).unwrap();
+        let never = AtomicBool::new(false);
+        let placed = source.placed_at(&[3.6]).unwrap();
+        let Point::Coords(rigid) = &placed.point else {
+            panic!("the same atoms")
+        };
+        let rigid_energy = evaluator.energy(rigid);
+        // A transferred shape far off: every atom knocked 0.25 Å aside.
+        let mut bad = placed.to_local(rigid);
+        for (i, p) in bad.iter_mut().enumerate() {
+            let k = i as f64;
+            *p = math::add(
+                *p,
+                math::scale([k.sin(), (1.7 * k).cos(), (2.3 * k).sin()], 0.25),
+            );
+        }
+        let warm = placed.place(&bad).unwrap();
+        let hold = |c: &mut [Vec3]| placed.hold(c);
+        let Relaxation::Done { energy: alone, .. } = evaluator.relax_held(&warm, 4, &never, &hold)
+        else {
+            panic!("relaxed")
+        };
+        assert!(
+            alone > rigid_energy,
+            "the warm start alone ends above rigid: {alone} {rigid_energy}"
+        );
+        for steps in [4, 200] {
+            let (relaxed, keep) =
+                relax_placed(&source, &mut evaluator, &[3.6], Some(&bad), steps, &never);
+            let Relaxation::Done { coords, energy, .. } = relaxed else {
+                panic!("relaxed")
+            };
+            assert!(
+                energy <= rigid_energy,
+                "{steps} steps: {energy} above rigid {rigid_energy}"
+            );
+            assert!(
+                (evaluator.energy(&coords) - energy).abs() < 1e-6,
+                "the held structure's"
+            );
+            assert_eq!(
+                keep.map(|k| placed.place(&k).unwrap().len()),
+                Some(coords.len())
+            );
+        }
+    }
+
+    /// The lowest held energy from `start`: nonlinear conjugate gradients on the held energy,
+    /// its gradient by finite differences.
+    fn held_reference(
+        evaluator: &mut Evaluator,
+        hold: &dyn Fn(&mut [Vec3]),
+        start: &[Vec3],
+    ) -> (Vec<Vec3>, f64) {
+        let mut f = |x: &[Vec3]| {
+            let mut y = x.to_vec();
+            hold(&mut y);
+            evaluator.energy(&y)
+        };
+        let mut x = start.to_vec();
+        hold(&mut x);
+        let mut fx = f(&x);
+        let mut step = 1e-3;
+        let mut prev_g: Option<Vec<f64>> = None;
+        let mut dir = vec![0.0; x.len() * 3];
+        for it in 0..5000 {
+            let mut g = vec![0.0; x.len() * 3];
+            for k in 0..g.len() {
+                let h = 1e-5;
+                let mut p = x.clone();
+                p[k / 3][k % 3] += h;
+                let fp = f(&p);
+                p[k / 3][k % 3] -= 2.0 * h;
+                let fm = f(&p);
+                g[k] = (fp - fm) / (2.0 * h);
+            }
+            let beta = match &prev_g {
+                Some(pg) if it % 50 != 0 => {
+                    let num: f64 = g.iter().zip(pg).map(|(a, b)| a * (a - b)).sum();
+                    let den: f64 = pg.iter().map(|a| a * a).sum();
+                    (num / den).max(0.0)
+                }
+                _ => 0.0,
+            };
+            for k in 0..g.len() {
+                dir[k] = -g[k] + beta * dir[k];
+            }
+            let slope: f64 = dir.iter().zip(&g).map(|(d, g)| d * g).sum();
+            if slope >= 0.0 {
+                dir = g.iter().map(|v| -v).collect();
+            }
+            let gnorm = g.iter().map(|v| v * v).sum::<f64>().sqrt();
+            if gnorm < 1e-4 {
+                break;
+            }
+            let mut t = step * 2.0;
+            let mut moved = false;
+            for _ in 0..40 {
+                let mut p = x.clone();
+                for k in 0..g.len() {
+                    p[k / 3][k % 3] += t * dir[k];
+                }
+                hold(&mut p);
+                let fp = f(&p);
+                if fp < fx {
+                    x = p;
+                    fx = fp;
+                    step = t;
+                    moved = true;
+                    break;
+                }
+                t *= 0.5;
+            }
+            prev_g = Some(g);
+            if !moved {
+                break;
+            }
+        }
+        (x, fx)
+    }
+
+    /// A benzene tilted `tilt` (degrees) with its centroid `z` Å above another's.
+    fn tilted_pair(tilt: [f64; 3], z: f64) -> Source {
+        let component = benzene();
+        let local = crate::assembly::place::local_positions(&component);
+        let pose = crate::assembly::place::Pose {
+            position: [0.0, 0.0, z],
+            euler_deg: tilt,
+        };
+        let design = Design {
+            components: vec![component],
+            steps: Vec::new(),
+            manual: vec![Instance {
+                component: 0,
+                transform: crate::assembly::place::transform_of(&pose, centroid(&local)),
+            }],
+            ..Default::default()
+        };
+        let z = Param::Pose {
+            index: 0,
+            field: PoseField::Position(2),
+        };
+        Source::assembly(&design, vec![z])
+    }
+
+    /// A benzene tilted 45° and 20° with its centroid 3.6 Å above another's, in close contact:
+    /// the forces between them mostly push the molecules about rigidly, which holding them
+    /// undoes. Relaxed held, it ends converged where fine segments with steps to spare end, and
+    /// at the held minimum — that of conjugate gradients on the held energy itself — to within
+    /// a small tolerance, far below the rigid structure; out of steps, it is marked unconverged.
+    #[test]
+    fn a_held_relaxation_of_molecules_in_close_contact_reaches_the_held_minimum() {
+        let z = 3.6;
+        let source = tilted_pair([45.0, 20.0, 0.0], z);
+        let reference = source.reference().unwrap();
+        let mut evaluator = Evaluator::new(&reference.molfile, ForceField::Uff).unwrap();
+        let never = AtomicBool::new(false);
+        let placed = source.placed_at(&[z]).unwrap();
+        let Point::Coords(rigid) = &placed.point else {
+            panic!("the same atoms")
+        };
+        let hold = |c: &mut [Vec3]| placed.hold(c);
+        let rigid_energy = evaluator.energy(rigid);
+        let steps = Relax::new(Vec::new()).steps;
+        let Relaxation::Done {
+            coords,
+            energy,
+            converged,
+        } = evaluator.relax_held(rigid, steps, &never, &hold)
+        else {
+            panic!("relaxed")
+        };
+        let Relaxation::Done {
+            energy: fine,
+            converged: fine_converged,
+            ..
+        } = evaluator.relax_held_from(rigid, 50_000, &never, &hold, 1)
+        else {
+            panic!("relaxed in single steps")
+        };
+        let (_, minimum) = held_reference(&mut evaluator, &hold, rigid);
+        let (_, lower) = held_reference(&mut evaluator, &hold, &coords);
+        eprintln!(
+            "rigid {rigid_energy:.3} | relaxed {energy:.3} | single steps {fine:.3} | held minimum {minimum:.3}, from the relaxed {lower:.3}"
+        );
+        assert!(converged && fine_converged);
+        assert!(
+            (energy - fine).abs() < 0.1,
+            "{energy} against single steps' {fine}"
+        );
+        assert!(
+            energy - minimum < 0.2 && energy - lower < 0.2,
+            "{energy} above the held minimum {minimum} ({lower} from it)"
+        );
+        assert!(energy < rigid_energy - 400.0, "{energy} {rigid_energy}");
+        assert!(
+            (evaluator.energy(&coords) - energy).abs() < 1e-6,
+            "the held structure's"
+        );
+        let Relaxation::Done {
+            energy: short,
+            converged,
+            ..
+        } = evaluator.relax_held(rigid, 30, &never, &hold)
+        else {
+            panic!("relaxed")
+        };
+        assert!(!converged, "out of steps at {short}");
+        assert!(
+            energy + 1.0 < short && short < rigid_energy,
+            "{short} {energy}"
+        );
+    }
+
+    /// A relaxed assembly point out of minimiser steps is marked unconverged (its molecules
+    /// still held, its energy no higher than the rigid point's), and cancelling stops the scan
+    /// part-way, keeping the points done.
+    #[test]
+    fn a_relaxed_assembly_scan_marks_unconverged_points_and_can_be_cancelled() {
+        let source = Source::assembly(&stack_of(benzene(), 2), vec![stack_rise()]);
+        let axis = Axis {
+            param: stack_rise(),
+            start: 3.2,
+            end: 4.4,
+            points: 3,
+        };
+        let relax = Relax {
+            constraints: Vec::new(),
+            steps: 2,
+        };
+        let mut run = Run::start_relaxed(
+            source.clone(),
+            std::slice::from_ref(&axis),
+            ForceField::Uff,
+            relax,
+        )
+        .expect("start");
+        run.wait();
+        let mut rigid = Run::start(source.clone(), std::slice::from_ref(&axis), ForceField::Uff)
+            .expect("rigid");
+        rigid.wait();
+        assert_eq!(run.scan.done(), 3);
+        for i in 0..3 {
+            assert!(run.scan.energies[i].unwrap().is_finite(), "point {i}");
+            assert!(run.scan.is_unconverged(i), "point {i}");
+        }
+        assert_molecules_held(&run);
+        assert_relaxed_below_rigid(&run, &rigid);
+
+        let axis = Axis {
+            points: MAX_POINTS,
+            ..axis
+        };
+        let mut run = Run::start_relaxed(
+            source,
+            std::slice::from_ref(&axis),
+            ForceField::Uff,
+            Relax::new(Vec::new()),
+        )
+        .expect("start");
+        while run.scan.done() < 1 && run.is_running() {
+            run.poll();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        run.cancel();
+        run.wait();
+        assert!(run.was_cancelled());
+        let done = run.scan.done();
+        assert!((1..MAX_POINTS).contains(&done), "{done}");
+        assert!(run.scan.energies[..done].iter().all(Option::is_some));
+        assert!(run.scan.energies[done..].iter().all(Option::is_none));
     }
 
     /// An alkane of `carbons` carbons (3n + 2 atoms), drawn as a zig-zag.

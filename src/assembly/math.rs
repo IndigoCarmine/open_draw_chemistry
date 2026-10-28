@@ -244,6 +244,124 @@ pub fn inverse(m: &Mat3) -> Option<Mat3> {
     Some(inv)
 }
 
+/// How far (Å) from the line through them points may lie and still count as on it (see
+/// [`fit_rotation`]).
+const ON_A_LINE: f64 = 1e-3;
+
+/// The rotation turning `points` onto `targets` (pairwise, both about their centroid — the
+/// caller centres them) best in the least-squares sense, `Σ |rot · p − t|²` the least, every
+/// point weighted alike (Horn's quaternion method: the eigenvector of the largest eigenvalue).
+/// Targets on one line fix only the line (a turn about it fits as well): the smallest rotation
+/// that lays the points' spread along it is taken; one point or none gives the identity.
+pub fn fit_rotation(points: &[Vec3], targets: &[Vec3]) -> Mat3 {
+    // The target farthest from the centre gives the line, if they are on one.
+    let far = targets
+        .iter()
+        .copied()
+        .max_by(|a, b| norm(*a).total_cmp(&norm(*b)));
+    let Some(axis) = far.and_then(unit) else {
+        return IDENTITY;
+    };
+    if targets.iter().all(|&t| norm(cross(t, axis)) <= ON_A_LINE) {
+        // Σ (rot·p)·t = (rot · Σ (t·axis) p) · axis, the most with that sum along the line.
+        let spread = points
+            .iter()
+            .zip(targets)
+            .fold([0.0; 3], |s, (&p, &t)| add(s, scale(p, dot(t, axis))));
+        return align(spread, axis);
+    }
+    // s[i][j] = Σ p_i t_j.
+    let mut s = [[0.0; 3]; 3];
+    for (p, t) in points.iter().zip(targets) {
+        for i in 0..3 {
+            for j in 0..3 {
+                s[i][j] += p[i] * t[j];
+            }
+        }
+    }
+    let [[xx, xy, xz], [yx, yy, yz], [zx, zy, zz]] = s;
+    let n = [
+        [xx + yy + zz, yz - zy, zx - xz, xy - yx],
+        [yz - zy, xx - yy - zz, xy + yx, zx + xz],
+        [zx - xz, xy + yx, -xx + yy - zz, yz + zy],
+        [xy - yx, zx + xz, yz + zy, -xx - yy + zz],
+    ];
+    let (values, vectors) = symmetric_eigen4(n);
+    let top = (0..4)
+        .max_by(|&a, &b| values[a].total_cmp(&values[b]))
+        .unwrap_or(0);
+    let [w, x, y, z] = [0, 1, 2, 3].map(|k| vectors[k][top]);
+    let q = (w * w + x * x + y * y + z * z).sqrt();
+    if q <= 0.0 || !q.is_finite() {
+        return IDENTITY;
+    }
+    let [w, x, y, z] = [w, x, y, z].map(|c| c / q);
+    [
+        [
+            w * w + x * x - y * y - z * z,
+            2.0 * (x * y - w * z),
+            2.0 * (x * z + w * y),
+        ],
+        [
+            2.0 * (x * y + w * z),
+            w * w - x * x + y * y - z * z,
+            2.0 * (y * z - w * x),
+        ],
+        [
+            2.0 * (x * z - w * y),
+            2.0 * (y * z + w * x),
+            w * w - x * x - y * y + z * z,
+        ],
+    ]
+}
+
+/// The eigenvalues of the symmetric `a` and its eigenvectors (the columns), by cyclic Jacobi
+/// rotations.
+fn symmetric_eigen4(mut a: [[f64; 4]; 4]) -> ([f64; 4], [[f64; 4]; 4]) {
+    let mut v = [[0.0; 4]; 4];
+    for (i, row) in v.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+    let scale: f64 = a.iter().flatten().map(|x| x * x).sum::<f64>().sqrt();
+    for _ in 0..50 {
+        let off: f64 = (0..4)
+            .flat_map(|i| (0..4).filter(move |&j| j != i).map(move |j| (i, j)))
+            .map(|(i, j)| a[i][j] * a[i][j])
+            .sum::<f64>()
+            .sqrt();
+        if off <= 1e-15 * scale {
+            break;
+        }
+        for p in 0..3 {
+            for q in p + 1..4 {
+                if a[p][q] == 0.0 {
+                    continue;
+                }
+                let theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+                let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
+                let t = if theta == 0.0 { 1.0 } else { t };
+                let c = 1.0 / (t * t + 1.0).sqrt();
+                let s = t * c;
+                // a ← Jᵀ a J, v ← v J.
+                for row in &mut a {
+                    let (akp, akq) = (row[p], row[q]);
+                    row[p] = c * akp - s * akq;
+                    row[q] = s * akp + c * akq;
+                }
+                let (rp, rq) = (a[p], a[q]);
+                a[p] = std::array::from_fn(|k| c * rp[k] - s * rq[k]);
+                a[q] = std::array::from_fn(|k| s * rp[k] + c * rq[k]);
+                for row in &mut v {
+                    let (vp, vq) = (row[p], row[q]);
+                    row[p] = c * vp - s * vq;
+                    row[q] = s * vp + c * vq;
+                }
+            }
+        }
+    }
+    ([0, 1, 2, 3].map(|i| a[i][i]), v)
+}
+
 /// A unit cell: edge lengths in ångström and angles in degrees (α between b and c, β between
 /// a and c, γ between a and b).
 ///
@@ -507,6 +625,100 @@ mod tests {
             assert!(Rigid::rotation(mat_mul(&m, &inv)).approx_eq(&Rigid::IDENTITY, 1e-12));
         }
         assert!(inverse(&[[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [0.0, 0.0, 1.0]]).is_none());
+    }
+
+    /// `points` turned by `rot`, then a little off each (a shape that is not quite the same).
+    fn turned(points: &[Vec3], rot: &Mat3, off: f64) -> Vec<Vec3> {
+        points
+            .iter()
+            .enumerate()
+            .map(|(i, &p)| {
+                let wobble = [(i as f64).sin(), (2.0 * i as f64).cos(), 0.5];
+                add(mat_vec(rot, p), scale(wobble, off))
+            })
+            .collect()
+    }
+
+    fn centred(points: &[Vec3]) -> Vec<Vec3> {
+        let n = points.len() as f64;
+        let c = scale(points.iter().fold([0.0; 3], |s, &p| add(s, p)), 1.0 / n);
+        points.iter().map(|&p| sub(p, c)).collect()
+    }
+
+    fn squared_misfit(rot: &Mat3, points: &[Vec3], targets: &[Vec3]) -> f64 {
+        points
+            .iter()
+            .zip(targets)
+            .map(|(&p, &t)| {
+                let d = sub(mat_vec(rot, p), t);
+                dot(d, d)
+            })
+            .sum()
+    }
+
+    /// The fitted rotation undoes a rotation exactly, fits a slightly other shape no worse
+    /// than any nearby rotation (the least-squares one), is never a reflection, and of a
+    /// straight target is the smallest turn onto its line.
+    #[test]
+    fn fit_rotation_is_the_least_squares_rotation() {
+        let shape = centred(&[
+            [0.0, 0.0, 0.0],
+            [1.4, 0.0, 0.0],
+            [1.8, 0.9, 0.0],
+            [-0.4, -0.5, 0.8],
+            [0.3, 1.2, -0.6],
+        ]);
+        for angles in [
+            [0.0, 0.0, 0.0],
+            [20.0, -40.0, 75.0],
+            [180.0, 0.0, 0.0],
+            [0.0, 179.0, 90.0],
+        ] {
+            let rot = euler_xyz(angles);
+            let target = turned(&shape, &rot, 0.0);
+            let fit = fit_rotation(&shape, &target);
+            assert!(
+                Rigid::rotation(fit).approx_eq(&Rigid::rotation(rot), 1e-9),
+                "{angles:?}: {fit:?}"
+            );
+            let target = centred(&turned(&shape, &rot, 0.05));
+            let fit = fit_rotation(&shape, &target);
+            assert!((det(&fit) - 1.0).abs() < 1e-9, "a rotation");
+            let best = squared_misfit(&fit, &shape, &target);
+            for axis in [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, -1.0],
+            ] {
+                for deg in [-0.5, 0.5] {
+                    let near = mat_mul(&axis_angle(axis, deg), &fit);
+                    assert!(squared_misfit(&near, &shape, &target) > best, "{angles:?}");
+                }
+            }
+        }
+        // A flat shape (one plane) still has one best rotation, not its mirror image.
+        let flat = centred(&[
+            [0.0, 0.0, 0.0],
+            [1.2, 0.0, 0.0],
+            [0.5, 1.0, 0.0],
+            [-0.7, 0.4, 0.0],
+        ]);
+        let rot = euler_xyz([10.0, 50.0, -30.0]);
+        let fit = fit_rotation(&flat, &turned(&flat, &rot, 0.0));
+        assert!(Rigid::rotation(fit).approx_eq(&Rigid::rotation(rot), 1e-9));
+
+        // A straight target: any turn about its line fits as well; the smallest is taken.
+        let line = [[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let bent = [[0.0, -1.0, 0.1], [0.0, 0.0, -0.2], [0.0, 1.0, 0.1]];
+        let fit = fit_rotation(&bent, &line);
+        assert!(Rigid::rotation(fit).approx_eq(
+            &Rigid::rotation(align([0.0, 1.0, 0.0], [1.0, 0.0, 0.0])),
+            1e-9
+        ));
+        // One point, or none: nothing to turn.
+        assert_eq!(fit_rotation(&[[0.0; 3]], &[[0.0; 3]]), IDENTITY);
+        assert_eq!(fit_rotation(&[], &[]), IDENTITY);
     }
 
     #[test]
