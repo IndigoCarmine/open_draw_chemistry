@@ -1232,8 +1232,8 @@ values_separator = ", "
 # Checkbox: minimise everything but the scanned parameters at every point (a relaxed scan).
 relax = "Relax the other degrees of freedom"
 relax_tip = "At every point, hold the scanned parameters (and the restraints set in the 3D view) and optimize everything else, then take the energy of the optimized structure. Each point starts from its neighbor's optimized structure. Much slower than a single-point scan"
-# The checkbox's hover text in the assembly view: each molecule keeps its place and orientation while its shape relaxes.
-relax_assembly_tip = "At every point, keep each molecule where the scanned parameters place it (three atoms spanning it are held) and optimize the molecules' shapes, then take the energy of the optimized structure. Each point starts from its neighbor's optimized shapes. Clicking a point sets its parameters in the design; the optimized shapes are not kept. Much slower than a single-point scan"
+# The checkbox's hover text in the assembly view: each molecule's centroid and orientation are held while all its atoms relax.
+relax_assembly_tip = "At every point, keep each molecule's centroid and orientation where the scanned parameters place it while all of its atoms relax (bond lengths, angles and the whole shape), then take the energy of the optimized structure. Each point starts from its neighbor's optimized shapes, and from the rigid structure too if that ends no lower. Clicking a point sets its parameters in the design; the optimized shapes are not kept. Much slower than a single-point scan"
 # Replaces "summary" when relaxing; {total}: number of grid points; {atoms}: number of atoms; {unit}: energy unit.
 summary_relaxed = "Points: {total} · atoms: {atoms} · optimized at each point with the scanned parameters held ({unit})"
 # {atoms}: atoms in the structure; {max}: the most a relaxed scan accepts.

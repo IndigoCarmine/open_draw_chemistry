@@ -162,7 +162,7 @@ impl Source {
     }
 
     /// The assembly at `values` as a relaxed scan minimises it: built rigidly, with where each
-    /// molecule is placed and the atoms that hold it there (see [`Placed`]).
+    /// molecule is placed (see [`Placed`]).
     pub fn placed_at(&self, values: &[f64]) -> Result<Placed, String> {
         let (design, built) = self.built_at(values)?;
         // The build places the instances whose component exists, in order.
@@ -175,28 +175,37 @@ impl Source {
         if placements.len() != built.molecule_count() {
             return Err(t!("scan.error.item_missing").into());
         }
-        let spanning: Vec<Vec<usize>> = design
-            .components
-            .iter()
-            .map(|c| {
-                c.oriented_positions()
-                    .map(|p| spanning_atoms(&p))
-                    .unwrap_or_default()
-            })
+        let molecules = placements
+            .into_iter()
+            .enumerate()
+            .map(|(m, placement)| (placement, built.molecule_atoms(m)))
             .collect();
-        let mut held = Vec::new();
-        let mut molecules = Vec::with_capacity(placements.len());
-        for (m, placement) in placements.into_iter().enumerate() {
-            let atoms = built.molecule_atoms(m);
-            let span = &spanning[built.component_of_molecule[m]];
-            held.extend(span.iter().map(|&k| atoms.start + k));
-            molecules.push((placement, atoms));
-        }
         Ok(Placed {
+            rigid: built.atoms.iter().map(|a| a.pos).collect(),
             point: self.point_of(built),
             molecules,
-            held,
         })
+    }
+
+    /// The most atoms the structure has at any of `points` (the values of each, one per
+    /// parameter): the model's are always its own; the assembly's change where a crystal's
+    /// copies on special positions merge or part, so each point's design is counted (a point
+    /// that cannot be set counts as the design as it is).
+    pub fn most_atoms(&self, points: &[Vec<f64>]) -> usize {
+        let Source::Assembly { design, params, .. } = self else {
+            return self.atom_count();
+        };
+        let at = |values: &[f64]| {
+            let mut d = design.clone();
+            for (p, &v) in params.iter().zip(values) {
+                p.write_design(&mut d, v).ok()?;
+            }
+            Some(d.atom_count())
+        };
+        points
+            .iter()
+            .filter_map(|values| at(values))
+            .fold(design.atom_count(), usize::max)
     }
 
     /// The model's atoms at `from` (another structure of them, such as a neighbouring point's
@@ -275,20 +284,61 @@ impl Source {
 
 /// An assembly point as a relaxed scan minimises it. Each molecule keeps the place and the
 /// orientation the design gives it — what the scanned parameters (a step's number, a cell
-/// constant, a hand-placed molecule's pose) decide — while its shape relaxes: OpenBabel can fix
-/// atoms but not a centroid or an orientation, so three atoms spanning each molecule (see
-/// [`spanning_atoms`]) are held where the rigid structure has them, which fixes its frame.
+/// constant, a hand-placed molecule's pose) decide — while its shape relaxes freely. OpenBabel
+/// can fix atoms but not a centroid or an orientation, so the minimiser moves every atom and
+/// [`Placed::hold`] then puts each molecule back rigidly: its centroid where the rigid
+/// structure has it, turned to fit the rigid molecule best (see [`math::fit_rotation`]).
+///
+/// The centroid is the plain mean of the atoms' positions, every atom weighted alike (not by
+/// mass), as the assembly places a molecule (a hand-placed one's position is that centroid,
+/// see [`crate::assembly::place::pose_of`]); the orientation's fit weights them alike too.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Placed {
     /// The structure built rigidly.
     pub point: Point,
     /// Each molecule's placement (the transform of its component's oriented atoms) and atoms.
     molecules: Vec<(Rigid, Range<usize>)>,
-    /// The atoms held: those spanning each molecule.
-    pub held: Vec<usize>,
+    /// Where the rigid structure has each atom: the molecules' places.
+    rigid: Vec<Vec3>,
 }
 
 impl Placed {
+    /// Each molecule's atoms.
+    pub fn molecules(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.molecules.iter().map(|(_, atoms)| atoms.clone())
+    }
+
+    /// Where the rigid structure has each atom.
+    pub fn rigid(&self) -> &[Vec3] {
+        &self.rigid
+    }
+
+    /// Put every molecule of `coords` (a structure of this point's atoms; another number of
+    /// atoms is left as it is) back in its place, rigidly, keeping its shape: its centroid on
+    /// the rigid molecule's, and turned about it to fit the rigid molecule best. Of a straight
+    /// molecule only its line is held (turning about it changes nothing), of one atom only its
+    /// position.
+    pub fn hold(&self, coords: &mut [Vec3]) {
+        if coords.len() != self.rigid.len() {
+            return;
+        }
+        for (_, atoms) in &self.molecules {
+            let (Some(now), Some(want)) =
+                (coords.get_mut(atoms.clone()), self.rigid.get(atoms.clone()))
+            else {
+                continue;
+            };
+            let at = crate::assembly::place::centroid(now);
+            let centre = crate::assembly::place::centroid(want);
+            let from: Vec<Vec3> = now.iter().map(|&p| math::sub(p, at)).collect();
+            let to: Vec<Vec3> = want.iter().map(|&p| math::sub(p, centre)).collect();
+            let rot = math::fit_rotation(&from, &to);
+            for (p, d) in now.iter_mut().zip(&from) {
+                *p = math::add(math::mat_vec(&rot, *d), centre);
+            }
+        }
+    }
+
     /// `coords` (a structure of this point's atoms) with each molecule's atoms taken back into
     /// its component's frame: the molecules' shapes, without their places.
     pub fn to_local(&self, coords: &[Vec3]) -> Vec<Vec3> {
@@ -303,13 +353,10 @@ impl Placed {
     }
 
     /// The molecules' shapes `local` (from [`Placed::to_local`], at another point) placed where
-    /// this point has the molecules, the held atoms exactly where the rigid structure has them;
-    /// `None` unless this point is [`Point::Coords`] of as many atoms.
+    /// this point has the molecules, and held there ([`Placed::hold`]); `None` unless this
+    /// point is [`Point::Coords`] of as many atoms.
     pub fn place(&self, local: &[Vec3]) -> Option<Vec<Vec3>> {
-        let Point::Coords(rigid) = &self.point else {
-            return None;
-        };
-        if local.len() != rigid.len() {
+        if !matches!(self.point, Point::Coords(_)) || local.len() != self.rigid.len() {
             return None;
         }
         let mut coords = local.to_vec();
@@ -318,43 +365,8 @@ impl Placed {
                 *p = placement.apply(*p);
             }
         }
-        for &a in &self.held {
-            coords[a] = rigid[a];
-        }
+        self.hold(&mut coords);
         Some(coords)
-    }
-}
-
-/// How far (Å) an atom must be off the line through two others for the three to span a plane.
-const STRAIGHT: f64 = 0.05;
-
-/// Of a molecule's atoms at `points`, those whose places fix its frame: the atom farthest from
-/// the centroid, the one farthest from that, and the one farthest from the line through both —
-/// spread out, so that holding them restricts the shape the least. A straight molecule gives
-/// the two ends (turning it about its line changes nothing), one of fewer atoms all of them.
-pub fn spanning_atoms(points: &[Vec3]) -> Vec<usize> {
-    if points.len() <= 2 {
-        return (0..points.len()).collect();
-    }
-    // The atom farthest by `far`, the earliest on a tie.
-    let farthest = |far: &dyn Fn(Vec3) -> f64| {
-        (0..points.len()).fold((0, f64::NEG_INFINITY), |best, i| {
-            let d = far(points[i]);
-            if d > best.1 { (i, d) } else { best }
-        })
-    };
-    let centre = crate::assembly::place::centroid(points);
-    let (a, _) = farthest(&|p| math::distance(p, centre));
-    let (b, _) = farthest(&|p| math::distance(p, points[a]));
-    let Some(axis) = math::unit(math::sub(points[b], points[a])) else {
-        // Every atom in one place.
-        return vec![a];
-    };
-    let (c, off) = farthest(&|p| math::norm(math::cross(math::sub(p, points[a]), axis)));
-    if off > STRAIGHT {
-        vec![a, b, c]
-    } else {
-        vec![a, b]
     }
 }
 
@@ -414,26 +426,44 @@ mod tests {
         }
     }
 
-    #[test]
-    fn spanning_atoms_are_spread_out_and_fix_the_frame() {
-        let points: Vec<Vec3> = component().atoms.iter().map(|a| a.pos).collect();
-        let span = spanning_atoms(&points);
-        assert_eq!(span.len(), 3, "{span:?}");
-        // The two ends, and the one off their line.
-        assert!(span.contains(&2) && span.contains(&3), "{span:?}");
-        // A straight molecule: its two ends; two atoms or one: all of them.
-        let line = [[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [2.4, 0.0, 0.0]];
-        let mut ends = spanning_atoms(&line);
-        ends.sort();
-        assert_eq!(ends, vec![0, 2]);
-        assert_eq!(spanning_atoms(&line[..2]), vec![0, 1]);
-        assert_eq!(spanning_atoms(&line[..1]), vec![0]);
-        assert!(spanning_atoms(&[]).is_empty());
+    /// The distances between every two atoms of `atoms`: the shape, wherever it is.
+    fn shape(coords: &[Vec3], atoms: Range<usize>) -> Vec<f64> {
+        let atoms: Vec<usize> = atoms.collect();
+        atoms
+            .iter()
+            .flat_map(|&a| atoms.iter().map(move |&b| (a, b)))
+            .map(|(a, b)| math::distance(coords[a], coords[b]))
+            .collect()
     }
 
-    /// Of every molecule — the steps' copies and the hand-placed one — three atoms are held,
-    /// where the rigid structure has them; and the molecules' shapes taken from one point are
-    /// moved rigidly to where another point places the molecules.
+    fn same_shape(a: &[Vec3], b: &[Vec3], atoms: Range<usize>) -> bool {
+        let (a, b) = (shape(a, atoms.clone()), shape(b, atoms));
+        a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-9)
+    }
+
+    /// Every molecule of `coords` where `placed` has it: its centroid on the rigid one's and
+    /// its best-fitting rotation onto the rigid one none.
+    fn assert_held(placed: &Placed, coords: &[Vec3]) {
+        use crate::assembly::place::centroid;
+        let rigid = placed.rigid();
+        for atoms in placed.molecules() {
+            let (now, want) = (&coords[atoms.clone()], &rigid[atoms.clone()]);
+            let (at, centre) = (centroid(now), centroid(want));
+            let off = math::distance(at, centre);
+            assert!(off < 1e-9, "{atoms:?}: centroid {off} Å off");
+            let from: Vec<Vec3> = now.iter().map(|&p| math::sub(p, at)).collect();
+            let to: Vec<Vec3> = want.iter().map(|&p| math::sub(p, centre)).collect();
+            let rot = math::fit_rotation(&from, &to);
+            assert!(
+                Rigid::rotation(rot).approx_eq(&Rigid::IDENTITY, 1e-9),
+                "{atoms:?}: turned {rot:?}"
+            );
+        }
+    }
+
+    /// Holding puts every molecule — the steps' copies and the hand-placed one — back on its
+    /// place and orientation rigidly, its shape kept; and the molecules' shapes taken from one
+    /// point are moved to where another point places the molecules, held there.
     #[test]
     fn a_placed_point_holds_each_molecule_and_carries_shapes_to_another_point() {
         let rise = Param::Step {
@@ -450,51 +480,145 @@ mod tests {
             panic!("the same atoms")
         };
         assert_eq!(Ok(at.point.clone()), source.at(&[3.5, 0.0]));
-        assert_eq!(at.held.len(), 4 * 3, "three of each of the four molecules");
-        for m in 0..4 {
-            let held = at.held.iter().filter(|&&a| (4 * m..4 * m + 4).contains(&a));
-            assert_eq!(held.count(), 3, "molecule {m}");
-        }
-        // Each molecule's free atom and one of its held ones.
-        let free_and_held = |m: usize| {
-            let atoms = 4 * m..4 * m + 4;
-            let free = atoms.clone().find(|a| !at.held.contains(a)).unwrap();
-            let held = atoms.clone().find(|a| at.held.contains(a)).unwrap();
-            (free, held)
-        };
-        // A shape: every molecule's free atom pushed away from its held one; the held atoms
-        // a little off (the minimiser keeps them, but not to the last digit).
+        assert_eq!(at.rigid(), &rigid[..]);
+        let molecules: Vec<Range<usize>> = at.molecules().collect();
+        assert_eq!(
+            molecules,
+            (0..4).map(|m| 4 * m..4 * m + 4).collect::<Vec<_>>()
+        );
+        // A minimised structure: every molecule's shape changed (one atom pushed out), then
+        // the molecule moved off and turned, as a free minimiser leaves it.
         let mut relaxed = rigid.clone();
-        for m in 0..4 {
-            let (free, held) = free_and_held(m);
-            let away = math::sub(rigid[free], rigid[held]);
-            relaxed[free] = math::add(rigid[free], math::scale(away, 0.1));
+        for (m, atoms) in molecules.iter().enumerate() {
+            relaxed[atoms.start + 1] = math::add(relaxed[atoms.start + 1], [0.2, -0.1, 0.15]);
+            let turn = Rigid {
+                rot: math::euler_xyz([3.0 * m as f64 + 2.0, -4.0, 5.0]),
+                trans: [0.3, -0.2, 0.1 * m as f64],
+            };
+            for p in &mut relaxed[atoms.clone()] {
+                *p = turn.apply(*p);
+            }
         }
-        for &a in &at.held {
-            relaxed[a] = math::add(relaxed[a], [1e-7, 0.0, 0.0]);
-        }
-        let shapes = at.to_local(&relaxed);
-        let there = source.placed_at(&[4.2, 35.0]).unwrap();
-        let Point::Coords(rigid_there) = &there.point else {
-            panic!("the same atoms")
-        };
-        assert_eq!(there.held, at.held);
-        let moved = there.place(&shapes).unwrap();
-        for &a in &there.held {
-            assert_eq!(
-                moved[a], rigid_there[a],
-                "held atom {a} not where it is built"
+        let mut held = relaxed.clone();
+        at.hold(&mut held);
+        assert_held(&at, &held);
+        for atoms in &molecules {
+            assert!(same_shape(&held, &relaxed, atoms.clone()), "kept its shape");
+            assert!(
+                !same_shape(&held, rigid, atoms.clone()),
+                "not the rigid shape"
             );
         }
-        for m in 0..4 {
-            // The free atom is where the molecule's placement there takes the shape.
-            let (free, held) = free_and_held(m);
-            let away = math::sub(rigid_there[free], rigid_there[held]);
-            let expect = math::add(rigid_there[free], math::scale(away, 0.1));
-            let off = math::distance(moved[free], expect);
-            assert!(off < 1e-9, "molecule {m}: {off}");
-            assert!(math::distance(moved[free], rigid_there[free]) > 0.05);
+        // Holding a held structure leaves it.
+        let mut again = held.clone();
+        at.hold(&mut again);
+        assert!(
+            again
+                .iter()
+                .zip(&held)
+                .all(|(a, b)| math::distance(*a, *b) < 1e-9)
+        );
+
+        let shapes = at.to_local(&held);
+        let there = source.placed_at(&[4.2, 35.0]).unwrap();
+        let moved = there.place(&shapes).unwrap();
+        assert_held(&there, &moved);
+        for atoms in there.molecules() {
+            assert!(same_shape(&moved, &held, atoms), "kept its shape");
         }
         assert_eq!(there.place(&shapes[1..]), None, "another number of atoms");
+    }
+
+    /// A straight molecule is held by its line — laid back along it by the smallest turn, not
+    /// spun about it — a two-atom one likewise, and a lone atom at its place.
+    #[test]
+    fn straight_molecules_and_lone_atoms_are_held_by_what_fixes_them() {
+        use crate::assembly::place::centroid;
+        let atom = |e: &str, pos| Atom3d {
+            element: e.into(),
+            pos,
+        };
+        let bond = |begin, end| Bond3d {
+            begin,
+            end,
+            order: 2,
+        };
+        let co2 = Component {
+            name: "co2".into(),
+            atoms: vec![
+                atom("O", [-1.16, 0.0, 0.0]),
+                atom("C", [0.0, 0.0, 0.0]),
+                atom("O", [1.16, 0.0, 0.0]),
+            ],
+            bonds: vec![bond(0, 1), bond(1, 2)],
+            orient: None,
+        };
+        let mut co = co2.clone();
+        co.atoms.pop();
+        co.bonds.pop();
+        let mut ar = co2.clone();
+        ar.atoms = vec![atom("Ar", [0.0, 0.0, 0.0])];
+        ar.bonds.clear();
+        let design = Design {
+            components: vec![co2, co, ar],
+            manual: vec![
+                Instance {
+                    component: 1,
+                    transform: Rigid {
+                        rot: math::euler_xyz([0.0, 30.0, 60.0]),
+                        trans: [4.0, 0.0, 0.0],
+                    },
+                },
+                Instance {
+                    component: 2,
+                    transform: Rigid::translation([0.0, 4.0, 0.0]),
+                },
+            ],
+            ..Default::default()
+        };
+        let source = Source::assembly(&design, Vec::new());
+        let at = source.placed_at(&[]).unwrap();
+        let rigid = at.rigid().to_vec();
+        assert_eq!(rigid.len(), 3 + 2 + 1);
+        // CO2 bent, CO stretched, then both turned; Ar moved.
+        let mut bent = rigid.clone();
+        bent[1] = math::add(bent[1], [0.0, 0.1, 0.0]);
+        bent[3] = math::add(bent[3], [0.02, 0.0, 0.0]);
+        bent[5] = math::add(bent[5], [0.3, 0.0, -0.2]);
+        let turn = math::euler_xyz([7.0, 4.0, -3.0]);
+        let mut relaxed = bent.clone();
+        for p in &mut relaxed[..5] {
+            *p = math::mat_vec(&turn, *p);
+        }
+        let mut held = relaxed.clone();
+        at.hold(&mut held);
+        assert_held(&at, &held);
+        for atoms in [0..3, 3..5] {
+            let line = math::unit(math::sub(rigid[atoms.end - 1], rigid[atoms.start])).unwrap();
+            let now = math::unit(math::sub(held[atoms.end - 1], held[atoms.start])).unwrap();
+            assert!(
+                math::norm(math::cross(line, now)) < 1e-9,
+                "{atoms:?} along its line"
+            );
+            assert!(math::dot(line, now) > 0.0, "{atoms:?} not reversed");
+            assert!(same_shape(&held, &relaxed, atoms), "kept its shape");
+        }
+        // The bent CO2's carbon: turned back by the smallest turn laying the molecule on its
+        // line (x), not spun about it.
+        let back = math::mat_mul(
+            &math::align(math::mat_vec(&turn, [1.0, 0.0, 0.0]), [1.0, 0.0, 0.0]),
+            &turn,
+        );
+        let expect = math::mat_vec(&back, math::sub(bent[1], centroid(&bent[..3])));
+        let off = math::sub(held[1], centroid(&held[..3]));
+        assert!(
+            math::distance(off, expect) < 1e-9,
+            "{off:?}, not {expect:?}"
+        );
+        assert!(math::norm(off) > 0.05, "still bent");
+        assert!(
+            math::distance(held[5], rigid[5]) < 1e-12,
+            "the lone atom back in place"
+        );
     }
 }
