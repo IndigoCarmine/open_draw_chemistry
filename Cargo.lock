@@ -652,7 +652,7 @@ dependencies = [
 [[package]]
 name = "chembuider-rs"
 version = "0.4.2"
-source = "git+https://github.com/IndigoCarmine/chembuider-rs?rev=aa0b93cb4908b8c9f3ce71c45f9770cdcac6e139#aa0b93cb4908b8c9f3ce71c45f9770cdcac6e139"
+source = "git+https://github.com/IndigoCarmine/chembuider-rs?rev=7db06c56012bae21c1099254b84f8024ac7d6fdf#7db06c56012bae21c1099254b84f8024ac7d6fdf"
 dependencies = [
  "cdx-file-rs",
  "cfb",
@@ -3610,7 +3610,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
  "windows-sys 0.52.0",

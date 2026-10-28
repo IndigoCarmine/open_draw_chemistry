@@ -4,18 +4,24 @@
 //! abbreviations, and OpenBabel writes a canonical **isomeric** SMILES: it perceives tetrahedral
 //! centres from the 2D coordinates plus wedges, and double-bond geometry from the coordinates.
 //! There is no stereo-less fallback: if OpenBabel fails the panel shows why.
+//!
+//! Brackets with a number (`[CH2–CH2–O]3`, a multiple group) are written out first, so the
+//! SMILES is that of the molecule they stand for, as are the panel's formula and masses. A
+//! repeat unit labelled `n` stays as drawn: the SMILES of `n = 1`, end groups included.
 
 use std::collections::HashSet;
 
+use chembuider_rs::molecule::bracket::expand;
 use chembuider_rs::widget::analysis::analysis_target;
 use chembuider_rs::{BondOrder, Config, Molecule};
 
 use crate::three_d::Error;
 
-/// The structures the SMILES is of: those with a selected atom, or everything drawn. Page
-/// objects (arrows, text, tables) play no part.
+/// The structures the SMILES is of: those with a selected atom, or everything drawn, numbered
+/// brackets written out (see the module docs). Page objects (arrows, text, tables, brackets
+/// left) play no part.
 pub fn target(mol: &Molecule, selection: &HashSet<u32>) -> Molecule {
-    let mut target = analysis_target(mol, selection);
+    let mut target = expand(&analysis_target(mol, selection));
     target.objects.clear();
     target.ring_fills.clear();
     target
@@ -55,6 +61,7 @@ fn openbabel_smiles(mol: &Molecule, config: &Config) -> Result<String, Error> {
 mod tests {
     use super::*;
     use chembuider_rs::BondStereo;
+    use chembuider_rs::molecule::{BracketUsage, PageObject};
 
     fn config() -> Config {
         Config::default()
@@ -128,6 +135,42 @@ mod tests {
         assert_eq!(compute(&target(&m, &selected), &config()).unwrap(), "N");
         let all = target(&m, &HashSet::new());
         assert_eq!(all.atoms.len(), 4);
+    }
+
+    /// Me–[CH2–CH2–O]–Me with the repeat unit labelled `label`.
+    fn glyme(label: &str) -> Molecule {
+        let mut m = Molecule::default();
+        let ids: Vec<u32> = ["C", "C", "C", "O", "C"]
+            .iter()
+            .enumerate()
+            .map(|(k, el)| {
+                let y = if k % 2 == 0 { 0.0 } else { -0.75 };
+                m.add_atom((*el).into(), [k as f32 * 1.3, y], 0)
+            })
+            .collect();
+        for w in ids.windows(2) {
+            m.add_bond(w[0], w[1], BondOrder::Single);
+        }
+        let id = m
+            .add_bracket(&[ids[1], ids[2], ids[3]].into(), BracketUsage::Sru)
+            .unwrap();
+        if let Some(PageObject::Bracket(b)) = m.object_by_id_mut(id) {
+            b.label = label.into();
+        }
+        m
+    }
+
+    #[test]
+    fn a_numbered_repeat_unit_is_written_out() {
+        let all = HashSet::new();
+        let s = compute(&target(&glyme("3"), &all), &config()).unwrap();
+        assert_eq!(canonical(&s), canonical("COCCOCCOCCC"), "CH3(CH2CH2O)3CH3");
+        let s = compute(&target(&glyme("n"), &all), &config()).unwrap();
+        assert_eq!(
+            canonical(&s),
+            canonical("CCCOC"),
+            "n = 1, the end groups kept"
+        );
     }
 
     #[test]

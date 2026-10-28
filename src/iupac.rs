@@ -1,6 +1,7 @@
 //! 「IUPAC 名をコピー」「IUPAC 名をテキストとして挿入」: the name of the selected structures
 //! (or of the whole drawing), from chembuider-rs's namer.
 
+use chembuider_rs::molecule::bracket::expand;
 use chembuider_rs::naming::{NameResult, iupac_name_with_config};
 use chembuider_rs::widget::analysis::analysis_target;
 use chembuider_rs::{ChemStructEditor, Config, Molecule};
@@ -8,9 +9,10 @@ use chembuider_rs::{ChemStructEditor, Config, Molecule};
 /// How far below the lowest atom the inserted name's baseline goes (one and a half bonds).
 const GAP_BELOW: f32 = 2.2;
 
-/// The structures the commands name: those with a selected atom, or everything drawn.
+/// The structures the commands name: those with a selected atom, or everything drawn, numbered
+/// brackets written out (`[CH2–CH2–O]3`), as the analysis panel names them.
 fn target(editor: &ChemStructEditor) -> Molecule {
-    analysis_target(&editor.molecule, &editor.selected_atoms)
+    expand(&analysis_target(&editor.molecule, &editor.selected_atoms))
 }
 
 /// The IUPAC name of the selected structures (or the whole drawing), or why there is none —
@@ -32,7 +34,8 @@ pub fn name(editor: &ChemStructEditor, config: &Config) -> Result<String, String
 /// step. Returns the name.
 pub fn insert_name(editor: &mut ChemStructEditor, config: &Config) -> Result<String, String> {
     let name = name(editor, config)?;
-    let target = target(editor);
+    // Under the structures as drawn, not as written out.
+    let target = analysis_target(&editor.molecule, &editor.selected_atoms);
     let left = target
         .atoms
         .iter()
