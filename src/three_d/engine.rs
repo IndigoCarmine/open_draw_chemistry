@@ -94,11 +94,12 @@ fn relax(
     // still finds a little more; passes repeat until one no longer lowers the energy.
     //
     // The soft stage leaves the full stiffness [`STIFF_RESERVE`] steps at least (half of what
-    // is left, if that is fewer), so it always gets its turn: straight from the soft stage, a
-    // structure misses a restrained dihedral by up to a degree or two.
+    // is left, rounded up, if that is fewer), so it always gets its turn — the last step left,
+    // if that is all: straight from the soft stage, a structure misses a restrained dihedral by
+    // up to a degree or two.
     let mut energy = f64::INFINITY;
     for _ in 0..RESTRAINED_PASSES {
-        let mut soft = *left - (*left / 2).min(STIFF_RESERVE);
+        let mut soft = *left - left.div_ceil(2).min(STIFF_RESERVE);
         let given = soft;
         let factor = Some(SOFT_FORCE_FACTOR);
         descend(mol, force_field, algorithms, constraints, factor, &mut soft).ok_or_else(failed)?;
@@ -153,13 +154,20 @@ fn descend(
     left: &mut u32,
 ) -> Option<()> {
     let run = |mol: &mut ObMol, algorithm: Algorithm, most: u32, left: &mut u32| {
+        // The run's own line searches come out of the same steps (see [`setup_steps`]); with
+        // none left for any other, it cannot run and so moves nothing.
+        let setup = setup_steps(algorithm);
+        let steps = most.min(*left).saturating_sub(setup);
+        if steps == 0 {
+            return Some(false);
+        }
         let mut config = Minimizer::new(force_field.id());
         // A frame every step, so `steps_taken` counts the steps a run took: one stopped after
         // two of them must not be charged for fifty, or a structure that OpenBabel stops every
         // step or two runs through its budget doing almost nothing.
         config
             .algorithm(algorithm)
-            .max_steps(most.min(*left))
+            .max_steps(steps)
             .energy_convergence(ECONV)
             .steps_per_frame(1);
         if !constraints.is_empty() {
@@ -171,10 +179,12 @@ fn descend(
         }
         let before = coordinates(mol);
         let done = mol.minimize(&config);
+        #[cfg(test)]
+        tests::record(algorithm, force_factor.is_some(), done.steps_taken());
         if done.stop_reason() == StopReason::Failed {
             return None;
         }
-        *left = left.saturating_sub(done.steps_taken().max(1));
+        *left = left.saturating_sub(done.steps_taken().max(1) + setup);
         Some(rms_shift(&before, &coordinates(mol)) >= SETTLED_SHIFT)
     };
     let mut algorithms = algorithms;
@@ -205,6 +215,18 @@ fn descend(
         break;
     }
     Some(())
+}
+
+/// The steps a run under `algorithm` takes before those OpenBabel counts in `steps_taken`.
+/// Conjugate gradients set out with a line search along the gradient
+/// (`ConjugateGradientsInitialize` in forcefield.cpp), and the openbabel crate starts counting
+/// after it; steepest descent and L-BFGS only evaluate the starting point first. Left
+/// uncharged, that step made every run of conjugate gradients overrun the budget by one.
+fn setup_steps(algorithm: Algorithm) -> u32 {
+    match algorithm {
+        Algorithm::ConjugateGradients => 1,
+        Algorithm::SteepestDescent | Algorithm::Lbfgs => 0,
+    }
 }
 
 /// The energy change per step (force field units) under which OpenBabel's minimisers may stop
@@ -412,6 +434,56 @@ fn usable(model: &Model3d) -> bool {
 mod tests {
     use super::*;
     use crate::three_d::{OPTIMIZE_STEPS, edit, geom};
+    use std::cell::RefCell;
+
+    /// One OpenBabel minimisation [`descend`] ran: its algorithm, whether under the soft
+    /// restraints, and the steps OpenBabel reported taking.
+    #[derive(Clone, Copy, Debug)]
+    struct Run {
+        algorithm: Algorithm,
+        soft: bool,
+        reported: u32,
+    }
+
+    impl Run {
+        /// The line searches the run really took. OpenBabel's conjugate gradients take one
+        /// more than they report: their initialisation (`ConjugateGradientsInitialize` in the
+        /// vendored forcefield.cpp) moves the atoms along the gradient first, and the shim
+        /// (`optimizer_run_trajectory`) only counts the steps after it. Steepest descent's and
+        /// L-BFGS's initialisations only evaluate the starting point.
+        fn line_searches(self) -> u32 {
+            match self.algorithm {
+                Algorithm::ConjugateGradients => self.reported + 1,
+                Algorithm::SteepestDescent | Algorithm::Lbfgs => self.reported,
+            }
+        }
+    }
+
+    thread_local! {
+        static RUNS: RefCell<Vec<Run>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn record(algorithm: Algorithm, soft: bool, reported: u32) {
+        RUNS.with(|runs| {
+            runs.borrow_mut().push(Run {
+                algorithm,
+                soft,
+                reported,
+            })
+        });
+    }
+
+    /// The runs [`descend`] made on this thread during `f`, and what `f` returned.
+    fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<Run>) {
+        RUNS.with(|runs| runs.borrow_mut().clear());
+        let out = f();
+        (out, RUNS.with(|runs| runs.take()))
+    }
+
+    /// The line searches `runs` took in all.
+    fn line_searches(runs: &[Run]) -> u32 {
+        runs.iter().map(|r| r.line_searches()).sum()
+    }
 
     /// Pentane, built and relaxed by OpenBabel.
     fn pentane() -> Model3d {
@@ -799,29 +871,105 @@ mod tests {
         }
     }
 
+    /// Minimise `molfile` under `force_field` holding `constraints` from a budget of `budget`
+    /// steps (see [`relax`]), and check what that spent: the steps charged to the budget are
+    /// the line searches OpenBabel really took (see [`Run::line_searches`]), and no more than
+    /// the budget. The energy reached, the molfile reached and the steps spent.
+    fn relaxed_within(
+        molfile: &str,
+        force_field: ForceField,
+        budget: u32,
+        constraints: &[Constraint],
+        what: &str,
+    ) -> (f64, String, u32) {
+        let mut mol = ObMol::parse(molfile, "mol").expect("molfile");
+        let mut left = budget;
+        let (energy, runs) = recording(|| relax(&mut mol, force_field, &mut left, constraints));
+        let energy = energy.unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        let charged = budget - left;
+        let taken = line_searches(&runs);
+        assert_eq!(
+            taken, charged,
+            "{what}: took {taken} steps, charged {charged}"
+        );
+        assert!(taken <= budget, "{what}: took {taken} steps of {budget}");
+        (energy, mol.write("mol").expect("molfile"), taken)
+    }
+
+    /// Every step OpenBabel takes is charged to the budget, and no minimisation takes more
+    /// steps than it is given. Conjugate gradients take one more step than OpenBabel reports
+    /// (see [`Run::line_searches`]) and used to be charged only those reported, so every run
+    /// of them overran what was left by one: a run asked for the last step took two.
+    #[test]
+    fn a_minimisation_takes_no_more_steps_than_its_budget() {
+        let smiles = "CC(C)Cc1ccc(cc1)C(C)C(=O)O";
+        let restraint_sets = [vec![], vec![Constraint::Torsion([0, 1, 3, 4], 60.0)]];
+        for force_field in ForceField::ALL {
+            let start = kicked(&built(smiles, force_field), force_field);
+            for restraints in &restraint_sets {
+                for budget in [1, 2, 3, 10, 100] {
+                    let what = format!("{force_field} holding {restraints:?} in {budget} steps");
+                    relaxed_within(&start.molfile, force_field, budget, restraints, &what);
+                }
+            }
+        }
+    }
+
+    /// A restrained minimisation's soft stage always leaves the full stiffness a step at least
+    /// (see [`relax`]): with a single step left it used to take it itself, and the model came
+    /// back held only by the soft restraints.
+    #[test]
+    fn a_restrained_minimisation_ends_at_full_stiffness() {
+        let smiles = "CC(C)Cc1ccc(cc1)C(C)C(=O)O";
+        let restraint = [Constraint::Torsion([0, 1, 3, 4], 60.0)];
+        for force_field in ForceField::ALL {
+            let start = kicked(&built(smiles, force_field), force_field);
+            for budget in [1, 2, 3, 5] {
+                let mut mol = ObMol::parse(&start.molfile, "mol").expect("molfile");
+                let mut left = budget;
+                let (energy, runs) =
+                    recording(|| relax(&mut mol, force_field, &mut left, &restraint));
+                energy.unwrap_or_else(|e| panic!("{force_field}: {e:?}"));
+                // A pass that ends with a soft run leaves no steps for another, so this is the
+                // full stiffness following every soft stage.
+                assert!(
+                    runs.last().is_some_and(|r| !r.soft),
+                    "{force_field} in {budget} steps: ended under the soft restraints, {runs:?}"
+                );
+            }
+        }
+    }
+
     /// Paclitaxel (taxol), C47H51NO14: 113 atoms with its hydrogens, a crowded polycyclic core
-    /// and floppy side chains.
-    const TAXOL: &str = "CC1=C2C(C(=O)C3(C(CC4C(C3C(C(C2(C)C)(CC1OC(=O)C(C(C5=CC=CC=C5)NC(=O)\
-                         C6=CC=CC=C6)O)O)OC(=O)C7=CC=CC=C7)(CO4)OC(=O)C)O)C)OC(=O)C";
+    /// and floppy side chains, as OpenBabel's builder (`generate_3d_with("med")` on its 2D
+    /// layout) placed it once. The builder places it differently every time, and how long a
+    /// minimisation takes with it, so the tests below start from this one: of eight builds,
+    /// the one MMFF94 took longest to relax (some 1200 steps; the others took 500 to 1000).
+    const TAXOL_3D: &str = include_str!("../../tests/data/taxol_3d.mol");
 
     /// A mid-sized molecule relaxes, on Generate and on Optimize, at least as low as it did
-    /// before OpenBabel's runs were restarted, and within the steps those runs were bounded by.
-    /// `minimised_within` is how many steps it must take at most to reach a minimum (L-BFGS
-    /// gets there long before the budget), or `None` where the budget is what ends it (a
-    /// strained taxol under UFF or GAFF is still far from its minimum after thousands of
-    /// conjugate-gradient steps).
-    fn relaxes_a_mid_sized_molecule(force_field: ForceField, minimised_within: Option<u32>) {
+    /// before OpenBabel's runs were restarted, and within the steps those runs were bounded by
+    /// — a restrained Optimize within [`RESTRAINED_BUDGET`] times them. Where it `converges`
+    /// (L-BFGS under MMFF), it stops at a minimum before the budget runs out; elsewhere the
+    /// budget is what ends it (a strained taxol under UFF or GAFF is still far from its minimum
+    /// after thousands of conjugate-gradient steps).
+    fn relaxes_a_mid_sized_molecule(force_field: ForceField, converges: bool) {
         use crate::three_d::GENERATE_STEPS;
-        let mut mol = ObMol::parse(&drawing(TAXOL), "mol").expect("drawing");
-        mol.add_hydrogens();
-        assert!(mol.generate_3d_with(ATTEMPTS[0]));
-        assert_eq!(mol.num_atoms(), 113);
-        let built = mol.write("mol").expect("molfile");
+        assert_eq!(ObMol::parse(TAXOL_3D, "mol").unwrap().num_atoms(), 113);
         let tolerance = |e: f64| ROUNDING * (1.0 + e.abs());
+        let what = |stage: &str| format!("taxol under {force_field}, {stage}");
+        // At a minimum, as `optimize_reaches_the_minimum` has it.
+        let at_a_minimum = |molfile: &str, spent: u32, budget: u32, stage: &str| {
+            if converges {
+                assert!(spent < budget, "{}: spent all {budget} steps", what(stage));
+                let g = rms_gradient(molfile, force_field);
+                assert!(g < 0.3, "{}: RMS gradient {g}", what(stage));
+            }
+        };
 
         // Generate: before, rounds of `GENERATE_STEPS` conjugate-gradient steps until a round
         // changed the energy by less than 1%, at most eight.
-        let mut before = ObMol::parse(&built, "mol").unwrap();
+        let mut before = ObMol::parse(TAXOL_3D, "mol").unwrap();
         let mut base = before
             .optimize_geometry(force_field.id(), GENERATE_STEPS)
             .unwrap();
@@ -835,20 +983,15 @@ mod tests {
                 break;
             }
         }
-        let mut now = ObMol::parse(&built, "mol").unwrap();
         let budget = GENERATE_STEPS * GENERATE_BUDGET;
-        let mut left = budget;
-        let generated = relax(&mut now, force_field, &mut left, &[]).unwrap();
-        let spent = budget - left;
-        let what = format!("taxol under {force_field}");
+        let (generated, molfile, spent) =
+            relaxed_within(TAXOL_3D, force_field, budget, &[], &what("Generate"));
         assert!(
             generated <= base + tolerance(base),
-            "{what}: Generate reached E {generated}, before {base}"
+            "{}: E {generated}, before {base}",
+            what("Generate")
         );
-        assert!(
-            spent <= minimised_within.unwrap_or(budget),
-            "{what}: Generate took {spent} steps"
-        );
+        at_a_minimum(&molfile, spent, budget, "Generate");
 
         // Optimize, from the model as it was generated before: one conjugate-gradient run.
         let start = before.write("mol").unwrap();
@@ -856,35 +999,55 @@ mod tests {
         let base = once
             .optimize_geometry(force_field.id(), OPTIMIZE_STEPS)
             .unwrap();
-        let mut now = ObMol::parse(&start, "mol").unwrap();
-        let mut left = OPTIMIZE_STEPS;
-        let optimized = relax(&mut now, force_field, &mut left, &[]).unwrap();
-        let spent = OPTIMIZE_STEPS - left;
+        let (optimized, molfile, spent) =
+            relaxed_within(&start, force_field, OPTIMIZE_STEPS, &[], &what("Optimize"));
         assert!(
             optimized <= base + tolerance(base),
-            "{what}: Optimize reached E {optimized}, before {base}"
+            "{}: E {optimized}, before {base}",
+            what("Optimize")
         );
+        at_a_minimum(&molfile, spent, OPTIMIZE_STEPS, "Optimize");
+
+        // A restrained Optimize from the same model, holding the side chain 0.1 Å further from
+        // the core than it was.
+        let ends = RESTRAINED_ENDS;
+        let held = |molfile: &str| {
+            let mol = ObMol::parse(molfile, "mol").unwrap();
+            let energy = mol.energy(force_field.id()).unwrap();
+            super::model(&mol, force_field, energy).unwrap()
+        };
+        let target = held(&start).distance(ends[0], ends[1]) + 0.1;
+        let restraint = [Constraint::Distance(ends, target)];
+        let budget = OPTIMIZE_STEPS * RESTRAINED_BUDGET;
+        let (_, molfile, _) =
+            relaxed_within(&start, force_field, budget, &restraint, &what("restrained"));
+        let at = held(&molfile).distance(ends[0], ends[1]);
         assert!(
-            spent <= minimised_within.unwrap_or(OPTIMIZE_STEPS),
-            "{what}: Optimize took {spent} steps"
+            (at - target).abs() < 0.01,
+            "{}: distance {at}, restrained to {target}",
+            what("restrained")
         );
     }
 
+    /// Two carbons of [`TAXOL_3D`]: the methyl on its core's double bond, and the side chain's
+    /// carbon next to the ester.
+    const RESTRAINED_ENDS: [usize; 2] = [0, 22];
+
     #[test]
     fn relaxes_a_mid_sized_molecule_under_mmff() {
-        relaxes_a_mid_sized_molecule(ForceField::Mmff94, Some(1500));
-        relaxes_a_mid_sized_molecule(ForceField::Mmff94s, Some(1500));
+        relaxes_a_mid_sized_molecule(ForceField::Mmff94, true);
+        relaxes_a_mid_sized_molecule(ForceField::Mmff94s, true);
     }
 
     #[test]
     #[ignore = "slow: a minute or two in a debug build, spending every step of the budget"]
     fn relaxes_a_mid_sized_molecule_under_uff() {
-        relaxes_a_mid_sized_molecule(ForceField::Uff, None);
+        relaxes_a_mid_sized_molecule(ForceField::Uff, false);
     }
 
     #[test]
     #[ignore = "slow: a minute or two in a debug build, spending every step of the budget"]
     fn relaxes_a_mid_sized_molecule_under_gaff() {
-        relaxes_a_mid_sized_molecule(ForceField::Gaff, None);
+        relaxes_a_mid_sized_molecule(ForceField::Gaff, false);
     }
 }
