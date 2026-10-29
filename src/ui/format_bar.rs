@@ -115,13 +115,14 @@ fn fitting(widths: &[f32], available: f32, spacing: f32) -> usize {
 
 /// The section, for the active editor's `state` (`None` without a document, everything greyed
 /// out). Text format changes become [`Command::TextFormat`]; the rest are the 書式 menu's.
+/// Returns where it is in the toolbar, the "…" button included (not its popups).
 pub fn show(
     ui: &mut Ui,
     state: Option<&FormatState>,
     bar: &mut TextFormatBar,
     appearance: &mut Appearance,
     out: &mut Vec<Command>,
-) {
+) -> Rect {
     let enabled = state.is_some();
     let blank;
     let state = match state {
@@ -137,42 +138,45 @@ pub fn show(
         .unwrap_or(GROUPS.map(Group::estimate));
     let shown = fitting(&widths, ui.available_width(), ui.spacing().item_spacing.x);
     let mut changes = Vec::new();
-    ui.add_enabled_ui(enabled, |ui| {
-        for (k, &group) in GROUPS[..shown].iter().enumerate() {
-            let response = ui
-                .horizontal(|ui| {
-                    group_ui(ui, group, false, state, bar, appearance, &mut changes, out)
-                })
-                .response;
-            widths[k] = response.rect.width();
-        }
-        if shown < GROUPS.len() {
-            let more = icons::icon_button(
-                ui,
-                Icon::More,
-                vec2(MORE, MORE),
-                Frame::Flat,
-                false,
-                true,
-                t!("format_bar.more"),
-            );
-            let label = t!("format_bar.more");
-            more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-            egui::Popup::menu(&more)
-                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    for &group in &GROUPS[shown..] {
-                        ui.horizontal(|ui| {
-                            group_ui(ui, group, true, state, bar, appearance, &mut changes, out)
-                        });
-                    }
-                });
-        }
-    })
-    .response
-    .on_disabled_hover_text(t!("format_bar.no_document"));
+    let rect = ui
+        .add_enabled_ui(enabled, |ui| {
+            for (k, &group) in GROUPS[..shown].iter().enumerate() {
+                let response = ui
+                    .horizontal(|ui| {
+                        group_ui(ui, group, false, state, bar, appearance, &mut changes, out)
+                    })
+                    .response;
+                widths[k] = response.rect.width();
+            }
+            if shown < GROUPS.len() {
+                let more = icons::icon_button(
+                    ui,
+                    Icon::More,
+                    vec2(MORE, MORE),
+                    Frame::Flat,
+                    false,
+                    true,
+                    t!("format_bar.more"),
+                );
+                let label = t!("format_bar.more");
+                more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+                egui::Popup::menu(&more)
+                    .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        for &group in &GROUPS[shown..] {
+                            ui.horizontal(|ui| {
+                                group_ui(ui, group, true, state, bar, appearance, &mut changes, out)
+                            });
+                        }
+                    });
+            }
+        })
+        .response
+        .on_disabled_hover_text(t!("format_bar.no_document"))
+        .rect;
     ui.data_mut(|d| d.insert_temp(id, widths));
     out.extend(changes.into_iter().map(Command::TextFormat));
+    rect
 }
 
 /// One group, in the toolbar or (`in_menu`) in the "…" menu.

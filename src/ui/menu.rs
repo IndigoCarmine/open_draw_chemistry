@@ -351,14 +351,15 @@ pub fn menu_bar(
 }
 
 /// The toolbar: files, undo, view and cleanup, then with the drawing the format section
-/// ([`format_bar`]), and on the right the view switch and the language.
+/// ([`format_bar`]), and on the right the view switch and the language. Returns where the
+/// format section is, when it is shown.
 pub fn toolbar(
     ui: &mut egui::Ui,
     state: &MenuState<'_>,
     text_bar: &mut TextFormatBar,
     appearance: &mut Appearance,
     out: &mut Vec<Command>,
-) {
+) -> Option<egui::Rect> {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         // The right end first, so the rest knows the width it has.
@@ -366,20 +367,24 @@ pub fn toolbar(
             view_switch(ui, state.view, out);
             language_button(ui, state.language, out);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                left_tools(ui, state, text_bar, appearance, out);
-            });
-        });
-    });
+                left_tools(ui, state, text_bar, appearance, out)
+            })
+            .inner
+        })
+        .inner
+    })
+    .inner
 }
 
-/// The toolbar's buttons from 新規 to クリーンアップ, and the format section after them.
+/// The toolbar's buttons from 新規 to クリーンアップ, and the format section after them (where
+/// it is returned).
 fn left_tools(
     ui: &mut egui::Ui,
     state: &MenuState<'_>,
     text_bar: &mut TextFormatBar,
     appearance: &mut Appearance,
     out: &mut Vec<Command>,
-) {
+) -> Option<egui::Rect> {
     // The buttons' closures hold on to `out` until the end of this block.
     {
         let size = vec2(32.0, 32.0);
@@ -441,9 +446,10 @@ fn left_tools(
             out.push(Command::ToggleCleanup);
         }
     }
-    if state.view.is_drawing() {
-        format_bar::show(ui, state.format.as_ref(), text_bar, appearance, out);
-    }
+    state
+        .view
+        .is_drawing()
+        .then(|| format_bar::show(ui, state.format.as_ref(), text_bar, appearance, out))
 }
 
 /// The 2D / 3D / 集合体 segmented control.

@@ -451,6 +451,22 @@ impl OpenDrawApp {
     }
 
     fn run(&mut self, ctx: &egui::Context, command: Command) {
+        // Anything but formatting ends an open text box the way a click elsewhere on the canvas
+        // does, keeping what was typed: saving or closing includes it, and undo takes back
+        // exactly that text (redo brings it back) rather than dropping it and an earlier step.
+        // A press on the toolbar outside its format section has already committed it.
+        let formats = matches!(
+            command,
+            Command::TextFormat(_)
+                | Command::FillRing(_)
+                | Command::ClearRingFill
+                | Command::LineColor(_)
+                | Command::TextColor(_)
+                | Command::Shadow(_)
+        );
+        if !formats && let Some(doc) = self.docs.get_mut(self.active) {
+            doc.editor.commit_text_edit();
+        }
         match command {
             Command::New => self.new_document(),
             Command::Open => self.open_dialog(),
@@ -1058,6 +1074,30 @@ fn read_component(path: &Path) -> Result<Component, String> {
     Ok(Component::from_model(name, &model))
 }
 
+/// What an open text box needs of the bars drawn before the canvas, after them: a press on the
+/// toolbar's format section (`format`) is part of typing the text, not the press elsewhere that
+/// commits it; and the Escape or Enter that closed a bar's popup this frame (one was open as the
+/// frame began, `popup_was_open`, and none is now) was the popup's, not the box's to cancel or
+/// commit it (the editor only sees that no popup is open).
+fn after_bars(
+    ctx: &egui::Context,
+    editor: Option<&mut chembuider_rs::ChemStructEditor>,
+    format: Option<egui::Rect>,
+    popup_was_open: bool,
+) {
+    if let (Some(editor), Some(format)) = (editor, format)
+        && editor.text_edit.is_some()
+    {
+        editor.keep_text_edit_open_over(format);
+    }
+    if popup_was_open && !egui::Popup::is_any_open(ctx) {
+        ctx.input_mut(|i| {
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+        });
+    }
+}
+
 /// The analysis panel, labelled in Japanese like the rest of the window.
 /// The canvas of the active document, with a menu on right-click: ChemDraw's bond menu on a
 /// bond, 3D化 for the molecule clicked on (or the selected ones, or the whole drawing), and the
@@ -1207,6 +1247,8 @@ impl eframe::App for OpenDrawApp {
         {
             doc.assembly.settle();
         }
+        // Whether a popup (a menu, a toolbar list) had the keyboard as the frame began.
+        let popup_was_open = egui::Popup::is_any_open(&ctx);
         // The menu bar and the toolbar edit the 書式 colours and the text format controls while
         // `state` holds on to the app.
         let mut appearance = std::mem::take(&mut self.appearance);
@@ -1232,22 +1274,20 @@ impl eframe::App for OpenDrawApp {
             .show(ui, |ui| {
                 ui::menu::menu_bar(ui, &state, &mut appearance, &mut commands)
             });
-        let toolbar = egui::Panel::top("toolbar")
+        let format = egui::Panel::top("toolbar")
             .frame(bar(visuals.panel_fill, 10, 6))
             .show(ui, |ui| {
                 ui::menu::toolbar(ui, &state, &mut text_format, &mut appearance, &mut commands)
             })
-            .response
-            .rect;
+            .inner;
         self.appearance = appearance;
         self.text_format = text_format;
-        // A press on the toolbar's format section is part of typing a text, not the click
-        // elsewhere that ends it.
-        if let Some(doc) = self.docs.get_mut(self.active)
-            && doc.editor.text_edit.is_some()
-        {
-            doc.editor.keep_text_edit_open_over(toolbar);
-        }
+        after_bars(
+            &ctx,
+            self.docs.get_mut(self.active).map(|d| &mut d.editor),
+            format,
+            popup_was_open,
+        );
         egui::Panel::bottom("status_bar")
             .frame(bar(surface, 12, 4))
             .show(ui, |ui| {
@@ -2325,7 +2365,7 @@ mod tests {
         {
             let state = app.menu_state();
             let mut show = |ui: &mut egui::Ui| {
-                ui::menu::toolbar(ui, &state, &mut bars.text, &mut bars.appearance, &mut out)
+                ui::menu::toolbar(ui, &state, &mut bars.text, &mut bars.appearance, &mut out);
             };
             // Twice, so the format section has measured its groups.
             h.frame(Vec::new(), &mut show);
@@ -2533,5 +2573,248 @@ mod tests {
         let mol = &app.docs[0].editor.molecule;
         let color = mol.objects.iter().find_map(|o| o.as_text()).unwrap().color;
         assert_eq!(color, Some(ui::appearance::Appearance::default().text.rgba));
+    }
+
+    /// `act` on the top of the window and the drawing as `ui` draws them: the toolbar, then
+    /// [`after_bars`], then the canvas, each frame's commands run after it.
+    fn on_window(
+        h: &mut ui::appearance::tests::Harness,
+        app: &mut OpenDrawApp,
+        bars: &mut Bars,
+        act: impl FnOnce(&mut ui::appearance::tests::Harness, &mut dyn FnMut(&mut egui::Ui)),
+    ) {
+        let mut context_atom = None;
+        let mut show = |ui: &mut egui::Ui| {
+            let ctx = ui.ctx().clone();
+            let mut out = Vec::new();
+            let popup_was_open = egui::Popup::is_any_open(&ctx);
+            let state = app.menu_state();
+            let format =
+                ui::menu::toolbar(ui, &state, &mut bars.text, &mut bars.appearance, &mut out);
+            after_bars(
+                &ctx,
+                app.docs.get_mut(0).map(|d| &mut d.editor),
+                format,
+                popup_was_open,
+            );
+            editor_canvas(
+                ui,
+                &mut app.docs[0],
+                &mut context_atom,
+                &mut bars.appearance,
+                &mut out,
+            );
+            for command in out {
+                app.run(&ctx, command);
+            }
+        };
+        // Twice, so the format section has measured its groups.
+        h.frame(Vec::new(), &mut show);
+        h.frame(Vec::new(), &mut show);
+        act(h, &mut show);
+    }
+
+    /// Press and release `key`.
+    fn press(
+        h: &mut ui::appearance::tests::Harness,
+        key: egui::Key,
+        show: &mut dyn FnMut(&mut egui::Ui),
+    ) {
+        let event = |pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        h.frame(vec![event(true)], &mut *show);
+        h.frame(vec![event(false)], &mut *show);
+        h.frame(Vec::new(), show);
+    }
+
+    /// An app with phenol's caption open in its text box, `typed` typed over "phenol".
+    fn typing(typed: &str) -> (OpenDrawApp, u32) {
+        let mut app = app_with_one_untitled();
+        let (.., text) = ui::appearance::tests::phenol(&mut app.docs[0].editor);
+        type_into(&mut app, text, typed);
+        (app, text)
+    }
+
+    fn type_into(app: &mut OpenDrawApp, text: u32, typed: &str) {
+        let editor = &mut app.docs[0].editor;
+        assert!(editor.edit_text(text));
+        editor.text_edit.as_mut().unwrap().text = typed.to_owned();
+    }
+
+    /// What the open text box holds.
+    fn open_box(app: &OpenDrawApp) -> Option<&str> {
+        app.docs[0]
+            .editor
+            .text_edit
+            .as_ref()
+            .map(|e| e.text.as_str())
+    }
+
+    fn page_text(app: &OpenDrawApp, id: u32) -> String {
+        let mol = &app.docs[0].editor.molecule;
+        mol.object_by_id(id)
+            .unwrap()
+            .as_text()
+            .unwrap()
+            .text
+            .clone()
+    }
+
+    /// The toolbar's format section is part of typing a text: bold applies to the open box,
+    /// which stays open.
+    #[test]
+    fn the_format_section_formats_the_open_text_box() {
+        use ui::format_bar::Value;
+
+        let (mut app, _) = typing("THF");
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut bars = Bars::default();
+        on_window(&mut h, &mut app, &mut bars, |h, show| {
+            h.click(t!("text_format.bold"), show)
+        });
+        assert!(open_box(&app).is_some(), "the text box stays open");
+        assert!(open_box(&app).unwrap().contains("THF"));
+        assert_eq!(text_summary(&app).bold, Value::Same(true));
+    }
+
+    /// The rest of the toolbar ends the text box, keeping what was typed: Save writes it.
+    #[test]
+    fn saving_from_the_toolbar_keeps_the_text_being_typed() {
+        let (mut app, text) = typing("Typed THF");
+        let dir = std::env::temp_dir().join(format!("odc-typed-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("typed.cdxml");
+        app.docs[0].path = Some(path.clone());
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut bars = Bars::default();
+        let save = format!("{} (Ctrl+S)", t!("toolbar.save"));
+        on_window(&mut h, &mut app, &mut bars, |h, show| h.click(&save, show));
+        assert_eq!(open_box(&app), None);
+        assert_eq!(page_text(&app, text), "Typed THF");
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("Typed THF"), "{saved}");
+        assert!(!app.docs[0].is_dirty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A command that does not format, such as Ctrl+S's, ends the text box first too.
+    #[test]
+    fn saving_while_typing_keeps_the_text() {
+        let (mut app, text) = typing("Typed THF");
+        let dir = std::env::temp_dir().join(format!("odc-typed-ctrl-s-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("typed.cdxml");
+        app.docs[0].path = Some(path.clone());
+        app.run(&egui::Context::default(), Command::Save);
+        assert_eq!(open_box(&app), None);
+        assert_eq!(page_text(&app, text), "Typed THF");
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("Typed THF")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Undo from the toolbar while typing takes back exactly the typing, which redo brings
+    /// back; the step before it stays.
+    #[test]
+    fn undoing_from_the_toolbar_takes_back_only_the_typing() {
+        let mut app = app_with_one_untitled();
+        let (.., text) = ui::appearance::tests::phenol(&mut app.docs[0].editor);
+        // The step before the typing: the caption made bold.
+        app.docs[0].editor.selected_objects = [text].into();
+        let ctx = egui::Context::default();
+        app.run(
+            &ctx,
+            Command::TextFormat(chembuider_rs::widget::text_format::FormatChange::Bold(true)),
+        );
+        let bold = page_text(&app, text);
+        assert_eq!(app.docs[0].editor.undo_stack.len(), 1);
+        type_into(&mut app, text, "Typed THF");
+
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut bars = Bars::default();
+        let undo = format!("{} (Ctrl+Z)", t!("toolbar.undo"));
+        on_window(&mut h, &mut app, &mut bars, |h, show| h.click(&undo, show));
+        assert_eq!(open_box(&app), None);
+        assert_eq!(page_text(&app, text), bold, "the step before stays");
+        assert_eq!(app.docs[0].editor.undo_stack.len(), 1);
+        app.run(&ctx, Command::Redo);
+        assert_eq!(page_text(&app, text), "Typed THF");
+    }
+
+    /// Escape in the size list closes the list, not the text box.
+    #[test]
+    fn escape_in_the_size_list_keeps_the_text_box() {
+        let (mut app, _) = typing("Typed THF");
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut bars = Bars::default();
+        on_window(&mut h, &mut app, &mut bars, |h, show| {
+            let size = h.value_pos(t!("text_format.size_default"));
+            h.click_at(size, egui::PointerButton::Primary, &mut *show);
+            h.hint_pos(t!("format_bar.size_input"));
+            press(h, egui::Key::Escape, show);
+        });
+        assert_eq!(open_box(&app), Some("Typed THF"));
+        assert!(!egui::Popup::is_any_open(&h.ctx));
+    }
+
+    /// A size typed into the size list with Enter applies to the open text box, which stays
+    /// open.
+    #[test]
+    fn a_size_typed_while_typing_applies_to_the_text_box() {
+        use ui::format_bar::Value;
+
+        let (mut app, _) = typing("Typed THF");
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut bars = Bars::default();
+        on_window(&mut h, &mut app, &mut bars, |h, show| {
+            let size = h.value_pos(t!("text_format.size_default"));
+            h.click_at(size, egui::PointerButton::Primary, &mut *show);
+            let input = h.hint_pos(t!("format_bar.size_input"));
+            h.click_at(input, egui::PointerButton::Primary, &mut *show);
+            h.type_text("13.5", show);
+        });
+        assert!(open_box(&app).is_some(), "the text box stays open");
+        assert!(open_box(&app).unwrap().contains("Typed THF"));
+        assert_eq!(text_summary(&app).size, Value::Same(Some(13.5)));
+    }
+
+    /// Escape in a colour list, the shadow list and the "…" menu closes it, not the text box.
+    #[test]
+    fn escape_in_the_toolbar_s_menus_keeps_the_text_box() {
+        let (mut app, text) = typing("Typed THF");
+        let mut h = ui::appearance::tests::Harness::new();
+        let mut bars = Bars::default();
+        // The caption selected too, so that it has a colour to change.
+        app.docs[0].editor.selected_objects = [text].into();
+        for (button, inside) in [
+            (t!("format.text_color"), t!("format.apply_color")),
+            (t!("format.shadow"), t!("format.shadow_on")),
+        ] {
+            on_window(&mut h, &mut app, &mut bars, |h, show| {
+                h.click(button, &mut *show);
+                h.pos(inside);
+                press(h, egui::Key::Escape, show);
+            });
+            assert_eq!(open_box(&app), Some("Typed THF"), "{button}");
+            assert!(!egui::Popup::is_any_open(&h.ctx));
+        }
+
+        let mut narrow = ui::appearance::tests::Harness::new();
+        narrow.size = egui::vec2(720.0, 900.0);
+        on_window(&mut narrow, &mut app, &mut bars, |h, show| {
+            h.click(t!("format_bar.more"), &mut *show);
+            h.pos(t!("text_format.bold"));
+            press(h, egui::Key::Escape, show);
+        });
+        assert_eq!(open_box(&app), Some("Typed THF"));
+        assert!(!egui::Popup::is_any_open(&narrow.ctx));
     }
 }

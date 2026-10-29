@@ -53,7 +53,10 @@ pub struct TextSummary {
     pub size: Value<Option<f32>>,
     pub bold: Value<bool>,
     pub italic: Value<bool>,
-    pub script: Value<Script>,
+    /// In subscript, and in superscript: each on its own, so text partly in one is mixed for
+    /// that one only.
+    pub sub: Value<bool>,
+    pub sup: Value<bool>,
     /// In Symbol; for the open text box with nothing selected, whether Symbol typing is on.
     pub symbol: Value<bool>,
 }
@@ -77,7 +80,8 @@ impl TextSummary {
             size: over(&styles, |s| s.size),
             bold: over(&styles, |s| s.bold),
             italic: over(&styles, |s| s.italic),
-            script: over(&styles, |s| s.script),
+            sub: over(&styles, |s| s.script == Script::Sub),
+            sup: over(&styles, |s| s.script == Script::Super),
             symbol,
         }
     }
@@ -298,14 +302,15 @@ pub fn style_toggles(ui: &mut egui::Ui, summary: &TextSummary, changes: &mut Vec
     ) {
         changes.push(FormatChange::Italic(summary.italic != Value::Same(true)));
     }
-    for (script, text, name) in [
-        (Script::Sub, "x₂", t!("text_format.subscript")),
-        (Script::Super, "x²", t!("text_format.superscript")),
+    for (script, value, text, name) in [
+        (Script::Sub, summary.sub, "x₂", t!("text_format.subscript")),
+        (
+            Script::Super,
+            summary.sup,
+            "x²",
+            t!("text_format.superscript"),
+        ),
     ] {
-        let value = match summary.script {
-            Value::Same(s) => Value::Same(s == script),
-            Value::Mixed => Value::Mixed,
-        };
         if toggle(ui, value, egui::RichText::new(text), name) {
             let on = value == Value::Same(true);
             changes.push(FormatChange::Script(if on {
@@ -508,5 +513,23 @@ mod tests {
         editor.selected_objects = [b].into();
         let summary = TextSummary::of(&editor);
         assert_eq!(summary.font, Value::Same(Some(FontName::new("Arial"))));
+
+        // Sub- and superscript each on its own: H₂O is partly in subscript and in no
+        // superscript, CO₃²⁻ partly in each.
+        let water = editor.molecule.add_text([0.0, 4.0], "H_2O");
+        editor.selected_objects = [water].into();
+        let summary = TextSummary::of(&editor);
+        assert_eq!(summary.sub, Value::Mixed);
+        assert_eq!(summary.sup, Value::Same(false));
+        let ion = editor.molecule.add_text([0.0, 6.0], "CO_3^{2-}");
+        editor.selected_objects = [ion].into();
+        let summary = TextSummary::of(&editor);
+        assert_eq!(summary.sub, Value::Mixed);
+        assert_eq!(summary.sup, Value::Mixed);
+        let squared = editor.molecule.add_text([0.0, 8.0], "^2");
+        editor.selected_objects = [squared].into();
+        let summary = TextSummary::of(&editor);
+        assert_eq!(summary.sub, Value::Same(false));
+        assert_eq!(summary.sup, Value::Same(true));
     }
 }
