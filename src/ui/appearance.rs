@@ -1,6 +1,7 @@
 //! 書式 of the structures: ring fills, line and text colours and drop shadows.
 //!
-//! The same items are in the menu bar's 書式 menu and the canvas's right-click menu. Each
+//! The same items are in the menu bar's 書式 menu, the canvas's right-click menu and behind
+//! the buttons of the toolbar's format section ([`super::format_bar`]). Each
 //! colour is picked inside its submenu (a colour picker with opacity, and a row of common
 //! colours) and applied with a button, so trying colours out costs no undo steps; the editor
 //! records one per change it makes (`ChemStructEditor::fill_selected_ring` and its siblings).
@@ -21,6 +22,7 @@ use egui::{Color32, PopupCloseBehavior, vec2};
 use serde::{Deserialize, Serialize};
 
 use super::Command;
+use super::format_bar::Value;
 
 /// The colours offered next to the picker (straight RGBA).
 const SWATCHES: [[u8; 4]; 8] = [
@@ -97,7 +99,7 @@ impl ColorChoice {
 }
 
 /// `#RRGGBB`, with the opacity when it is not opaque.
-fn hex([r, g, b, a]: [u8; 4]) -> String {
+pub fn hex([r, g, b, a]: [u8; 4]) -> String {
     if a == 255 {
         format!("#{r:02X}{g:02X}{b:02X}")
     } else {
@@ -173,6 +175,43 @@ impl Selection {
     }
 }
 
+/// The line and text colours of what the selection would colour (`None` for the style's), for
+/// the toolbar: no value where nothing selected takes that colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Colors {
+    /// Of the bonds [`ChemStructEditor::set_selected_bond_color`] colours.
+    pub line: Option<Value<Option<[u8; 4]>>>,
+    /// Of the atom labels and texts [`ChemStructEditor::set_selected_text_color`] colours.
+    pub text: Option<Value<Option<[u8; 4]>>>,
+}
+
+impl Colors {
+    pub fn of(editor: &ChemStructEditor) -> Self {
+        let atoms = &editor.selected_atoms;
+        let bonds = editor.molecule.bonds.iter().filter(|b| {
+            editor.selected_bonds.contains(&b.id)
+                || (atoms.contains(&b.begin) && atoms.contains(&b.end))
+        });
+        let labels = editor
+            .molecule
+            .atoms
+            .iter()
+            .filter(|a| atoms.contains(&a.id))
+            .map(|a| a.color);
+        let texts = editor
+            .molecule
+            .objects
+            .iter()
+            .filter(|o| editor.selected_objects.contains(&o.id()))
+            .filter_map(|o| o.as_text())
+            .map(|t| t.color);
+        Self {
+            line: Value::of(bonds.map(|b| b.color)),
+            text: Value::of(labels.chain(texts)),
+        }
+    }
+}
+
 /// Whether atoms or bonds are selected.
 fn structure_selected(editor: &ChemStructEditor) -> bool {
     !editor.selected_atoms.is_empty() || !editor.selected_bonds.is_empty()
@@ -195,7 +234,7 @@ fn on_selected_ring(
 }
 
 /// A submenu that stays open while its picker is clicked and dragged.
-fn submenu(ui: &mut egui::Ui, label: &str, content: impl FnOnce(&mut egui::Ui)) {
+pub fn submenu(ui: &mut egui::Ui, label: &str, content: impl FnOnce(&mut egui::Ui)) {
     let config = MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside);
     SubMenuButton::new(label).config(config).ui(ui, content);
 }
@@ -209,7 +248,8 @@ fn action(ui: &mut egui::Ui, label: &str, command: Command, out: &mut Vec<Comman
 }
 
 /// The 書式 items, for the menu bar's 書式 menu and the canvas's menu; greyed out without a
-/// document (`selection` is `None`).
+/// document (`selection` is `None`). The toolbar's format section ([`super::format_bar`])
+/// shows the same items behind its buttons.
 pub fn items(
     ui: &mut egui::Ui,
     appearance: &mut Appearance,
@@ -223,60 +263,90 @@ pub fn items(
         }
         ui.add_enabled_ui(ring, |ui| {
             submenu(ui, t!("format.fill_ring"), |ui| {
-                ui.weak(t!("format.fill_ring_hint"));
-                appearance.ring_fill.ui(ui, Alpha::OnlyBlend);
-                action(
-                    ui,
-                    t!("format.fill"),
-                    Command::FillRing(appearance.ring_fill.rgba),
-                    out,
-                );
+                fill_ring_items(ui, appearance, out)
             });
-            action(ui, t!("format.clear_fill"), Command::ClearRingFill, out);
+            clear_fill_item(ui, out);
         });
         ui.separator();
         submenu(ui, t!("format.line_color"), |ui| {
-            ui.weak(t!("format.line_color_hint"));
-            appearance.line.ui(ui, Alpha::Opaque);
-            action(
-                ui,
-                t!("format.apply_color"),
-                Command::LineColor(Some(appearance.line.rgba)),
-                out,
-            );
-            action(
-                ui,
-                t!("format.default_color"),
-                Command::LineColor(None),
-                out,
-            );
+            line_color_items(ui, appearance, out)
         });
         submenu(ui, t!("format.text_color"), |ui| {
-            ui.weak(t!("format.text_color_hint"));
-            appearance.text.ui(ui, Alpha::Opaque);
-            action(
-                ui,
-                t!("format.apply_color"),
-                Command::TextColor(Some(appearance.text.rgba)),
-                out,
-            );
-            action(
-                ui,
-                t!("format.default_color"),
-                Command::TextColor(None),
-                out,
-            );
+            text_color_items(ui, appearance, out)
         });
         ui.separator();
         submenu(ui, t!("format.shadow"), |ui| {
-            shadow_items(ui, &mut appearance.shadow, selection, out);
+            shadow_items(ui, appearance, selection, out);
         });
     });
 }
 
+/// What 環を塗りつぶす shows: the colour and the button that fills with it.
+pub fn fill_ring_items(ui: &mut egui::Ui, appearance: &mut Appearance, out: &mut Vec<Command>) {
+    ui.weak(t!("format.fill_ring_hint"));
+    appearance.ring_fill.ui(ui, Alpha::OnlyBlend);
+    action(
+        ui,
+        t!("format.fill"),
+        Command::FillRing(appearance.ring_fill.rgba),
+        out,
+    );
+}
+
+/// 塗りつぶしを解除.
+pub fn clear_fill_item(ui: &mut egui::Ui, out: &mut Vec<Command>) {
+    action(ui, t!("format.clear_fill"), Command::ClearRingFill, out);
+}
+
+/// What 線の色 shows: the colour, applied (opaque) with a button, or the style's.
+pub fn line_color_items(ui: &mut egui::Ui, appearance: &mut Appearance, out: &mut Vec<Command>) {
+    ui.weak(t!("format.line_color_hint"));
+    appearance.line.ui(ui, Alpha::Opaque);
+    action(
+        ui,
+        t!("format.apply_color"),
+        Command::LineColor(Some(appearance.line.rgba)),
+        out,
+    );
+    action(
+        ui,
+        t!("format.default_color"),
+        Command::LineColor(None),
+        out,
+    );
+}
+
+/// What 文字の色 shows: the colour, applied (opaque) with a button, or the style's.
+pub fn text_color_items(ui: &mut egui::Ui, appearance: &mut Appearance, out: &mut Vec<Command>) {
+    ui.weak(t!("format.text_color_hint"));
+    appearance.text.ui(ui, Alpha::Opaque);
+    action(
+        ui,
+        t!("format.apply_color"),
+        Command::TextColor(Some(appearance.text.rgba)),
+        out,
+    );
+    action(
+        ui,
+        t!("format.default_color"),
+        Command::TextColor(None),
+        out,
+    );
+}
+
+/// What 影 shows; see [`shadow_draft_items`].
+pub fn shadow_items(
+    ui: &mut egui::Ui,
+    appearance: &mut Appearance,
+    selection: Option<Selection>,
+    out: &mut Vec<Command>,
+) {
+    shadow_draft_items(ui, &mut appearance.shadow, selection, out);
+}
+
 /// The 影 submenu: on/off for the structures the selection touches, and the shadow's colour,
 /// opacity, offset and blur, which start as theirs.
-fn shadow_items(
+fn shadow_draft_items(
     ui: &mut egui::Ui,
     draft: &mut ShadowDraft,
     selection: Option<Selection>,
@@ -434,18 +504,24 @@ pub(crate) mod tests {
     pub struct Harness {
         pub ctx: egui::Context,
         pub last: Option<egui::FullOutput>,
+        /// The screen's size.
+        pub size: egui::Vec2,
     }
 
     impl Harness {
         pub fn new() -> Self {
             let ctx = egui::Context::default();
             ctx.enable_accesskit();
-            Self { ctx, last: None }
+            Self {
+                ctx,
+                last: None,
+                size: vec2(1200.0, 900.0),
+            }
         }
 
         /// One frame with `events`, drawing `content`.
         pub fn frame(&mut self, events: Vec<egui::Event>, content: impl FnMut(&mut egui::Ui)) {
-            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 900.0));
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, self.size);
             let input = egui::RawInput {
                 screen_rect: Some(screen),
                 events,
@@ -461,6 +537,82 @@ pub(crate) mod tests {
                 .as_ref()
                 .and_then(|o| find(o, label))
                 .unwrap_or_else(|| panic!("no widget labelled {label:?} in {:?}", self.labels()))
+        }
+
+        /// The last frame's node labelled `label`.
+        fn node(&self, label: &str) -> Option<&egui::accesskit::Node> {
+            let update = self
+                .last
+                .as_ref()?
+                .platform_output
+                .accesskit_update
+                .as_ref()?;
+            update
+                .nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some(label))
+                .map(|(_, n)| n)
+        }
+
+        /// The state of the toggle labelled `label`.
+        pub fn toggled(&self, label: &str) -> Option<egui::accesskit::Toggled> {
+            self.node(label)?.toggled()
+        }
+
+        /// Whether the widget labelled `label` is enabled.
+        pub fn enabled(&self, label: &str) -> bool {
+            !self
+                .node(label)
+                .unwrap_or_else(|| panic!("no widget labelled {label:?}"))
+                .is_disabled()
+        }
+
+        /// Where the first widget `pred` picks (`what` it is, for the panic) is.
+        fn pos_where(
+            &self,
+            what: &str,
+            pred: impl Fn(&egui::accesskit::Node) -> bool,
+        ) -> egui::Pos2 {
+            let update = self
+                .last
+                .as_ref()
+                .and_then(|o| o.platform_output.accesskit_update.as_ref());
+            update
+                .into_iter()
+                .flat_map(|u| u.nodes.iter())
+                .find(|(_, n)| pred(n))
+                .and_then(|(_, n)| n.bounds())
+                .map(|b| egui::pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32))
+                .unwrap_or_else(|| panic!("no {what} in {:?}", self.labels()))
+        }
+
+        /// Where the combo box showing `value` is.
+        pub fn value_pos(&self, value: &str) -> egui::Pos2 {
+            self.pos_where(&format!("combo box showing {value:?}"), |n| {
+                n.role() == egui::accesskit::Role::ComboBox && n.value() == Some(value)
+            })
+        }
+
+        /// Where the text box with the placeholder `hint` is.
+        pub fn hint_pos(&self, hint: &str) -> egui::Pos2 {
+            self.pos_where(&format!("text box {hint:?}"), |n| {
+                n.placeholder() == Some(hint)
+            })
+        }
+
+        /// Type `text` into the focused widget and press Enter.
+        pub fn type_text(&mut self, text: &str, mut content: impl FnMut(&mut egui::Ui)) {
+            self.frame(vec![egui::Event::Text(text.to_owned())], &mut content);
+            let enter = |pressed| egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            };
+            self.frame(vec![enter(true)], &mut content);
+            self.frame(vec![enter(false)], &mut content);
+            self.frame(Vec::new(), &mut content);
         }
 
         /// The labels of the last frame's widgets, and the texts of its labels.

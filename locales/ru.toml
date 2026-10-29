@@ -1034,7 +1034,6 @@ minutes = "{minutes} мин {seconds} с"
 hours = "{hours} ч {minutes} мин"
 
 [text_format]
-title = "Формат"
 size_default = "По умолчанию"
 size_tip = "Размер текста (по умолчанию 10 pt)"
 bold = "Полужирный"
@@ -1106,6 +1105,17 @@ shadow_offset_y = "Сдвиг Y"
 shadow_blur = "Размытие"
 shadow_length_tip = "В единицах рисунка: связь равна 1,5"
 shadow_apply = "Применить тень"
+
+[format_bar]
+font = "Шрифт: {font}"
+size = "Размер: {size}"
+mixed = "Разные"
+more = "Другое форматирование"
+applies_to = "Применяется к: {target}"
+size_input = "Введите размер, Enter"
+text_color_needs = "Выберите подписи атомов или тексты, чтобы окрасить их"
+line_color_needs = "Выберите связи, чтобы окрасить их линии"
+no_document = "Создайте или откройте документ, чтобы форматировать его"
 
 [format.status]
 ring_filled = "Цикл залит"

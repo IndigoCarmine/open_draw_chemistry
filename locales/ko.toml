@@ -1059,7 +1059,6 @@ minutes = "{minutes}분 {seconds}초"
 hours = "{hours}시간 {minutes}분"
 
 [text_format]
-title = "서식"
 size_default = "기본값"
 size_tip = "글자 크기(기본값 10 pt)"
 bold = "굵게"
@@ -1131,6 +1130,17 @@ shadow_offset_y = "오프셋 Y"
 shadow_blur = "흐림"
 shadow_length_tip = "그리기 단위: 결합 하나가 1.5"
 shadow_apply = "그림자 적용"
+
+[format_bar]
+font = "글꼴: {font}"
+size = "크기: {size}"
+mixed = "혼합"
+more = "추가 서식"
+applies_to = "적용 대상: {target}"
+size_input = "크기 입력 후 Enter"
+text_color_needs = "색을 지정할 원자 레이블이나 텍스트를 선택하세요"
+line_color_needs = "선 색을 지정할 결합을 선택하세요"
+no_document = "서식을 지정하려면 문서를 만들거나 여세요"
 
 [format.status]
 ring_filled = "고리를 채웠습니다"

@@ -1038,7 +1038,6 @@ minutes = "{minutes} min {seconds} s"
 hours = "{hours} h {minutes} min"
 
 [text_format]
-title = "Formatação"
 size_default = "Padrão"
 size_tip = "Tamanho do texto (padrão 10 pt)"
 bold = "Negrito"
@@ -1110,6 +1109,17 @@ shadow_offset_y = "Deslocamento Y"
 shadow_blur = "Desfoque"
 shadow_length_tip = "Em unidades do desenho: uma ligação mede 1,5"
 shadow_apply = "Aplicar sombra"
+
+[format_bar]
+font = "Fonte: {font}"
+size = "Tamanho: {size}"
+mixed = "Misto"
+more = "Mais formatação"
+applies_to = "Aplica-se a: {target}"
+size_input = "Digite um tamanho, Enter"
+text_color_needs = "Selecione rótulos de átomos ou textos para colori-los"
+line_color_needs = "Selecione ligações para colorir suas linhas"
+no_document = "Crie ou abra um documento para formatá-lo"
 
 [format.status]
 ring_filled = "Anel preenchido"

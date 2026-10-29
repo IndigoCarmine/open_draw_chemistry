@@ -1361,8 +1361,6 @@ minutes = "{minutes} min {seconds} s"
 hours = "{hours} h {minutes} min"
 
 [text_format]
-# Title of the floating text format bar.
-title = "Format"
 # Font size choice meaning "no size set" (the default 10 pt).
 size_default = "Default"
 size_tip = "Text size (default 10 pt)"
@@ -1458,6 +1456,26 @@ shadow_blur = "Blur"
 # Tooltip of the offset and blur fields.
 shadow_length_tip = "In drawing units: a bond is 1.5"
 shadow_apply = "Apply shadow"
+
+[format_bar]
+# The font list in the "…" menu. {font}: the current font, or "Mixed".
+font = "Font: {font}"
+# The size list in the "…" menu. {size}: the current size, or "Mixed".
+size = "Size: {size}"
+# Shown for a value that differs across the selection (font, size, colour, bold…).
+mixed = "Mixed"
+# Tooltip of the "…" button holding the format items that do not fit the toolbar.
+more = "More formatting"
+# Tooltip line of the text format controls: what they change. {target}: e.g. "Selected characters".
+applies_to = "Applies to: {target}"
+# Placeholder of the box at the top of the font size list.
+size_input = "Type a size, Enter"
+# Why the toolbar's text color button is greyed out.
+text_color_needs = "Select atom labels or texts to color them"
+# Why the toolbar's line color button is greyed out.
+line_color_needs = "Select bonds to color their lines"
+# Why the toolbar's format section is greyed out.
+no_document = "Create or open a document to format it"
 
 [format.status]
 ring_filled = "Filled the ring"

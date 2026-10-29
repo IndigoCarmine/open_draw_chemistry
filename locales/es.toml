@@ -1037,7 +1037,6 @@ minutes = "{minutes} min {seconds} s"
 hours = "{hours} h {minutes} min"
 
 [text_format]
-title = "Formato"
 size_default = "Predeterminado"
 size_tip = "Tamaño del texto (predeterminado 10 pt)"
 bold = "Negrita"
@@ -1109,6 +1108,17 @@ shadow_offset_y = "Desplazamiento Y"
 shadow_blur = "Desenfoque"
 shadow_length_tip = "En unidades de dibujo: un enlace mide 1,5"
 shadow_apply = "Aplicar sombra"
+
+[format_bar]
+font = "Fuente: {font}"
+size = "Tamaño: {size}"
+mixed = "Mixto"
+more = "Más formato"
+applies_to = "Se aplica a: {target}"
+size_input = "Escriba un tamaño, Intro"
+text_color_needs = "Seleccione etiquetas de átomos o textos para colorearlos"
+line_color_needs = "Seleccione enlaces para colorear sus líneas"
+no_document = "Cree o abra un documento para darle formato"
 
 [format.status]
 ring_filled = "Anillo rellenado"

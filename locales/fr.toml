@@ -1034,7 +1034,6 @@ minutes = "{minutes} min {seconds} s"
 hours = "{hours} h {minutes} min"
 
 [text_format]
-title = "Format"
 size_default = "Par défaut"
 size_tip = "Taille du texte (10 pt par défaut)"
 bold = "Gras"
@@ -1106,6 +1105,17 @@ shadow_offset_y = "Décalage Y"
 shadow_blur = "Flou"
 shadow_length_tip = "En unités du dessin : une liaison mesure 1,5"
 shadow_apply = "Appliquer l’ombre"
+
+[format_bar]
+font = "Police : {font}"
+size = "Taille : {size}"
+mixed = "Mixte"
+more = "Plus de mise en forme"
+applies_to = "S’applique à : {target}"
+size_input = "Saisir une taille, Entrée"
+text_color_needs = "Sélectionnez des étiquettes d’atomes ou des textes pour les colorer"
+line_color_needs = "Sélectionnez des liaisons pour colorer leurs traits"
+no_document = "Créez ou ouvrez un document pour le mettre en forme"
 
 [format.status]
 ring_filled = "Cycle rempli"

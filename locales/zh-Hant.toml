@@ -1059,7 +1059,6 @@ minutes = "{minutes} 分 {seconds} 秒"
 hours = "{hours} 小時 {minutes} 分"
 
 [text_format]
-title = "格式"
 size_default = "預設"
 size_tip = "文字大小（預設 10 pt）"
 bold = "粗體"
@@ -1131,6 +1130,17 @@ shadow_offset_y = "偏移 Y"
 shadow_blur = "模糊"
 shadow_length_tip = "繪圖單位：一根鍵為 1.5"
 shadow_apply = "套用陰影"
+
+[format_bar]
+font = "字型：{font}"
+size = "字型大小：{size}"
+mixed = "混合"
+more = "更多格式"
+applies_to = "套用於：{target}"
+size_input = "輸入字型大小後按 Enter"
+text_color_needs = "請選取要上色的原子標籤或文字"
+line_color_needs = "請選取要上色的鍵"
+no_document = "請新增或開啟文件以設定格式"
 
 [format.status]
 ring_filled = "已填滿環"

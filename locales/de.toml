@@ -1034,7 +1034,6 @@ minutes = "{minutes} min {seconds} s"
 hours = "{hours} h {minutes} min"
 
 [text_format]
-title = "Format"
 size_default = "Standard"
 size_tip = "Textgröße (Standard 10 pt)"
 bold = "Fett"
@@ -1106,6 +1105,17 @@ shadow_offset_y = "Versatz Y"
 shadow_blur = "Weichzeichnung"
 shadow_length_tip = "In Zeichnungseinheiten: eine Bindung ist 1,5"
 shadow_apply = "Schatten anwenden"
+
+[format_bar]
+font = "Schrift: {font}"
+size = "Größe: {size}"
+mixed = "Gemischt"
+more = "Weitere Formatierung"
+applies_to = "Gilt für: {target}"
+size_input = "Größe eingeben, Enter"
+text_color_needs = "Atombeschriftungen oder Texte auswählen, um sie einzufärben"
+line_color_needs = "Bindungen auswählen, um ihre Linien einzufärben"
+no_document = "Ein Dokument erstellen oder öffnen, um es zu formatieren"
 
 [format.status]
 ring_filled = "Ring gefüllt"
