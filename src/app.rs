@@ -2015,6 +2015,17 @@ mod tests {
         assert_eq!(back.language, Some(Lang::De));
     }
 
+    /// Every app language has a chembuider-rs language with the same tag, so the language hook
+    /// in `apply_language` localises the library's panels (the analysis panel's "Other names"
+    /// section and its kind labels among them) in every language the app offers.
+    #[test]
+    fn every_app_language_reaches_the_library() {
+        for lang in Lang::ALL {
+            let library = chembuider_rs::i18n::Language::from_tag(lang.code());
+            assert_eq!(library.map(|l| l.tag()), Some(lang.code()), "{lang:?}");
+        }
+    }
+
     /// A step through the menu bar: open a menu or press an item, or hover a submenu open.
     enum Step<'a> {
         Click(&'a str),
