@@ -1,155 +1,86 @@
+<div align="center">
+
+<img src="resources/icon.png" alt="Open DrawChemistry" width="112">
+
 # Open DrawChemistry
 
-[English README](README.md)
+**構造式を描く。ChemDraw のファイルを開く。名前をつけ、解析し、3D で組み立てる。無料のオープンソース。**
 
-ChemDraw / ChemSketch / XDrawChem のような、化学構造式と反応式を描くデスクトップアプリです。
-[egui](https://github.com/emilk/egui) で作られており、構造式エディタには
-[chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)、ChemDraw ファイルの読み書きには
-[cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs) を使っています。
+[![CI](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml/badge.svg)](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/IndigoCarmine/open_draw_chemistry?color=7c5cff)](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust)
 
-## 機能（第 1 段階）
+[English](README.md) · [ダウンロード](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest) · [開発ガイド](docs/DEVELOPMENT_ja.md)
 
-- 構造式の作図・編集：選択／結合／消しゴム、結合の種類（くさび・破線くさび・太線・波線・配位など）、
-  元素の選択、右クリックの結合メニュー（ChemDraw 風）、元に戻す／やり直し、2D クリーンアップ。
-- **ChemDraw ファイル（`.cdx` / `.cdxml`）の読み込みと保存。** まだ表示できないオブジェクト
-  （矢印・テキスト・図形など）は保存時にそのまま残ります。
-- タブによる複数文書、最近使ったファイル、ドラッグ＆ドロップで開く、未保存の確認。
-- 解析パネル：分子式、精密質量、同位体パターン（m/z）、元素分析。
-- MOL2 / SMILES（Windows では PNG も）へのエクスポート。Windows ではコピーすると
-  ChemDraw 互換の構造と EMF の図がクリップボードに入り、Office に貼り付けられます。
-- **2D → 3D**（OpenBabel）：描いた構造から 3D モデルを生成（水素の付加、くさび結合の立体の反映、
-  Ph / OMe などの略号の展開）、MMFF94 / MMFF94s / UFF / GAFF による構造最適化、
-  MOL / SDF / XYZ / PDB へのエクスポート。3D ビューアはまだ準備中で、今はパネルに分子式・
-  原子数・エネルギーを表示します。
+</div>
 
-今後の予定：自由配置の反応式（矢印・テキスト・ブラケット・図形）、3D ビューア、
-ibisOffice への埋め込み、文書ウィンドウ内での OLE 編集（インプレース編集）。
+---
 
-> **Rust 1.95 以上**が必要です（Wayland のドラッグ＆ドロップ用 `egui-winit` フォークによる）。
+Open DrawChemistry は、ChemDraw・ChemSketch・XDrawChem のように化学構造式や反応式を描くための
+デスクトップアプリです。
 
-## Word / PowerPoint の ChemDraw オブジェクトを編集する（Windows）
+- **ChemDraw のファイル（`.cdx` / `.cdxml`）をそのまま読み書き**できます。
+- 構造式に **IUPAC 名**をつけ、分子式や質量をその場で計算します。
+- 2D の図から **3D モデル**を作り、最適化したり、大きな集合体に組み立てたりできます。
 
-**ChemDraw が入っていない PC** では、Word や PowerPoint の文書に埋め込まれた ChemDraw の構造式を
-このアプリで編集できます。ダブルクリックすると「Word の埋め込み — …」と表示されたタブで開き、
-保存（Ctrl+S）するかタブを閉じると、構造式（と表示用の図）が文書に書き戻されます。
-オブジェクトは ChemDraw のオブジェクトのままなので、ChemDraw がある PC ではまた ChemDraw で開けます。
+Rust と [egui](https://github.com/emilk/egui) で作られており、Windows・macOS・Linux で動きます。
 
-インストーラが現在のユーザーに設定します。手動で行う場合：
+<div align="center">
+<img src="docs/images/analysis-panel-ja.png" alt="解析パネル：分子式・質量・同位体パターン・IUPAC 名・別名" width="420">
+<br><sub>解析パネル：分子式、精密質量、同位体パターン、元素分析、IUPAC 名と別名。</sub>
+</div>
 
-```sh
-open_draw_chemistry.exe --register-ole     # 登録（ユーザーごと、管理者権限は不要）
-open_draw_chemistry.exe --unregister-ole   # 登録したものだけを削除
-```
+## ✨ できること
 
-登録は `HKCU\Software\Classes` の下だけに書き込みます。このアプリ自身の OLE クラス
-（`OpenDrawChemistry.Document.1`。「挿入 ▸ オブジェクト」にも出ます）と、**ChemDraw が
-インストールされていない場合に限り**、ChemDraw のクラスをこのアプリで開く `TreatAs` です。
-ChemDraw がある PC では ChemDraw の設定は一切変更しません。後から ChemDraw をインストールした
-場合は、もう一度 `--register-ole` を実行する（またはアンインストールする）と ChemDraw に戻ります。
+| | |
+|---|---|
+| ✏️ **作図** | くさび・破線・太線・波線・配位などあらゆる結合、元素の選択、ChemDraw 風の右クリックメニュー、フラグメント、2D クリーンアップ、元に戻す／やり直し。フォント・色・環の塗りつぶし・影も設定できます。 |
+| 📂 **ChemDraw 互換** | `.cdx` / `.cdxml` を開いて保存。まだ表示できないオブジェクトも、保存時にそのまま残ります。 |
+| 🏷️ **IUPAC 名** | IUPAC 2013 勧告の優先名に対応しています。E/Z・R/S、環・スピロ・二環、無機塩も扱えます。基官能名・慣用名などの別名も一覧でき、名前はコピーしたり図に書き込んだりできます。 |
+| 🔬 **解析** | 分子式、精密質量・分子量、同位体パターン（m/z）、元素分析を、描いたそばから表示します。 |
+| 🧊 **3D** | OpenBabel で 3D モデルを生成します（くさびの立体を反映し、Ph / OMe などの略号を展開）。MMFF94・UFF・GAFF で最適化し、3D で表示・編集して、MOL / SDF / XYZ / PDB に書き出せます。 |
+| 🧩 **集合体とスキャン** | モノマーから環・積層・らせん・結晶格子を組み立てます。原子の衝突を調べ、距離・角度を測れます。多次元のエネルギースキャンは rigid と relaxed の両方に対応しています。 |
+| 📝 **Office 連携**（Windows） | ChemDraw がない PC でも、Word・PowerPoint に埋め込まれた ChemDraw オブジェクトを編集できます。コピーすると、ChemDraw 互換の構造と図がクリップボードに入ります。 |
+| 🌐 **11 言語** | 日本語、English、简体中文、繁體中文、한국어、Deutsch、Français、Español、Italiano、Português (Brasil)、Русский。 |
 
-編集はこのアプリのウィンドウで行います（Word の中でのインプレース編集には対応していません）。
-問題の調査には、`LocalServer32` のコマンドに `--ole-log <ファイル>` を加えると、
-コンテナからの呼び出しがログに記録されます。
+## 🚀 はじめる
 
-## はじめかた
+**ダウンロード**：[最新リリース](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)から、お使いの OS 用のインストーラかポータブル版を入手してください。OpenBabel を同梱しているので、ほかに入れるものはありません。
 
-このアプリには [OpenBabel](https://openbabel.org) が必須です（3D 生成・SMILES・3D ファイルの読み込み）。
-[openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs) を通してリンクします。最初に一度（openbabel_rs を更新したときも）
-ビルド済みの OpenBabel を取得してください（`bash` と、`gh` または `curl` が必要です）。
+> macOS：まだ公証を受けていないので、初回は右クリック →「開く」で起動してください。
+> Windows：インストーラがまだ署名されていないので、SmartScreen の警告が出ることがあります。
+
+**ソースからビルド**（Rust 1.95 以上）：
 
 ```bash
-bash scripts/fetch-openbabel.sh   # third_party/openbabel-prebuilt/ に展開（コミットしない）
+bash scripts/fetch-openbabel.sh   # 最初に一度：ビルド済みの OpenBabel を取得
 cargo run -- path/to/file.cdx     # ファイルの指定は省略可
 ```
 
-`.cargo/config.toml` が `OPENBABEL_SYS_PREBUILT_DIR` をこのディレクトリに向けます。
-Windows では openbabel-sys のビルドスクリプトが OpenBabel の DLL とプラグインを実行ファイルの
-隣にコピーし（Linux / macOS は rpath）、`cargo run` も `cargo test` もそのまま動きます。
-バインディングの小さな C++ シムのために C++ コンパイラ（Windows では MSVC Build Tools）は必要です。
+OS ごとの注意、パッケージの作り方、リリース、CI については **[開発ガイド](docs/DEVELOPMENT_ja.md)** を参照してください。
 
-ビルド済みの OpenBabel があるのは `x86_64-pc-windows-msvc`、`x86_64-unknown-linux-gnu`、
-`aarch64-apple-darwin`、`x86_64-apple-darwin` です。ホスト以外のターゲット向けにビルドするときは、
-そのターゲットのビルド済み OpenBabel を別ディレクトリに取得し、ビルドをそこへ向けます。
+## 📝 Word / PowerPoint の ChemDraw オブジェクト（Windows）
 
-```bash
-bash scripts/fetch-openbabel.sh x86_64-apple-darwin   # -> third_party/openbabel-prebuilt-x86_64-apple-darwin/
-OPENBABEL_SYS_PREBUILT_DIR=$PWD/third_party/openbabel-prebuilt-x86_64-apple-darwin \
-  cargo build --release --target x86_64-apple-darwin
+**ChemDraw が入っていない PC** でも、Word や PowerPoint の文書の ChemDraw 構造式をダブルクリックすると、
+このアプリのタブで開きます。保存（Ctrl+S）するかタブを閉じると、構造式と表示用の図が文書に書き戻されます。
+オブジェクトは ChemDraw のオブジェクトのままなので、ChemDraw がある PC ではそのまま ChemDraw で開けます。
+
+設定はインストーラが現在のユーザーに対して行います（管理者権限は不要）。ChemDraw がある PC では、ChemDraw の設定は一切変更しません。手動で行う場合：
+
+```sh
+open_draw_chemistry.exe --register-ole     # 登録
+open_draw_chemistry.exe --unregister-ole   # 登録したものだけを削除
 ```
 
-ビルド済みのないターゲットでは、CMake を入れて `OPENBABEL_SYS_PREBUILT_DIR` を空にし、OpenBabel を
-ソースからビルドしてください（初回は 10〜20 分かかります）。OpenBabel なしのビルドはありません。
+## 🧱 使っているもの
 
-リリース版はすべて OpenBabel を同梱しています。
+- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)：構造式エディタのウィジェット、IUPAC 命名、解析パネル
+- [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs)：ChemDraw ファイルの読み書き
+- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs)：[OpenBabel](https://openbabel.org) の Rust バインディング（3D 生成、力場、SMILES）
+- [egui](https://github.com/emilk/egui)：UI
 
-| パッケージ | ライブラリ | プラグイン | データ |
-| --- | --- | --- | --- |
-| Windows（インストーラ・zip） | `.exe` の隣の `openbabel-3.dll`・`inchi.dll` | `.exe` の隣の `*.obf` | `.exe` の隣の `data\` |
-| Linux（`.deb`・AppImage） | `usr/lib/open-draw-chemistry/`（rpath `$ORIGIN/../lib/open-draw-chemistry`） | `usr/lib/open-draw-chemistry/openbabel/` | `usr/share/open-draw-chemistry/openbabel/` |
-| macOS（`.app`・ユニバーサル） | `Contents/Frameworks/`（rpath `@executable_path/../Frameworks`） | `Contents/Frameworks/openbabel/` | `Contents/Resources/openbabel/` |
+## 📄 ライセンス
 
-プラグインとデータの場所は、アプリが起動時に OpenBabel に伝えます（`src/three_d/runtime.rs`）。
-Windows 版は Visual C++ ランタイム（`msvcp140.dll`・`vcruntime140.dll`・`vcruntime140_1.dll`）も
-アプリと同じフォルダに同梱しているので、`vc_redist.x64.exe` を入れていないまっさらな Windows でも動きます。
-`open_draw_chemistry --check-openbabel` はウィンドウを開かずに同梱の OpenBabel を試します。
-リリースのワークフローは各パッケージでこれを実行します。
-
-## リリースする
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-ワークフローはタグからバージョンを取り出し（`v0.1.0` → `0.1.0`）、インストーラ・`.deb`・`.dmg` に渡します。つまりリリースのバージョンは `Cargo.toml` の `version` ではなくタグが基準です。とはいえ About ダイアログの表示が合わなくなるので、`Cargo.toml` 側も上げておくことをおすすめします。
-
-手動実行（**Actions → Release → Run workflow**）した場合は、すべて `0.0.0-dev` としてビルドし、Release を作らずに成果物だけをアップロードします。ワークフロー自体の動作確認に便利です。
-
-## 署名と公証（notarization）について
-
-macOS の `.app` は **アドホック署名**（`codesign --sign -`）です。これは Apple Silicon で「アプリが破損しています」と言われずに起動させるために必要な最低限の署名で、公証は通っていません。そのため利用者は初回のみ右クリック →「開く」で起動する必要があります。正式に配布するには有償の Apple Developer アカウント、Developer ID による `codesign`、`xcrun notarytool submit` が必要です。
-
-Windows のインストーラも未署名なので、ダウンロード時に SmartScreen の警告が出ます。署名にはコードサイニング証明書と `signtool` が必要です。
-
-## ローカルでインストーラをビルドする
-
-```bash
-bash scripts/fetch-openbabel.sh
-cargo build --release
-
-# Windows（Inno Setup 6 が必要）：アプリのフォルダ（ポータブル zip の中身）を作ってからインストーラ
-bash scripts/stage-windows.sh           # -> target\stage\windows\
-iscc installer\windows.iss              # -> dist\
-
-# Linux .deb（cargo-deb と patchelf が必要）
-bash scripts/stage-linux.sh target/deb-root && mkdir -p target/deb-root/DEBIAN
-cargo install cargo-deb && cargo deb --no-build
-
-# macOS ユニバーサル .app（cargo-bundle と両アーキテクチャの OpenBabel が必要）
-# .github/workflows/release.yml の macos ジョブ（scripts/bundle-macos.sh）を参照してください。
-# さらに .dmg を作る場合は `brew install create-dmg` が必要です
-```
-
-## act でワークフローを試す
-
-[`act`](https://github.com/nektos/act) を使うと Docker 上でワークフローをローカル実行できます。
-
-```bash
-act -W .github/workflows/ci.yml -j lint
-act -W .github/workflows/release.yml -j linux
-```
-
-`act` で動かせるのは Linux ジョブだけです。`windows` と `macos` ジョブは実際のランナーが必要です。使用するランナーイメージは [`.actrc`](.actrc) に固定しています。
-
-## Linux でのビルドに必要なパッケージ
-
-```bash
-sudo apt-get install -y \
-  libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-  libxkbcommon-dev libwayland-dev libegl1-mesa-dev \
-  libgtk-3-dev libssl-dev
-```
-
-## ライセンス
-
-GPL-2.0-or-later — [LICENSE](LICENSE) を参照してください（3D 生成で OpenBabel をリンクするため）。
+GPL-2.0-or-later です。[LICENSE](LICENSE) を参照してください。OpenBabel をリンクしているため GPL になっています。
