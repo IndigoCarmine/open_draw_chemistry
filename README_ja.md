@@ -6,13 +6,14 @@
 
 **構造式を描く。ChemDraw のファイルを開く。名前をつけ、解析し、3D で組み立てる。無料のオープンソース。**
 
+[![Website](https://img.shields.io/badge/website-open__draw__chemistry-7c5cff?logo=googlechrome&logoColor=white)](https://indigocarmine.github.io/open_draw_chemistry-site/)
 [![CI](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml/badge.svg)](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/IndigoCarmine/open_draw_chemistry?color=7c5cff)](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust)
 
-[English](README.md) · [ダウンロード](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest) · [開発ガイド](docs/DEVELOPMENT_ja.md)
+**[🌐 ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)** · [English](README.md) · [ダウンロード](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest) · [開発ガイド](docs/DEVELOPMENT_ja.md)
 
 </div>
 
@@ -26,6 +27,8 @@ Open DrawChemistry は、ChemDraw・ChemSketch・XDrawChem のように化学構
 - 2D の図から **3D モデル**を作り、最適化したり、大きな集合体に組み立てたりできます。
 
 Rust と [egui](https://github.com/emilk/egui) で作られており、Windows・macOS・Linux で動きます。
+
+> 🌐 **はじめての方へ**：[ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)では、機能の紹介、ダウンロード、使い方のドキュメントをまとめて見られます。
 
 <div align="center">
 <img src="docs/images/analysis-panel-ja.png" alt="解析パネル：分子式・質量・同位体パターン・IUPAC 名・別名" width="420">
@@ -47,7 +50,7 @@ Rust と [egui](https://github.com/emilk/egui) で作られており、Windows�
 
 ## 🚀 はじめる
 
-**ダウンロード**：[最新リリース](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)から、お使いの OS 用のインストーラかポータブル版を入手してください。OpenBabel を同梱しているので、ほかに入れるものはありません。
+**ダウンロード**：[ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)または[最新リリース](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)から、お使いの OS 用のインストーラかポータブル版を入手してください。OpenBabel を同梱しているので、ほかに入れるものはありません。
 
 > macOS：まだ公証を受けていないので、初回は右クリック →「開く」で起動してください。
 > Windows：インストーラがまだ署名されていないので、SmartScreen の警告が出ることがあります。

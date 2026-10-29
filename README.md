@@ -6,13 +6,14 @@
 
 **Draw chemical structures. Open your ChemDraw files. Name, analyse and build in 3D. Free and open source.**
 
+[![Website](https://img.shields.io/badge/website-open__draw__chemistry-7c5cff?logo=googlechrome&logoColor=white)](https://indigocarmine.github.io/open_draw_chemistry-site/en/)
 [![CI](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml/badge.svg)](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/IndigoCarmine/open_draw_chemistry?color=7c5cff)](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust)
 
-[日本語](README_ja.md) · [Download](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest) · [Development guide](docs/DEVELOPMENT.md)
+**[🌐 Website](https://indigocarmine.github.io/open_draw_chemistry-site/en/)** · [日本語](README_ja.md) · [Download](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest) · [Development guide](docs/DEVELOPMENT.md)
 
 </div>
 
@@ -24,6 +25,8 @@ in the spirit of ChemDraw, ChemSketch and XDrawChem. It **reads and writes ChemD
 the fly, and turns a 2D drawing into a **3D model** you can optimise and assemble into larger
 structures. It is written in Rust with [egui](https://github.com/emilk/egui) and runs on
 Windows, macOS and Linux.
+
+> 🌐 **New here?** The [website](https://indigocarmine.github.io/open_draw_chemistry-site/en/) has a guided tour of the features, downloads and the user docs.
 
 <div align="center">
 <img src="docs/images/analysis-panel.png" alt="Analysis panel: formula, mass, isotope pattern, IUPAC name and other names" width="420">
@@ -46,7 +49,7 @@ Windows, macOS and Linux.
 ## 🚀 Get started
 
 **Download** the installer or portable package for your platform from the
-[latest release](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest). OpenBabel is bundled, so there is nothing else to install.
+[website](https://indigocarmine.github.io/open_draw_chemistry-site/en/) or the [latest release](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest). OpenBabel is bundled, so there is nothing else to install.
 
 > macOS: the app isn't notarised yet, so the first time, right-click it and choose **Open**.
 > Windows: the installer isn't signed yet, so SmartScreen may warn you.
