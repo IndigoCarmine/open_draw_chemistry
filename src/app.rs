@@ -1049,7 +1049,7 @@ impl OpenDrawApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.heading(crate::APP_NAME);
-                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                ui.label(format!("Version {}", crate::APP_VERSION));
                 ui.separator();
                 ui.label(env!("CARGO_PKG_DESCRIPTION"));
                 ui.label("License: GPL-2.0-or-later");

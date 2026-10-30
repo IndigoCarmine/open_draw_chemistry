@@ -26,3 +26,20 @@ pub use app::OpenDrawApp;
 
 /// Display name, used for the window title and the eframe persistence key.
 pub const APP_NAME: &str = "Open DrawChemistry";
+
+/// Version given by the release tag; a local build adds -dev to Cargo.toml's version.
+pub const APP_VERSION: &str = env!("APP_VERSION");
+
+#[cfg(test)]
+mod version_tests {
+    #[test]
+    fn app_version_has_three_numeric_components() {
+        assert!(!super::APP_VERSION.is_empty());
+        let version = super::APP_VERSION.split('-').next().unwrap();
+        let components: Vec<_> = version.split('.').collect();
+        assert_eq!(components.len(), 3);
+        assert!(components.iter().all(|component| {
+            !component.is_empty() && component.chars().all(|c| c.is_ascii_digit())
+        }));
+    }
+}
