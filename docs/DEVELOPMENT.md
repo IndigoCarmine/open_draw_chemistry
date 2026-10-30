@@ -72,6 +72,52 @@ The workflow derives the version from the tag (`v0.1.0` → `0.1.0`) and feeds i
 
 Running the workflow manually (**Actions → Release → Run workflow**) builds everything as `0.0.0-dev` and uploads the artifacts *without* publishing a release — useful for testing changes to the workflow.
 
+## Signing updates
+
+At startup the app looks at the latest GitHub Release (`src/update/`). It installs an update by
+itself only if the asset's signature verifies against the public key built into it,
+`resources/update-signing.pub`. Until that file holds a real key it holds a placeholder, and
+the app sends users to the Release page instead of installing anything.
+
+| Installed as | Yes in the update dialog |
+| --- | --- |
+| Windows installer | Downloads `…-setup.exe`, quits, runs it with `/SILENT` in the install's own mode (`/CURRENTUSER`, or `/ALLUSERS` with a UAC prompt), restarts |
+| Linux AppImage | Downloads the new AppImage, renames it over the old file, restarts |
+| macOS `.app` | Downloads the `.dmg`, copies the app out with `hdiutil` and `ditto`, swaps the bundle by renames, restarts |
+| Windows portable zip, Linux `.deb`, anything else | Opens the Release page |
+
+A failed download, verification or install also ends at the Release page.
+
+To set up signing, once, with OpenSSL 3:
+
+```bash
+bash scripts/gen-update-key.sh ~/open-draw-chemistry-update-signing.pem
+gh secret set UPDATE_SIGNING_KEY --repo IndigoCarmine/open_draw_chemistry \
+  < ~/open-draw-chemistry-update-signing.pem
+git add resources/update-signing.pub   # and commit it
+```
+
+Keep the private key out of the repository and back it up: a copy of the app only trusts the key
+it was built with, so **replacing the key leaves every installed copy going to the Release page**
+for that one update to a build with the new key. Generating a key refuses to overwrite a file.
+
+When a tag is released, `scripts/sign-update-assets.sh` writes `<asset>.sig` beside each asset. If
+the `UPDATE_SIGNING_KEY` secret is missing it warns and signs nothing; if the secret does not
+match `resources/update-signing.pub` it stops the release. A signature is the 64-byte ed25519
+signature of this text, so it binds the file's name, and with it the version, as well as its
+content, and can be checked with OpenSSL:
+
+```text
+open-draw-chemistry-update-v1
+<asset name>
+<sha256 of the asset, in lower-case hex>
+```
+
+A build made before the key is committed cannot update itself automatically, and neither can any
+copy update to a release without `.sig` files: those users see the Release page.
+
+`cargo test real_github -- --ignored` checks the real API and download path over the network.
+
 ## Signing and notarisation
 
 The macOS bundle is **ad-hoc signed** (`codesign --sign -`). That is enough for the app to launch at all on Apple Silicon, but it is not notarised, so on first launch users must right-click the app and choose **Open**. Proper distribution needs a paid Apple Developer account, `codesign` with a Developer ID, and `xcrun notarytool submit`.

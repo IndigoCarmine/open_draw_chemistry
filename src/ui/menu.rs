@@ -21,6 +21,8 @@ pub struct MenuState<'a> {
     pub can_redo: bool,
     pub cleaning: bool,
     pub show_properties: bool,
+    /// The update check at startup is on.
+    pub check_updates: bool,
     pub view: ViewMode,
     pub recent: &'a [PathBuf],
     /// A 3D model can be generated now: there is a document, OpenBabel is built in and no 3D
@@ -346,6 +348,15 @@ pub fn menu_bar(
 
         ui.menu_button(t!("menu.help.title"), |ui| {
             item(ui, t!("menu.help.about"), "", true, Command::About, out);
+            ui.separator();
+            let mut check = state.check_updates;
+            if ui
+                .checkbox(&mut check, t!("menu.help.check_updates"))
+                .clicked()
+            {
+                out.push(Command::ToggleUpdateCheck);
+                ui.close();
+            }
         });
     });
 }

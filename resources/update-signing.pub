@@ -1,0 +1,5 @@
+# The public key the app checks updates against (see src/update/signature.rs and "Signing
+# updates" in docs/DEVELOPMENT.md): 64 hex digits after any comment lines. scripts/gen-update-key.sh
+# writes this file. Until it does, the line below is a placeholder, which turns automatic
+# installs off: the app sends the user to the Release page instead.
+PLACEHOLDER

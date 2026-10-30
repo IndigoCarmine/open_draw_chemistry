@@ -19,6 +19,8 @@ use crate::three_d::read::Format3d;
 use crate::three_d::{self, Export3d};
 use crate::ui::fragments::{FragmentAction, FragmentManager, ManagerContext};
 use crate::ui::{self, Command, ViewMode, menu::MenuState};
+use crate::update::flow::{Event, UpdateFlow};
+use crate::update::{self, http::Ureq, install, signature::PublicKey};
 
 mod ole;
 
@@ -53,6 +55,8 @@ pub struct OpenDrawApp {
     /// The UI language the user picked; `None` (until they pick one) follows the OS locale.
     #[serde(deserialize_with = "crate::i18n::deserialize_lenient")]
     language: Option<Lang>,
+    /// Look for a newer release at startup.
+    check_updates: bool,
     /// The language the fonts were last set up for (see [`crate::i18n::fonts`]).
     #[serde(skip)]
     fonts_for: Option<Lang>,
@@ -101,6 +105,9 @@ pub struct OpenDrawApp {
     /// The パラメータスキャン window.
     #[serde(skip)]
     scan_window: ui::scan::ScanWindow,
+    /// The update found at startup, if any (see [`crate::update`]).
+    #[serde(skip)]
+    update: UpdateFlow,
 }
 
 impl Default for OpenDrawApp {
@@ -114,6 +121,7 @@ impl Default for OpenDrawApp {
             text_format: Default::default(),
             appearance: Default::default(),
             language: None,
+            check_updates: true,
             fonts_for: None,
             docs: Vec::new(),
             active: 0,
@@ -132,6 +140,7 @@ impl Default for OpenDrawApp {
             context_atom: None,
             ole: None,
             scan_window: Default::default(),
+            update: UpdateFlow::default(),
         }
     }
 }
@@ -159,6 +168,20 @@ impl OpenDrawApp {
             app.new_document();
         }
         app
+    }
+
+    /// Start this run's one update check, unless the user has turned it off. Only a normal start
+    /// does this: an OLE server is not there to be asked anything.
+    pub fn with_update_check(mut self) -> Self {
+        if self.check_updates {
+            self.update.start_check(
+                std::sync::Arc::new(Ureq::new()),
+                crate::APP_VERSION,
+                || install::detect(&install::Environment::current()),
+                PublicKey::embedded(),
+            );
+        }
+        self
     }
 
     /// Show the UI in `lang`: the app's strings at once, the fonts from the next frame (see
@@ -491,6 +514,7 @@ impl OpenDrawApp {
             }
             Command::Quit => self.request_quit(ctx),
             Command::ToggleProperties => self.show_properties = !self.show_properties,
+            Command::ToggleUpdateCheck => self.check_updates = !self.check_updates,
             Command::SetView(view) => self.view = view,
             Command::SetLanguage(lang) => {
                 self.language = Some(lang);
@@ -862,6 +886,7 @@ impl OpenDrawApp {
             can_redo,
             cleaning: editor.is_some_and(|e| e.is_cleaning()),
             show_properties: self.show_properties,
+            check_updates: self.check_updates,
             view: self.view,
             recent: &self.recent,
             can_generate_3d: job.is_some() && !running,
@@ -888,6 +913,36 @@ impl OpenDrawApp {
         }
         if running {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    /// Follow the update: collect what its threads have finished and show its dialogs.
+    fn update_update(&mut self, ctx: &egui::Context) {
+        let polled = self.update.poll();
+        self.run_update_event(ctx, polled);
+        if self.update.is_quitting() && self.pending_close.is_none() && !self.quit_confirmed {
+            self.update.quit_called_off();
+        }
+        let answered = ui::update::show(ctx, &mut self.update);
+        self.run_update_event(ctx, answered);
+        if self.update.is_busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    fn run_update_event(&mut self, ctx: &egui::Context, event: Option<Event>) {
+        match event {
+            None => {}
+            Some(Event::OpenPage(page)) => update::open_page(&page),
+            Some(Event::Failed {
+                error,
+                release_page,
+            }) => {
+                self.status = t!("update.failed", error = error);
+                update::open_page(&release_page);
+            }
+            // With unsaved documents this asks first; see `quit_called_off` above.
+            Some(Event::Quit) => self.request_quit(ctx),
         }
     }
 
@@ -1206,6 +1261,17 @@ impl eframe::App for OpenDrawApp {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
+    /// The last thing the app does: the installer needs it gone.
+    fn on_exit(&mut self) {
+        self.update.cancel();
+        if self.quit_confirmed
+            && let Some((prepared, release_page)) = self.update.take_for_exit()
+            && prepared.apply(&release_page).is_err()
+        {
+            update::open_page(&release_page);
+        }
+    }
+
     /// Runs every frame, also while the window is hidden: the OLE server's messages.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_ole(ctx);
@@ -1437,6 +1503,7 @@ impl eframe::App for OpenDrawApp {
         self.unsaved_changes_dialog(&ctx);
         self.about_window(&ctx);
         self.fragment_window(&ctx);
+        self.update_update(&ctx);
         self.update_window_title(&ctx);
     }
 }
@@ -1503,6 +1570,26 @@ mod tests {
             let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
             assert_eq!(back.view3d.style, style);
             assert_eq!(back.assembly_view.style, style);
+        }
+    }
+
+    /// The update check is on unless the user turned it off, including for the state files of
+    /// versions from before there was one.
+    #[test]
+    fn the_update_check_setting_defaults_on_and_round_trips() {
+        let older = SavedState("(show_properties: false)".to_owned());
+        let app: OpenDrawApp = eframe::get_value(&older, eframe::APP_KEY).unwrap();
+        assert!(app.check_updates);
+
+        for check_updates in [false, true] {
+            let mut storage = SavedState(String::new());
+            let app = OpenDrawApp {
+                check_updates,
+                ..Default::default()
+            };
+            eframe::set_value(&mut storage, eframe::APP_KEY, &app);
+            let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+            assert_eq!(back.check_updates, check_updates);
         }
     }
 

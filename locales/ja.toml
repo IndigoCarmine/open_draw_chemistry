@@ -75,6 +75,37 @@ quit_message = "保存されていない文書が {n} 件あります。"
 save = "保存"
 discard = "保存しない"
 
+[update]
+failed = "更新を自動でインストールできませんでした（{error}）。リリースページを開きます。"
+
+[update.prompt]
+title = "更新があります"
+message = "Open DrawChemistry {version} が公開されています。現在のバージョンは {current} です。"
+release_notes = "リリースノート"
+install = "今すぐダウンロードしてインストールしますか？ 完了するとアプリを再起動します。"
+open_page = "この形式のアプリは自動では更新できません。ブラウザでリリースページを開きますか？"
+yes = "はい"
+no = "いいえ"
+
+[update.download]
+title = "更新をダウンロード中"
+message = "Open DrawChemistry {version} をダウンロードしています"
+
+[update.ready]
+title = "更新の準備ができました"
+message = "更新のダウンロードと検証が完了しました。アプリを再起動するとインストールします。"
+restart = "今すぐ再起動"
+
+[update.error]
+refused = "{url} からのダウンロードを拒否しました"
+network = "ネットワークエラー: {error}"
+status = "サーバーの応答: {status}"
+size = "ダウンロードしたファイルのサイズが想定と異なります"
+malformed = "GitHub の応答を読み取れませんでした: {error}"
+signature = "署名が正しくありません"
+cancelled = "キャンセルしました"
+install = "インストールできませんでした: {error}"
+
 [dialog.about]
 title = "バージョン情報"
 
@@ -158,6 +189,7 @@ periodic_table = "周期表"
 manage_fragments = "断片の管理"
 
 [menu.help]
+check_updates = "起動時に更新を確認"
 title = "ヘルプ"
 about = "バージョン情報"
 

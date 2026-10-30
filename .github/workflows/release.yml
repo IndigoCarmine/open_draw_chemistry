@@ -355,10 +355,20 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The signing script and the public key the signatures must match.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+
+      # The app installs an update only if its <asset>.sig verifies. Without the secret this
+      # warns and signs nothing, and the app sends users to the Release page instead.
+      - name: Sign the assets for the app's automatic update
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: bash scripts/sign-update-assets.sh artifacts
 
       - name: List artifacts
         run: ls -lh artifacts

@@ -21,6 +21,7 @@ pub mod smiles;
 pub mod theme;
 pub mod three_d;
 pub mod ui;
+pub mod update;
 
 pub use app::OpenDrawApp;
 

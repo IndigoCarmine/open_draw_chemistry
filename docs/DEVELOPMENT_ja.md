@@ -70,6 +70,48 @@ git push origin v0.1.0
 
 手動実行（**Actions → Release → Run workflow**）した場合は、すべて `0.0.0-dev` としてビルドし、Release を作らずに成果物だけをアップロードします。ワークフロー自体の動作確認に便利です。
 
+## 更新の署名
+
+アプリは起動時に GitHub の最新の Release を確認します（`src/update/`）。自動でインストールするのは、
+アセットの署名がアプリに組み込まれた公開鍵 `resources/update-signing.pub` で検証できたときだけです。
+このファイルに本物の鍵が入るまでは中身がプレースホルダーで、アプリは何もインストールせず Release ページを開きます。
+
+| インストール形式 | 更新ダイアログで「はい」を選ぶと |
+| --- | --- |
+| Windows インストーラ | `…-setup.exe` をダウンロードしてアプリを終了し、インストール時と同じモード（`/CURRENTUSER`、または UAC の確認が出る `/ALLUSERS`）で `/SILENT` 実行してから再起動 |
+| Linux AppImage | 新しい AppImage をダウンロードし、古いファイルに rename で置き換えて再起動 |
+| macOS `.app` | `.dmg` をダウンロードし、`hdiutil` と `ditto` でアプリを取り出し、rename でバンドルを入れ替えて再起動 |
+| Windows ポータブル zip、Linux `.deb`、その他 | Release ページを開く |
+
+ダウンロード・検証・インストールに失敗した場合も Release ページを開きます。
+
+署名の準備は最初に一度だけ行います（OpenSSL 3 が必要）:
+
+```bash
+bash scripts/gen-update-key.sh ~/open-draw-chemistry-update-signing.pem
+gh secret set UPDATE_SIGNING_KEY --repo IndigoCarmine/open_draw_chemistry \
+  < ~/open-draw-chemistry-update-signing.pem
+git add resources/update-signing.pub   # コミットする
+```
+
+秘密鍵はリポジトリに入れず、バックアップを取ってください。アプリはビルド時に組み込まれた鍵しか信用しないので、
+**鍵を替えると、インストール済みのアプリは新しい鍵のビルドへ更新するその一度だけ Release ページに進みます**。
+鍵の生成スクリプトは既存のファイルを上書きしません。
+
+タグをリリースすると、`scripts/sign-update-assets.sh` が各アセットの横に `<asset>.sig` を書き出します。
+シークレット `UPDATE_SIGNING_KEY` がなければ警告を出して署名せず、`resources/update-signing.pub` と一致しなければリリースを止めます。
+署名は次のテキストに対する 64 バイトの ed25519 署名です。ファイルの内容だけでなく、名前（つまりバージョン）にも結び付いています。OpenSSL でも検証できます:
+
+```text
+open-draw-chemistry-update-v1
+<アセット名>
+<アセットの sha256（小文字の 16 進）>
+```
+
+鍵をコミットする前のビルドと、`.sig` のない Release への更新は自動ではできず、Release ページを開きます。
+
+`cargo test real_github -- --ignored` は実際の API とダウンロードの経路をネットワーク越しに確認します。
+
 ## 署名と公証（notarization）について
 
 macOS の `.app` は **アドホック署名**（`codesign --sign -`）です。これは Apple Silicon で「アプリが破損しています」と言われずに起動させるために必要な最低限の署名で、公証は通っていません。そのため利用者は初回のみ右クリック →「開く」で起動する必要があります。正式に配布するには有償の Apple Developer アカウント、Developer ID による `codesign`、`xcrun notarytool submit` が必要です。

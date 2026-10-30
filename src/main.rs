@@ -73,7 +73,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         APP_NAME,
         native_options(),
-        Box::new(|cc| Ok(Box::new(OpenDrawApp::new(cc, files)))),
+        Box::new(|cc| Ok(Box::new(OpenDrawApp::new(cc, files).with_update_check()))),
     )
 }
 

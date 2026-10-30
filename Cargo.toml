@@ -51,6 +51,16 @@ openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
+# The startup update check and automatic install (see `src/update/`): an HTTPS client, the
+# ed25519 and SHA-256 that verify a download (`ring` is what rustls already uses), and the rest
+# for comparing versions, vetting URLs, the download's temporary directory and the Release page.
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
+ring = "0.17.14"
+semver = "1.0.28"
+url = "2.5.8"
+tempfile = "3.27.0"
+webbrowser = "1.2.5"
+
 # Windows OLE: Copy publishes an OLE data object (OleSetClipboard), so Word/PowerPoint paste
 # the structure as an embedded ChemDraw object (see `src/ole/`), and the OLE server
 # (`src/ole_server/`) edits such objects: COM objects, structured storage, metafiles and the
