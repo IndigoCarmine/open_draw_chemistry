@@ -43,6 +43,8 @@ jobs:
         run: bash scripts/fetch-openbabel.sh
 
       - name: Build
+        env:
+          APP_VERSION: ${{ steps.version.outputs.value }}
         run: cargo build --release
 
       # The executable needs OpenBabel beside it (its DLLs, its .obf plugins and its data
@@ -124,6 +126,8 @@ jobs:
           bash scripts/fetch-openbabel.sh aarch64-apple-darwin "$RUNNER_TEMP/openbabel-aarch64"
 
       - name: Build (both architectures)
+        env:
+          APP_VERSION: ${{ steps.version.outputs.value }}
         run: |
           OPENBABEL_SYS_PREBUILT_DIR="$RUNNER_TEMP/openbabel-x86_64" \
             cargo build --release --target x86_64-apple-darwin
@@ -132,6 +136,7 @@ jobs:
 
       - name: Bundle .app
         env:
+          APP_VERSION: ${{ steps.version.outputs.value }}
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           # cargo-bundle reads [package.metadata.bundle] from Cargo.toml and
@@ -244,6 +249,8 @@ jobs:
         run: bash scripts/fetch-openbabel.sh
 
       - name: Build
+        env:
+          APP_VERSION: ${{ steps.version.outputs.value }}
         run: cargo build --release
 
       # The .deb and the AppImage carry the app with its own OpenBabel (libopenbabel, libinchi,
