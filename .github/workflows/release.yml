@@ -30,9 +30,15 @@ jobs:
         shell: bash
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Invalid release tag: $GITHUB_REF_NAME"
+              exit 1
+            fi
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "app_version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
             echo "value=0.0.0-dev" >> "$GITHUB_OUTPUT"
+            echo "app_version=" >> "$GITHUB_OUTPUT"
           fi
 
       # 3D generation links OpenBabel from the prebuilt attached to the openbabel_rs release.
@@ -44,7 +50,7 @@ jobs:
 
       - name: Build
         env:
-          APP_VERSION: ${{ steps.version.outputs.value }}
+          APP_VERSION: ${{ steps.version.outputs.app_version }}
         run: cargo build --release
 
       # The executable needs OpenBabel beside it (its DLLs, its .obf plugins and its data
@@ -103,9 +109,15 @@ jobs:
         id: version
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Invalid release tag: $GITHUB_REF_NAME"
+              exit 1
+            fi
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "app_version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
             echo "value=0.0.0-dev" >> "$GITHUB_OUTPUT"
+            echo "app_version=" >> "$GITHUB_OUTPUT"
           fi
 
       # cargo-bundle is not available via taiki-e/install-action, so it has to be
@@ -127,7 +139,7 @@ jobs:
 
       - name: Build (both architectures)
         env:
-          APP_VERSION: ${{ steps.version.outputs.value }}
+          APP_VERSION: ${{ steps.version.outputs.app_version }}
         run: |
           OPENBABEL_SYS_PREBUILT_DIR="$RUNNER_TEMP/openbabel-x86_64" \
             cargo build --release --target x86_64-apple-darwin
@@ -136,7 +148,7 @@ jobs:
 
       - name: Bundle .app
         env:
-          APP_VERSION: ${{ steps.version.outputs.value }}
+          APP_VERSION: ${{ steps.version.outputs.app_version }}
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           # cargo-bundle reads [package.metadata.bundle] from Cargo.toml and
@@ -217,9 +229,15 @@ jobs:
         id: version
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Invalid release tag: $GITHUB_REF_NAME"
+              exit 1
+            fi
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "app_version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
             echo "value=0.0.0-dev" >> "$GITHUB_OUTPUT"
+            echo "app_version=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install build dependencies
@@ -250,7 +268,7 @@ jobs:
 
       - name: Build
         env:
-          APP_VERSION: ${{ steps.version.outputs.value }}
+          APP_VERSION: ${{ steps.version.outputs.app_version }}
         run: cargo build --release
 
       # The .deb and the AppImage carry the app with its own OpenBabel (libopenbabel, libinchi,

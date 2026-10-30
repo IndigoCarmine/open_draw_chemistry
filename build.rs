@@ -11,6 +11,25 @@ fn main() {
     #[cfg(windows)]
     {
         let mut res = winresource::WindowsResource::new();
+        // Windows stores each numeric version component in 16 bits. Keep the
+        // full version (including a prerelease suffix) in the display strings.
+        let core_version = version.split(['-', '+']).next().unwrap();
+        let components: Vec<u16> = core_version
+            .split('.')
+            .map(|component| {
+                component
+                    .parse()
+                    .expect("invalid Windows version component")
+            })
+            .collect();
+        assert_eq!(components.len(), 3, "Windows version must be X.Y.Z");
+        let numeric_version = (u64::from(components[0]) << 48)
+            | (u64::from(components[1]) << 32)
+            | (u64::from(components[2]) << 16);
+        res.set("FileVersion", &version)
+            .set("ProductVersion", &version)
+            .set_version_info(winresource::VersionInfo::FILEVERSION, numeric_version)
+            .set_version_info(winresource::VersionInfo::PRODUCTVERSION, numeric_version);
         res.set_icon("resources/icon.ico");
         res.compile().unwrap();
     }
