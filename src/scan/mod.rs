@@ -926,6 +926,10 @@ mod tests {
         assert!(points_refusal(total_points(&huge)).is_some());
     }
 
+    /// Seconds a relaxed point takes per atom squared under MMFF94 for a large molecule (300–500
+    /// atoms), as measured for [`RELAX_SECONDS_PER_ATOM2`].
+    const MMFF94_LARGE_SECONDS_PER_ATOM2: f64 = 4.8e-4;
+
     /// The work guard: the caps on atoms and points alone, then their product, which the
     /// largest atoms × the most points exceed many times over.
     #[test]
@@ -961,7 +965,10 @@ mod tests {
         assert!(relax_refusal(atoms, most + 1).is_some());
         // Whatever is allowed ends within ~3 h at MMFF94's rate for a large molecule; at the
         // slowest (UFF's) it may take most of a day, and the window warns of it.
-        assert!(Duration::from_secs_f64(MAX_RELAX_WORK * 4.8e-4) <= Duration::from_secs(3 * 3600));
+        assert!(
+            Duration::from_secs_f64(MAX_RELAX_WORK * MMFF94_LARGE_SECONDS_PER_ATOM2)
+                <= Duration::from_secs(3 * 3600)
+        );
         let [_, slowest] = relax_estimate(atoms, most);
         assert!(slowest <= Duration::from_secs(24 * 3600), "{slowest:?}");
         assert!(slowest >= LONG_RELAX);
