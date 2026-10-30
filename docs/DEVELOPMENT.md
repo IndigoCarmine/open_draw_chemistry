@@ -116,7 +116,26 @@ open-draw-chemistry-update-v1
 A build made before the key is committed cannot update itself automatically, and neither can any
 copy update to a release without `.sig` files: those users see the Release page.
 
-`cargo test real_github -- --ignored` checks the real API and download path over the network.
+`cargo test real_ -- --ignored` checks the real API and download path over the network.
+
+### HTTPS and licences
+
+The app links OpenBabel, which is **GPL-2.0-only**, so it may not link anything under Apache-2.0
+alone (`MIT OR Apache-2.0` is fine: it is used under MIT). That rules out `ring`, and with it
+rustls, as well as the `openssl` crate, so HTTPS comes from the OS:
+
+| Platform | HTTPS |
+| --- | --- |
+| Windows, macOS | `ureq` over `native-tls`: SChannel, Security.framework |
+| Linux | The system's `curl`, run as a separate program (`src/update/curl.rs`) |
+
+Without `curl` on Linux the update check fails silently, as it does offline, and the app never
+offers an update. The `.deb` recommends the `curl` package.
+
+`scripts/check-linked-crates.sh`, which CI runs, fails if `ring`, `rustls` or `openssl` gets into
+the build for any of the three platforms. `openssl` stays in `Cargo.lock`, and in
+`cargo tree --target all`, which ignores `cfg`: `native-tls` declares it for Linux, where this app
+does not use `native-tls`. Nothing builds it.
 
 ## Signing and notarisation
 

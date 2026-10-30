@@ -110,7 +110,26 @@ open-draw-chemistry-update-v1
 
 鍵をコミットする前のビルドと、`.sig` のない Release への更新は自動ではできず、Release ページを開きます。
 
-`cargo test real_github -- --ignored` は実際の API とダウンロードの経路をネットワーク越しに確認します。
+`cargo test real_ -- --ignored` は実際の API とダウンロードの経路をネットワーク越しに確認します。
+
+### HTTPS とライセンス
+
+アプリがリンクする OpenBabel は **GPL-2.0-only** なので、Apache-2.0 だけのものはリンクできません
+（`MIT OR Apache-2.0` は MIT として使うので問題ありません）。このため `ring`（と、それを使う rustls）も
+`openssl` クレートも使えず、HTTPS は OS のものを使います:
+
+| プラットフォーム | HTTPS |
+| --- | --- |
+| Windows、macOS | `ureq` + `native-tls`（SChannel、Security.framework） |
+| Linux | システムの `curl` を別プロセスとして実行（`src/update/curl.rs`） |
+
+Linux に `curl` がないと、更新の確認はオフラインのときと同じく黙って失敗し、更新は案内されません。
+`.deb` は `curl` パッケージを recommends にしています。
+
+CI が実行する `scripts/check-linked-crates.sh` は、`ring`・`rustls`・`openssl` が 3 つのプラットフォームの
+どれかのビルドに入ると失敗します。`openssl` は `Cargo.lock` と、`cfg` を無視する
+`cargo tree --target all` の出力には残ります。`native-tls` が Linux 向けに宣言しているためですが、
+このアプリは Linux で `native-tls` を使わないので、ビルドされることはありません。
 
 ## 署名と公証（notarization）について
 

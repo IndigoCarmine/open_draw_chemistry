@@ -12,6 +12,8 @@ use std::fmt;
 
 use semver::Version;
 
+#[cfg(any(test, not(any(windows, target_os = "macos"))))]
+mod curl;
 pub mod flow;
 pub mod http;
 pub mod install;

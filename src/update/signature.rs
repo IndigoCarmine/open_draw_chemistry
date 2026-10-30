@@ -10,8 +10,8 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use ring::digest;
-use ring::signature::{ED25519, UnparsedPublicKey};
+use ed25519_dalek::{Signature, VerifyingKey};
+use sha2::{Digest, Sha256};
 
 use super::Error;
 
@@ -62,18 +62,17 @@ pub fn signed_message(asset_name: &str, sha256: &str) -> String {
 /// The SHA-256 of the file at `path`, in lower-case hex.
 fn sha256_file(path: &Path) -> std::io::Result<String> {
     let mut file = File::open(path)?;
-    let mut context = digest::Context::new(&digest::SHA256);
+    let mut hasher = Sha256::new();
     let mut buffer = vec![0; 64 * 1024];
     loop {
         let read = file.read(&mut buffer)?;
         if read == 0 {
             break;
         }
-        context.update(&buffer[..read]);
+        hasher.update(&buffer[..read]);
     }
-    Ok(context
-        .finish()
-        .as_ref()
+    Ok(hasher
+        .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
@@ -87,27 +86,28 @@ pub fn verify_file(
     signature: &[u8],
 ) -> Result<(), Error> {
     let message = signed_message(asset_name, &sha256_file(path)?);
-    UnparsedPublicKey::new(&ED25519, key.0)
-        .verify(message.as_bytes(), signature)
+    let key = VerifyingKey::from_bytes(&key.0).map_err(|_| Error::Signature)?;
+    let signature = Signature::from_slice(signature).map_err(|_| Error::Signature)?;
+    key.verify_strict(message.as_bytes(), &signature)
         .map_err(|_| Error::Signature)
 }
 
 #[cfg(test)]
 mod tests {
-    use ring::signature::{Ed25519KeyPair, KeyPair};
+    use ed25519_dalek::{Signer, SigningKey};
 
     use super::*;
 
     /// A key pair for these tests only, from a fixed seed.
-    fn test_keys(seed: u8) -> (Ed25519KeyPair, PublicKey) {
-        let pair = Ed25519KeyPair::from_seed_unchecked(&[seed; 32]).unwrap();
-        let public = PublicKey(pair.public_key().as_ref().try_into().unwrap());
+    fn test_keys(seed: u8) -> (SigningKey, PublicKey) {
+        let pair = SigningKey::from_bytes(&[seed; 32]);
+        let public = PublicKey(pair.verifying_key().to_bytes());
         (pair, public)
     }
 
     /// `name` holding `bytes` in a fresh directory, and the signature `keys` give it.
     fn signed_file(
-        keys: &Ed25519KeyPair,
+        keys: &SigningKey,
         name: &str,
         bytes: &[u8],
     ) -> (tempfile::TempDir, std::path::PathBuf, Vec<u8>) {
@@ -115,7 +115,7 @@ mod tests {
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();
         let message = signed_message(name, &sha256_file(&path).unwrap());
-        let signature = keys.sign(message.as_bytes()).as_ref().to_vec();
+        let signature = keys.sign(message.as_bytes()).to_bytes().to_vec();
         (dir, path, signature)
     }
 
@@ -161,6 +161,25 @@ mod tests {
         assert!(verify_file(&other, "app-1.0.0.exe", &path, &signature).is_err());
     }
 
+    /// `resources/update-signing.pub` holding a key from no real pair must not verify anything:
+    /// with the identity point for a key, the all-zero signature would otherwise pass for every
+    /// file. A key that is no curve point at all is as good as none.
+    #[test]
+    fn a_degenerate_key_fails() {
+        let mut identity = [0; 32];
+        identity[0] = 1;
+        let mut signature = [0; 64];
+        signature[0] = 1;
+        let (_dir, path, _) = signed_file(&test_keys(1).0, "app-1.0.0.exe", b"anything");
+        assert!(VerifyingKey::from_bytes(&NOT_A_POINT).is_err());
+        for key in [PublicKey(identity), PublicKey(NOT_A_POINT)] {
+            assert!(matches!(
+                verify_file(&key, "app-1.0.0.exe", &path, &signature),
+                Err(Error::Signature)
+            ));
+        }
+    }
+
     /// A validly signed older asset cannot be served as the latest: the signature is bound to
     /// the name, and the app only looks for the name of the version it was told about.
     #[test]
@@ -170,8 +189,8 @@ mod tests {
         assert!(verify_file(&public, "app-2.0.0.exe", &path, &signature).is_err());
     }
 
-    /// The format `scripts/sign-update-assets.sh` writes, from OpenSSL rather than ring: the
-    /// keys here are a throwaway pair that signs nothing else.
+    /// The format `scripts/sign-update-assets.sh` writes, from OpenSSL rather than this crate:
+    /// the keys here are a throwaway pair that signs nothing else.
     #[test]
     fn a_signature_made_by_the_release_script_verifies() {
         let public = PublicKey::parse(SCRIPT_PUBLIC_KEY).unwrap();
@@ -184,6 +203,9 @@ mod tests {
             .collect();
         verify_file(&public, SCRIPT_ASSET_NAME, &path, &signature).unwrap();
     }
+
+    /// No point of the curve has this `y`.
+    const NOT_A_POINT: [u8; 32] = [2; 32];
 
     const SCRIPT_ASSET_NAME: &str = "open-draw-chemistry-9.9.9-windows-x64-setup.exe";
     const SCRIPT_ASSET: &[u8] = b"not really an installer\n";

@@ -20,7 +20,7 @@ use crate::three_d::{self, Export3d};
 use crate::ui::fragments::{FragmentAction, FragmentManager, ManagerContext};
 use crate::ui::{self, Command, ViewMode, menu::MenuState};
 use crate::update::flow::{Event, UpdateFlow};
-use crate::update::{self, http::Ureq, install, signature::PublicKey};
+use crate::update::{self, http, install, signature::PublicKey};
 
 mod ole;
 
@@ -175,7 +175,7 @@ impl OpenDrawApp {
     pub fn with_update_check(mut self) -> Self {
         if self.check_updates {
             self.update.start_check(
-                std::sync::Arc::new(Ureq::new()),
+                http::system(),
                 crate::APP_VERSION,
                 || install::detect(&install::Environment::current()),
                 PublicKey::embedded(),

@@ -464,7 +464,8 @@ fn remove_older_than(dir: &Path, age: Duration) {
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use ring::signature::{Ed25519KeyPair, KeyPair};
+    use ed25519_dalek::{Signer, SigningKey};
+    use sha2::{Digest, Sha256};
 
     use super::super::http::testing::{Canned, FakeTransport};
     use super::super::release::Asset;
@@ -625,30 +626,26 @@ mod tests {
         claimed_size: u64,
     ) -> (Download, FakeTransport) {
         let name = "open-draw-chemistry-1.2.3-asset";
-        let keys = Ed25519KeyPair::from_seed_unchecked(&[9; 32]).unwrap();
+        let keys = SigningKey::from_bytes(&[9; 32]);
         let hex: String = keys
-            .public_key()
-            .as_ref()
+            .verifying_key()
+            .as_bytes()
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("asset");
         std::fs::write(&path, bytes).unwrap();
-        let sha256 = {
-            let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
-            digest
-                .as_ref()
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-        };
+        let sha256: String = Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         let signature = keys.sign(signed_message(name, &sha256).as_bytes());
         let asset_url = "https://github.com/asset";
         let signature_url = "https://github.com/asset.sig";
         let transport = FakeTransport::default()
             .with(asset_url, Canned::Body(bytes.to_vec()))
-            .with(signature_url, Canned::Body(signature.as_ref().to_vec()));
+            .with(signature_url, Canned::Body(signature.to_bytes().to_vec()));
         let download = Download {
             format,
             asset: Asset {

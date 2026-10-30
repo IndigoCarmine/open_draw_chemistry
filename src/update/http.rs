@@ -2,10 +2,12 @@
 //!
 //! [`Transport`] makes a single request and does not follow redirects, so that [`open`] can vet
 //! every hop against [`is_allowed`]: a download starts at github.com and is redirected to its
-//! storage hosts. The tests replace [`Ureq`] with a fake.
+//! storage hosts. The tests replace the real one, from [`system`], with a fake.
 
 use std::io::{Read, Write};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(any(windows, target_os = "macos"))]
 use std::time::Duration;
 
 use url::Url;
@@ -123,12 +125,30 @@ pub fn download(
     }
 }
 
-/// The real network.
-pub struct Ureq(ureq::Agent);
+/// The real network, through what this OS provides for TLS.
+pub fn system() -> Arc<dyn Transport> {
+    #[cfg(any(windows, target_os = "macos"))]
+    return Arc::new(Ureq::new());
+    #[cfg(not(any(windows, target_os = "macos")))]
+    return Arc::new(super::curl::Curl::new());
+}
 
+/// HTTPS over native-tls.
+#[cfg(any(windows, target_os = "macos"))]
+struct Ureq(ureq::Agent);
+
+#[cfg(any(windows, target_os = "macos"))]
 impl Ureq {
-    pub fn new() -> Self {
+    fn new() -> Self {
+        use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+
         let config = ureq::Agent::config_builder()
+            .tls_config(
+                TlsConfig::builder()
+                    .provider(TlsProvider::NativeTls)
+                    .root_certs(RootCerts::PlatformVerifier)
+                    .build(),
+            )
             .https_only(true)
             .max_redirects(0)
             .http_status_as_error(false)
@@ -142,12 +162,7 @@ impl Ureq {
     }
 }
 
-impl Default for Ureq {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
+#[cfg(any(windows, target_os = "macos"))]
 impl Transport for Ureq {
     fn get(&self, url: &str) -> Result<Reply, Error> {
         let response = self
@@ -224,8 +239,9 @@ mod tests {
     #[test]
     #[ignore = "needs the network"]
     fn real_github_serves_the_latest_release_and_its_assets() {
-        let transport = Ureq::new();
-        let answer = read_limited(&transport, crate::update::LATEST_RELEASE_API, 4 << 20).unwrap();
+        let transport = system();
+        let transport = transport.as_ref();
+        let answer = read_limited(transport, crate::update::LATEST_RELEASE_API, 4 << 20).unwrap();
         let release = crate::update::release::Release::parse(&answer).unwrap();
         let asset = release
             .assets
@@ -234,7 +250,7 @@ mod tests {
             .unwrap();
         let mut out = Vec::new();
         download(
-            &transport,
+            transport,
             &asset.browser_download_url,
             asset.size,
             &mut out,

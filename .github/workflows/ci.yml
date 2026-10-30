@@ -39,6 +39,7 @@ jobs:
 
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
+      - run: bash scripts/check-linked-crates.sh
 
   test:
     name: Test (${{ matrix.os }})

@@ -283,7 +283,8 @@ impl UpdateFlow {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use ring::signature::{Ed25519KeyPair, KeyPair};
+    use ed25519_dalek::{Signer, SigningKey};
+    use sha2::{Digest, Sha256};
 
     use super::super::http::testing::{Canned, FakeTransport};
     use super::super::install::Scope;
@@ -303,10 +304,10 @@ mod tests {
 
     /// A release of 1.2.3 with a signed Windows installer, and the key that signed it.
     fn network() -> (FakeTransport, PublicKey) {
-        let keys = Ed25519KeyPair::from_seed_unchecked(&[5; 32]).unwrap();
+        let keys = SigningKey::from_bytes(&[5; 32]);
         let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-        let key = PublicKey::parse(&hex(keys.public_key().as_ref())).unwrap();
-        let sha256 = hex(ring::digest::digest(&ring::digest::SHA256, SETUP).as_ref());
+        let key = PublicKey::parse(&hex(keys.verifying_key().as_bytes())).unwrap();
+        let sha256 = hex(&Sha256::digest(SETUP));
         let signature = keys.sign(signed_message(NAME, &sha256).as_bytes());
         let json = serde_json::json!({
             "tag_name": "v1.2.3",
@@ -330,7 +331,7 @@ mod tests {
             .with(storage, Canned::Body(SETUP.to_vec()))
             .with(
                 &asset_url(&format!("{NAME}.sig")),
-                Canned::Body(signature.as_ref().to_vec()),
+                Canned::Body(signature.to_bytes().to_vec()),
             );
         (transport, key)
     }

@@ -51,15 +51,24 @@ openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
-# The startup update check and automatic install (see `src/update/`): an HTTPS client, the
-# ed25519 and SHA-256 that verify a download (`ring` is what rustls already uses), and the rest
-# for comparing versions, vetting URLs, the download's temporary directory and the Release page.
-ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
-ring = "0.17.14"
+# The startup update check and automatic install (see `src/update/`): the ed25519 and SHA-256
+# that verify a download, and the rest for comparing versions, vetting URLs, the download's
+# temporary directory and the Release page. Mind the licences of anything added here:
+# OpenBabel is GPL-2.0-only, which rules out what is only Apache-2.0, such as ring and openssl.
+ed25519-dalek = { version = "3.0.0", default-features = false }
+sha2 = { version = "0.11.1", default-features = false }
 semver = "1.0.28"
 url = "2.5.8"
 tempfile = "3.27.0"
 webbrowser = "1.2.5"
+
+# HTTPS for the update check through the OS's own TLS: SChannel on Windows, Security.framework
+# on macOS. `-no-default` because the plain feature adds Mozilla's root certificates, under
+# CDLA-Permissive-2.0, when the OS's are the ones wanted. Not on Linux, where native-tls is the
+# `openssl` crate: there the update check runs the system's curl (see `src/update/curl.rs`).
+# `openssl` is still in Cargo.lock for that reason, but nothing builds it.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+ureq = { version = "3.5.0", default-features = false, features = ["native-tls-no-default"] }
 
 # Windows OLE: Copy publishes an OLE data object (OleSetClipboard), so Word/PowerPoint paste
 # the structure as an embedded ChemDraw object (see `src/ole/`), and the OLE server
@@ -129,6 +138,8 @@ priority = "optional"
 # then fails to start on a minimal system. (`$auto` does find what the binary and the
 # bundled OpenBabel link: libc, libstdc++, zlib, libxml2.)
 depends = "$auto, libxkbcommon0, libwayland-client0, libegl1, libgl1, libx11-6, libxcursor1, libxi6, libxrandr2"
+# The update check runs it (see `src/update/curl.rs`); without it the app just never asks.
+recommends = "curl"
 # The app and its private OpenBabel come from the tree scripts/stage-linux.sh lays out in
 # target/deb-root (the binary's rpath, $ORIGIN/../lib/open-draw-chemistry, reaches the
 # libraries in /usr/lib/open-draw-chemistry). The release workflow
