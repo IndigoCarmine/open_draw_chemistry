@@ -7,10 +7,10 @@
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use openbabel::{Algorithm, Minimizer, StopReason};
+use openbabel::Algorithm;
 
 use crate::three_d::geom::Vec3;
-use crate::three_d::{self, Atom3d, Bond3d, Constraint, ForceField};
+use crate::three_d::{self, Atom3d, Bond3d, Constraint, ForceField, Relaxed, Watch};
 
 /// A V2000 count field is three digits wide; beyond it the molfile is written as V3000.
 const V2000_MAX: usize = 999;
@@ -164,8 +164,9 @@ impl Evaluator {
     }
 }
 
-/// Minimiser steps run in one segment of a point's relaxation, between two looks at the cancel
-/// flag: a few milliseconds for a small molecule, so cancelling takes effect within one point.
+/// The most minimiser steps run in one segment of a point's relaxation, between two looks at
+/// the cancel flag: a few milliseconds for a small molecule, so cancelling takes effect within
+/// one point.
 const RELAX_CHUNK_STEPS: u32 = 50;
 
 /// The fewest minimiser steps a segment of [`Evaluator::relax_held`] is cut down to (of
@@ -177,18 +178,9 @@ const SHORTEST_HELD_SEGMENT: u32 = 1;
 /// structure along it, before [`Evaluator::relax_held`] calls the relaxation converged.
 const HELD_STEP_HALVINGS: u32 = 10;
 
-/// Steps between the minimiser's looks at its own convergence within a segment: OpenBabel's
-/// "converged" can only be told from "out of steps" when it stops before a segment's end.
-const RELAX_FRAME_STEPS: u32 = 10;
-
-/// The most a segment that OpenBabel calls converged may still lower the energy (in the force
-/// field's unit) for a stage to count as converged.
+/// The least a segment of [`Evaluator::relax_held`] must lower the held energy (in the force
+/// field's unit) not to count as settled.
 const SETTLED_ENERGY: f64 = 1e-5;
-
-/// The restraints' stiffness in the first stage of a point's relaxation (see
-/// [`Evaluator::relax`]): soft enough for the minimiser to move freely, stiff enough to keep
-/// the parameters within a degree or so; the second stage holds them as an optimisation does.
-const SOFT_FORCE_FACTOR: f64 = 1.0e6;
 
 /// How relaxing one point ended.
 #[derive(Debug, Clone, PartialEq)]
@@ -208,20 +200,11 @@ pub enum Relaxation {
 
 impl Evaluator {
     /// Minimise the structure from `coords` holding `constraints` (scanned parameters, fixed
-    /// atoms…), for at most `steps` conjugate-gradient steps, looking at `cancel` every
-    /// [`RELAX_CHUNK_STEPS`].
-    ///
-    /// The restraints that hold a dihedral are stiff (see [`three_d::optimize_with`]), and
-    /// conjugate gradients crawl under them: OpenBabel's convergence test (a tiny energy change
-    /// from one step to the next) fires while the structure is still well above its relaxed
-    /// energy — a single run leaves gauche butane ~2.7 kcal/mol (MMFF94) too high, and even
-    /// restarted runs stall ~0.04 too high. So a point relaxes in two stages: first under
-    /// restraints [`SOFT_FORCE_FACTOR`] stiff, where the rest of the structure moves freely
-    /// (the parameters then sit within about a degree), then under the full stiffness, which
-    /// only has that last bit to correct. The first stage may take half the budget. Each stage
-    /// runs in segments, each restarting the conjugate gradients, and is converged once a
-    /// fresh segment converges without lowering the energy by more than [`SETTLED_ENERGY`];
-    /// the point is converged when its second stage is.
+    /// atoms…) as Optimize does ([`three_d::optimize_with`]: the force field's own algorithms,
+    /// restarted wherever OpenBabel stops early, under soft restraints and then the full ones),
+    /// in at most `steps` minimiser steps, looking at `cancel` every [`RELAX_CHUNK_STEPS`] at
+    /// most. Converged when it ended at the restrained minimum rather than out of steps (see
+    /// [`Relaxed`]).
     pub fn relax(
         &mut self,
         coords: &[Vec3],
@@ -236,20 +219,22 @@ impl Evaluator {
         {
             return Relaxation::Failed;
         }
-        let soft = self.minimise(constraints, Some(SOFT_FORCE_FACTOR), steps / 2, cancel);
-        let Some((_, taken)) = soft else {
-            return if cancel.load(Ordering::Relaxed) {
-                Relaxation::Cancelled
-            } else {
-                Relaxation::Failed
-            };
+        let watch = Watch {
+            cancel,
+            segment: RELAX_CHUNK_STEPS,
         };
-        let Some((converged, _)) = self.minimise(constraints, None, steps - taken, cancel) else {
-            return if cancel.load(Ordering::Relaxed) {
-                Relaxation::Cancelled
-            } else {
-                Relaxation::Failed
-            };
+        let mut left = steps;
+        let relaxed = three_d::relax_watched(
+            &mut self.mol,
+            self.force_field,
+            &mut left,
+            constraints,
+            &watch,
+        );
+        let converged = match relaxed {
+            Ok(Relaxed::Done { converged, .. }) => converged,
+            Ok(Relaxed::Cancelled) => return Relaxation::Cancelled,
+            Err(_) => return Relaxation::Failed,
         };
         let coords = self.coords();
         let energy = self.energy(&coords);
@@ -322,20 +307,20 @@ impl Evaluator {
                 };
             }
             let shortest = segment <= SHORTEST_HELD_SEGMENT;
-            let mut config = Minimizer::new(self.force_field.id());
-            config
-                .algorithm(if shortest {
-                    Algorithm::SteepestDescent
-                } else {
-                    Algorithm::ConjugateGradients
-                })
-                .max_steps(segment.min(steps - taken))
-                .steps_per_frame(RELAX_FRAME_STEPS);
-            let run = self.mol.minimize(&config);
-            if matches!(run.stop_reason(), StopReason::Failed) {
+            let algorithm = if shortest {
+                Algorithm::SteepestDescent
+            } else {
+                Algorithm::ConjugateGradients
+            };
+            let most = segment.min(steps - taken);
+            let Some(run) =
+                three_d::minimise_run(&mut self.mol, self.force_field, algorithm, most, None)
+            else {
                 return Relaxation::Failed;
-            }
-            taken += run.steps_taken().max(1);
+            };
+            // Too few steps left for a run of conjugate gradients (their setup takes one): the
+            // budget is spent.
+            taken += if run == 0 { most } else { run };
             let free = self.coords();
             let mut coords = free.clone();
             hold(&mut coords);
@@ -403,54 +388,6 @@ impl Evaluator {
                 [x, y, z]
             })
             .collect()
-    }
-
-    /// One stage of [`Evaluator::relax`] from the molecule's coordinates: at most `steps`
-    /// steps under `constraints`, as stiff as `force_factor` (else as an optimisation's).
-    /// Whether it converged and the steps taken, or `None` when cancelled or failed.
-    fn minimise(
-        &mut self,
-        constraints: &[Constraint],
-        force_factor: Option<f64>,
-        steps: u32,
-        cancel: &AtomicBool,
-    ) -> Option<(bool, u32)> {
-        let mut taken = 0;
-        // The energy where the last segment ended, as the minimiser's frames report it: the
-        // force field's own, the restraints' penalty left out.
-        let mut last = f64::INFINITY;
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                return None;
-            }
-            if taken >= steps {
-                return Some((false, taken));
-            }
-            let mut restraints = three_d::restraints(constraints, self.atoms);
-            if let Some(factor) = force_factor {
-                restraints.force_factor(factor);
-            }
-            let mut config = Minimizer::new(self.force_field.id());
-            config
-                .algorithm(Algorithm::ConjugateGradients)
-                .max_steps(RELAX_CHUNK_STEPS.min(steps - taken))
-                .steps_per_frame(RELAX_FRAME_STEPS)
-                .constraints(restraints);
-            let run = self.mol.minimize(&config);
-            let stop = run.stop_reason();
-            taken += run.steps_taken().max(1);
-            let end = run
-                .last()
-                .map(|frame| frame.energy)
-                .filter(|e| e.is_finite())?;
-            let settled = last - end <= SETTLED_ENERGY;
-            last = end;
-            match stop {
-                StopReason::Converged if settled => return Some((true, taken)),
-                StopReason::Converged | StopReason::MaxSteps => {}
-                StopReason::Failed => return None,
-            }
-        }
     }
 }
 
