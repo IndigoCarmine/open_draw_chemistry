@@ -1105,17 +1105,18 @@ mod energy_tests {
             .expect("generate")
     }
 
-    /// Butane; its carbons are atoms 0–3, as drawn.
+    /// Butane as [`crate::three_d::generate`] built it once under `force_field`; its carbons
+    /// are atoms 0–3, as drawn. The builder places the atoms differently every time, and how a
+    /// relaxed scan's minimisations go with them, so the tests start from these. UFF's is a
+    /// build one of whose relaxed points used to end unconverged, as about one in forty did
+    /// (see `a_pass_out_of_steps_keeps_the_minimum_before_it` in the engine).
     pub(crate) fn butane(force_field: ForceField) -> Model3d {
-        let mut drawing = chembuider_rs::Molecule::default();
-        let mut prev = drawing.add_atom("C".to_owned(), [0.0, 0.0], 0);
-        for i in 1..4 {
-            let y = 0.75 * (i % 2) as f32;
-            let next = drawing.add_atom("C".to_owned(), [1.3 * i as f32, y], 0);
-            drawing.add_bond(prev, next, BondOrder::Single);
-            prev = next;
-        }
-        generate(&drawing, force_field)
+        let molfile = match force_field {
+            ForceField::Mmff94 => include_str!("../../tests/data/optimize/butane_mmff94.mol"),
+            ForceField::Uff => include_str!("../../tests/data/optimize/butane_uff.mol"),
+            _ => panic!("no butane under {force_field}"),
+        };
+        crate::three_d::model_from_molfile(molfile, force_field)
     }
 
     /// The butane torsion profile: anti (180°) lowest, gauche (±60°) a local minimum,
