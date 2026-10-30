@@ -94,8 +94,8 @@ pub(crate) enum Relaxed {
     /// The molecule's own energy at the geometry reached (the restraints' penalty left out),
     /// and whether that geometry is a minimum: the last restart of every one of the force
     /// field's [`algorithms`] could not move the atoms, and — restrained — another
-    /// soft-then-stiff pass no longer lowered the energy. Not converged when the steps ran
-    /// out first.
+    /// soft-then-stiff pass, which may itself end out of steps, found nothing lower. Not
+    /// converged when the steps ran out before that.
     Done { energy: f64, converged: bool },
     /// The watched flag was raised part-way; the molecule holds wherever it got to.
     Cancelled,
@@ -159,9 +159,14 @@ pub(crate) fn relax_watched(
     // up to a degree or two.
     //
     // Converged once a pass whose stiff stage ended at a minimum (no restart could move the
-    // atoms) lowers the energy by less than that.
+    // atoms) is followed by one that lowers the energy by less than that. That next pass
+    // starts by leaving the minimum, under the soft restraints, and may run out of steps on
+    // its way back, stopped anywhere above it with the restrained values not yet held: so one
+    // that found nothing lower hands back the minimum before it, whose verdict it does not
+    // change. Given four times the steps, no such pass under UFF ended lower.
     let mut energy = f64::INFINITY;
     let mut converged = false;
+    let mut minimum: Option<Vec<f64>> = None;
     for _ in 0..RESTRAINED_PASSES {
         let mut soft = *left - left.div_ceil(2).min(STIFF_RESERVE);
         let given = soft;
@@ -187,8 +192,16 @@ pub(crate) fn relax_watched(
         }
         let reached = mol.energy(force_field.id()).ok_or_else(failed)?;
         let settled = energy - reached < SETTLED_ENERGY;
+        if settled && let Some(minimum) = &minimum {
+            mol.set_coordinates(minimum);
+            return Ok(Relaxed::Done {
+                energy,
+                converged: true,
+            });
+        }
         converged = settled && stiff == Descent::Settled;
         energy = reached;
+        minimum = (stiff == Descent::Settled).then(|| coordinates(mol));
         if settled || *left == 0 {
             break;
         }
@@ -562,7 +575,7 @@ fn usable(model: &Model3d) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::three_d::{OPTIMIZE_STEPS, edit, geom};
     use std::cell::RefCell;
@@ -730,7 +743,7 @@ mod tests {
     }
 
     /// The model of a 3D molfile under `force_field`, as the 3D view holds it.
-    fn model_from_molfile(molfile: &str, force_field: ForceField) -> Model3d {
+    pub(crate) fn model_from_molfile(molfile: &str, force_field: ForceField) -> Model3d {
         let mol = ObMol::parse(molfile, "mol").expect("molfile");
         let energy = mol.energy(force_field.id()).expect("energy");
         super::model(&mol, force_field, energy).expect("model")
@@ -1211,6 +1224,71 @@ mod tests {
                     "{force_field} in {budget} steps: ended under the soft restraints, {runs:?}"
                 );
             }
+        }
+    }
+
+    /// A restrained minimisation's first pass ends at a minimum and the next, to see whether a
+    /// lower one is near, leaves it under the soft restraints. However few steps that pass has
+    /// to get back, the minimum before it is what comes back, and it is one: the pass used to
+    /// be taken for the result, so a butane eclipsed under UFF ended a little above the minimum
+    /// it had reached, called unconverged — about one relaxed scan in forty, wherever the steps
+    /// happened to run out. Given four times the steps, no such pass found anything lower.
+    #[test]
+    fn a_pass_out_of_steps_keeps_the_minimum_before_it() {
+        let force_field = ForceField::Uff;
+        let torsion = [0, 1, 2, 3];
+        let target = -120.0;
+        let start = model_from_molfile(
+            include_str!("../../tests/data/optimize/butane_uff.mol"),
+            force_field,
+        );
+        let graph = edit::graph(&start);
+        let turned = geom::set_dihedral(&edit::coords(&start), &graph, torsion, target, None)
+            .expect("turn the dihedral");
+        let flat: Vec<f64> = turned.iter().flatten().copied().collect();
+        let restraint = [Constraint::Torsion(torsion, target)];
+        let cancel = AtomicBool::new(false);
+        // In segments as a relaxed scan's.
+        let watch = Watch {
+            cancel: &cancel,
+            segment: 50,
+        };
+        let relaxed_in = |budget: u32| {
+            let mut mol = ObMol::parse(&start.molfile, "mol").expect("molfile");
+            assert!(mol.set_coordinates(&flat));
+            let mut left = budget;
+            let (relaxed, runs) =
+                recording(|| relax_watched(&mut mol, force_field, &mut left, &restraint, &watch));
+            let Ok(Relaxed::Done { energy, converged }) = relaxed else {
+                panic!("in {budget} steps: {relaxed:?}");
+            };
+            let at = coordinates(&mol);
+            let point = |a: usize| [at[3 * a], at[3 * a + 1], at[3 * a + 2]];
+            let [a, b, c, d] = torsion.map(point);
+            (energy, converged, geom::dihedral(a, b, c, d), runs)
+        };
+
+        let budget = OPTIMIZE_STEPS * RESTRAINED_BUDGET;
+        let (minimum, converged, _, runs) = relaxed_in(budget);
+        assert!(converged, "in {budget} steps, E {minimum}");
+        // The first pass: up to where the soft restraints come back after the full ones.
+        let stiff = runs.iter().position(|r| !r.soft).expect("a stiff stage");
+        let next = runs[stiff..].iter().position(|r| r.soft);
+        let first = line_searches(&runs[..stiff + next.expect("a second pass")]);
+        // The first pass is the same in all of these: the soft stage's share of the steps,
+        // all but 100, is as long as that pass.
+        for second in [100, 150, 200, 300, 500, 1000] {
+            let steps = first + second;
+            let (energy, converged, at, _) = relaxed_in(steps);
+            assert!(converged, "{second} steps after the first pass: E {energy}");
+            assert!(
+                (energy - minimum).abs() < 1e-3,
+                "{second} steps after the first pass: E {energy}, the minimum {minimum}"
+            );
+            assert!(
+                geom::wrap_degrees(at - target).abs() < 0.25,
+                "{second} steps after the first pass: dihedral {at}"
+            );
         }
     }
 

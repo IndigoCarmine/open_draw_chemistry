@@ -237,6 +237,9 @@ pub fn optimize_with(
 /// scan minimises each point with it (see `scan::energy`).
 pub(crate) use engine::{Relaxed, Watch, relax_watched, run as minimise_run};
 
+#[cfg(test)]
+pub(crate) use engine::tests::model_from_molfile;
+
 /// The most minimiser steps a restrained [`optimize_with`] takes.
 pub const RESTRAINED_OPTIMIZE_STEPS: u32 = OPTIMIZE_STEPS * engine::RESTRAINED_BUDGET;
 
