@@ -114,11 +114,14 @@ pub enum Reduce {
     Minimum,
 }
 
-/// The most atoms a relaxed scan accepts: every point is a whole constrained minimisation of
-/// up to [`crate::three_d::OPTIMIZE_STEPS`] steps over all atom pairs. Measured per point
-/// (release build, an alkane's dihedral): ~0.2–0.5 s at 32 atoms, 1.2–3.7 s at 100, 5–14 s at
-/// 200 and 13–48 s at 300 (MMFF94–UFF), growing as the square of the atoms; at 500 a point
-/// takes ~0.5–2 min, and a 37-point dihedral scan most of an hour.
+/// The most atoms a relaxed scan accepts: every point is two whole constrained minimisations
+/// (see [`run::Run::start_relaxed`]) of up to [`crate::three_d::RESTRAINED_OPTIMIZE_STEPS`]
+/// steps each over all atom pairs. Measured per point (release build, an alkane's dihedral,
+/// the `relaxed_point_timing` report): ~1 s at 100 atoms and ~45 s at 300 under MMFF94, ~2 min
+/// at 500; UFF, whose restrained minimisation is steepest descent alone and spends its whole
+/// budget, ~35 s at 100 atoms and ~4.5 min at 300 (at 500 not measured: some 12–20 min, so a
+/// 37-point dihedral scan of the most atoms takes about an hour under MMFF94 and most of a day
+/// under UFF).
 pub const MAX_RELAX_ATOMS: usize = 500;
 
 /// The most points (all axes together) of a relaxed scan: a 10° × 10° map of two dihedrals
@@ -132,17 +135,20 @@ const _: () = assert!(MAX_RELAX_POINTS <= MAX_SCAN_POINTS);
 
 /// Seconds a relaxed point takes per atom squared, on the fastest and the slowest force field
 /// (MMFF94 and UFF; release build, an alkane's dihedral — see [`MAX_RELAX_ATOMS`] and the
-/// `relaxed_point_timing` report): a point minimises over all atom pairs.
-pub const RELAX_SECONDS_PER_ATOM2: [f64; 2] = [1.2e-4, 5.0e-4];
+/// `relaxed_point_timing` report): a point minimises over all atom pairs. MMFF94 measured
+/// 1.0e-4 at 100 atoms and up to 4.8e-4 at 300–500; UFF 2.9e-3 to 3.4e-3.
+pub const RELAX_SECONDS_PER_ATOM2: [f64; 2] = [1.0e-4, 3.4e-3];
 
 /// Seconds one minimiser segment (the steps between two looks at the cancel flag) takes per
 /// atom squared at worst: how long Cancel can take to stop a relaxed scan.
 pub const RELAX_SEGMENT_SECONDS_PER_ATOM2: f64 = 2.0e-5;
 
-/// The most work a relaxed scan accepts, in atoms² × points: ~3 h at the slowest rate of
-/// [`RELAX_SECONDS_PER_ATOM2`] (the caps on atoms and points alone would let through 500
-/// atoms × 1500 points, most of two days). A 37 × 37 map fits up to ~120 atoms, a 37-point
-/// dihedral up to the most atoms.
+/// The most work a relaxed scan accepts, in atoms² × points: ~3 h at MMFF94's rate for a large
+/// molecule, but ~19 h at UFF's, the slowest rate of [`RELAX_SECONDS_PER_ATOM2`] (the caps on
+/// atoms and points alone would let through 500 atoms × 1500 points). Not lowered to UFF's
+/// rate: that would refuse MMFF94 scans that run in a reasonable time, and the window shows
+/// the estimate — warning of a long one — before a scan starts, which can be cancelled. A
+/// 37 × 37 map fits up to ~120 atoms, a 37-point dihedral up to the most atoms.
 pub const MAX_RELAX_WORK: f64 = 2.0e7;
 
 /// From this estimated time (at the slowest rate) on, the window warns before a relaxed scan
@@ -953,8 +959,12 @@ mod tests {
         let most = (MAX_RELAX_WORK / (atoms * atoms) as f64) as usize;
         assert_eq!(relax_refusal(atoms, most), None);
         assert!(relax_refusal(atoms, most + 1).is_some());
-        // Whatever is allowed ends within ~3 h even at the slowest rate.
-        assert!(relax_estimate(atoms, most)[1] <= Duration::from_secs(3 * 3600));
+        // Whatever is allowed ends within ~3 h at MMFF94's rate for a large molecule; at the
+        // slowest (UFF's) it may take most of a day, and the window warns of it.
+        assert!(Duration::from_secs_f64(MAX_RELAX_WORK * 4.8e-4) <= Duration::from_secs(3 * 3600));
+        let [_, slowest] = relax_estimate(atoms, most);
+        assert!(slowest <= Duration::from_secs(24 * 3600), "{slowest:?}");
+        assert!(slowest >= LONG_RELAX);
     }
 
     /// The estimate warns of a long run (and how long Cancel takes) before it starts.

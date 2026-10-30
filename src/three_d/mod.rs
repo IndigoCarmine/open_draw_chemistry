@@ -233,11 +233,12 @@ pub fn optimize_with(
     engine::optimize(&model.molfile, force_field, OPTIMIZE_STEPS, constraints)
 }
 
-/// `constraints` as OpenBabel's restraints for a molecule of `atoms` atoms, as stiff as an
-/// optimisation's (see [`optimize_with`]); those naming atoms it does not have are left out.
-pub(crate) fn restraints(constraints: &[Constraint], atoms: usize) -> openbabel::Constraints {
-    engine::to_openbabel(constraints, u32::try_from(atoms).unwrap_or(u32::MAX))
-}
+/// The minimiser behind [`optimize_with`], for a molecule already held by OpenBabel: a relaxed
+/// scan minimises each point with it (see `scan::energy`).
+pub(crate) use engine::{Relaxed, Watch, relax_watched, run as minimise_run};
+
+/// The most minimiser steps a restrained [`optimize_with`] takes.
+pub const RESTRAINED_OPTIMIZE_STEPS: u32 = OPTIMIZE_STEPS * engine::RESTRAINED_BUDGET;
 
 /// The single-point energy of `model`'s current geometry under `force_field`, in the force
 /// field's unit. For the energy after a hand edit; slow-ish, so off the UI thread.

@@ -3,6 +3,8 @@
 //! Every call here is slow and serialised by OpenBabel's process-wide lock, so it belongs on
 //! a background thread (see [`super::job`]).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use openbabel::{Algorithm, Constraints, Minimizer, Molecule as ObMol, StopReason};
 
 use super::{Atom3d, Bond3d, Constraint, Error, Export3d, ForceField, Model3d};
@@ -79,40 +81,119 @@ fn relax(
     left: &mut u32,
     constraints: &[Constraint],
 ) -> Result<f64, Error> {
+    match relax_watched(mol, force_field, left, constraints, &Watch::NONE)? {
+        Relaxed::Done { energy, .. } => Ok(energy),
+        // Nothing raises `Watch::NONE`'s flag.
+        Relaxed::Cancelled => Err(Error::ForceField(force_field)),
+    }
+}
+
+/// How a minimisation ended (see [`relax_watched`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Relaxed {
+    /// The molecule's own energy at the geometry reached (the restraints' penalty left out),
+    /// and whether that geometry is a minimum: the last restart of every one of the force
+    /// field's [`algorithms`] could not move the atoms, and — restrained — another
+    /// soft-then-stiff pass no longer lowered the energy. Not converged when the steps ran
+    /// out first.
+    Done { energy: f64, converged: bool },
+    /// The watched flag was raised part-way; the molecule holds wherever it got to.
+    Cancelled,
+}
+
+/// What a minimisation looks at between OpenBabel's runs: a flag that stops it, and the most
+/// steps one run may take, so a raised flag is seen within that many.
+pub(crate) struct Watch<'a> {
+    pub cancel: &'a AtomicBool,
+    pub segment: u32,
+}
+
+/// Never raised: Generate and Optimize run to the end.
+static NEVER: AtomicBool = AtomicBool::new(false);
+
+impl Watch<'_> {
+    /// No flag, and runs as long as OpenBabel takes them.
+    const NONE: Watch<'static> = Watch {
+        cancel: &NEVER,
+        segment: u32::MAX,
+    };
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+/// [`relax`], looking at `watch` between OpenBabel's runs, and telling whether it converged
+/// (see [`Relaxed`]): what a relaxed scan minimises each of its points with.
+pub(crate) fn relax_watched(
+    mol: &mut ObMol,
+    force_field: ForceField,
+    left: &mut u32,
+    constraints: &[Constraint],
+    watch: &Watch,
+) -> Result<Relaxed, Error> {
     let failed = || Error::ForceField(force_field);
     let algorithms = algorithms(force_field, !constraints.is_empty());
     if constraints.is_empty() {
-        descend(mol, force_field, algorithms, &[], None, left).ok_or_else(failed)?;
-        return mol.energy(force_field.id()).ok_or_else(failed);
+        let descent =
+            descend(mol, force_field, algorithms, &[], None, left, watch).ok_or_else(failed)?;
+        if descent == Descent::Cancelled {
+            return Ok(Relaxed::Cancelled);
+        }
+        return Ok(Relaxed::Done {
+            energy: mol.energy(force_field.id()).ok_or_else(failed)?,
+            converged: descent == Descent::Settled,
+        });
     }
     // Restraints at their full stiffness leave the minimiser hardly any room: their curvature
     // (2e8 per Å² for a distance) demands steps far below the first ones a fresh run tries, so
     // a restart often cannot take a single one and the structure stays a few tenths of a
     // kcal/mol above its restrained minimum. Under softer ones the rest of the structure moves
     // freely and the restrained values end up within about a degree; the full stiffness then
-    // has only that to correct. (The scan does the same, see `scan::energy`.) Another such pass
-    // still finds a little more; passes repeat until one no longer lowers the energy.
+    // has only that to correct. Another such pass still finds a little more; passes repeat
+    // until one no longer lowers the energy.
     //
     // The soft stage leaves the full stiffness [`STIFF_RESERVE`] steps at least (half of what
     // is left, rounded up, if that is fewer), so it always gets its turn — the last step left,
     // if that is all: straight from the soft stage, a structure misses a restrained dihedral by
     // up to a degree or two.
+    //
+    // Converged once a pass whose stiff stage ended at a minimum (no restart could move the
+    // atoms) lowers the energy by less than that.
     let mut energy = f64::INFINITY;
+    let mut converged = false;
     for _ in 0..RESTRAINED_PASSES {
         let mut soft = *left - left.div_ceil(2).min(STIFF_RESERVE);
         let given = soft;
         let factor = Some(SOFT_FORCE_FACTOR);
-        descend(mol, force_field, algorithms, constraints, factor, &mut soft).ok_or_else(failed)?;
+        let descent = descend(
+            mol,
+            force_field,
+            algorithms,
+            constraints,
+            factor,
+            &mut soft,
+            watch,
+        )
+        .ok_or_else(failed)?;
         *left -= given - soft;
-        descend(mol, force_field, algorithms, constraints, None, left).ok_or_else(failed)?;
+        if descent == Descent::Cancelled {
+            return Ok(Relaxed::Cancelled);
+        }
+        let stiff = descend(mol, force_field, algorithms, constraints, None, left, watch)
+            .ok_or_else(failed)?;
+        if stiff == Descent::Cancelled {
+            return Ok(Relaxed::Cancelled);
+        }
         let reached = mol.energy(force_field.id()).ok_or_else(failed)?;
-        let settled = energy - reached < SETTLED_ENERGY || *left == 0;
+        let settled = energy - reached < SETTLED_ENERGY;
+        converged = settled && stiff == Descent::Settled;
         energy = reached;
-        if settled {
+        if settled || *left == 0 {
             break;
         }
     }
-    Ok(energy)
+    Ok(Relaxed::Done { energy, converged })
 }
 
 /// OpenBabel's minimisers in the order [`descend`] tries them under `force_field`:
@@ -138,13 +219,24 @@ fn algorithms(force_field: ForceField, restrained: bool) -> &'static [Algorithm]
     }
 }
 
+/// How [`descend`] ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Descent {
+    /// No run could move the atoms: a fresh restart of every algorithm found nothing lower.
+    Settled,
+    /// The steps ran out with the atoms still moving (or too few were left for a run).
+    OutOfSteps,
+    /// The watched flag was raised.
+    Cancelled,
+}
+
 /// Run the first of `algorithms` again and again from where it stopped, holding `constraints`
 /// (at `force_factor` instead of [`FORCE_FACTOR`] if given), until no run moves the atoms or
 /// the `left` steps are spent (and deducted). A run that does not move them is answered with
 /// the next algorithm, for at most [`FALLBACK_STEPS`], before believing it; once one does, the
 /// first takes over again — unless it is stuck again at once, as L-BFGS is all along on taxol
-/// under GAFF, and then the next leads from there on. `None` if the force field cannot be set
-/// up.
+/// under GAFF, and then the next leads from there on. No run is longer than `watch`'s segment,
+/// and its flag is looked at before each. `None` if the force field cannot be set up.
 fn descend(
     mol: &mut ObMol,
     force_field: ForceField,
@@ -152,49 +244,45 @@ fn descend(
     constraints: &[Constraint],
     force_factor: Option<f64>,
     left: &mut u32,
-) -> Option<()> {
-    let run = |mol: &mut ObMol, algorithm: Algorithm, most: u32, left: &mut u32| {
-        // The run's own line searches come out of the same steps (see [`setup_steps`]); with
-        // none left for any other, it cannot run and so moves nothing.
-        let setup = setup_steps(algorithm);
-        let steps = most.min(*left).saturating_sub(setup);
-        if steps == 0 {
-            return Some(false);
-        }
-        let mut config = Minimizer::new(force_field.id());
-        // A frame every step, so `steps_taken` counts the steps a run took: one stopped after
-        // two of them must not be charged for fifty, or a structure that OpenBabel stops every
-        // step or two runs through its budget doing almost nothing.
-        config
-            .algorithm(algorithm)
-            .max_steps(steps)
-            .energy_convergence(ECONV)
-            .steps_per_frame(1);
-        if !constraints.is_empty() {
+    watch: &Watch,
+) -> Option<Descent> {
+    // A run had too few steps left to take any, so moved nothing for want of them.
+    let mut short = false;
+    let mut run_on = |mol: &mut ObMol, algorithm: Algorithm, most: u32, left: &mut u32| {
+        let restraints = (!constraints.is_empty()).then(|| {
             let mut restraints = to_openbabel(constraints, mol.num_atoms());
             if let Some(factor) = force_factor {
                 restraints.force_factor(factor);
             }
-            config.constraints(restraints);
-        }
+            restraints
+        });
         let before = coordinates(mol);
-        let done = mol.minimize(&config);
-        #[cfg(test)]
-        tests::record(algorithm, force_factor.is_some(), done.steps_taken());
-        if done.stop_reason() == StopReason::Failed {
-            return None;
+        let steps = most.min(watch.segment).min(*left);
+        let taken = run(mol, force_field, algorithm, steps, restraints)?;
+        if taken == 0 {
+            short = true;
+            return Some(false);
         }
-        *left = left.saturating_sub(done.steps_taken().max(1) + setup);
+        #[cfg(test)]
+        tests::record(
+            algorithm,
+            force_factor.is_some(),
+            taken - setup_steps(algorithm),
+        );
+        *left = left.saturating_sub(taken);
         Some(rms_shift(&before, &coordinates(mol)) >= SETTLED_SHIFT)
     };
     let mut algorithms = algorithms;
     // The first algorithm could not move the atoms on its last run.
     let mut stuck = false;
     'restart: while *left > 0 {
+        if watch.cancelled() {
+            return Some(Descent::Cancelled);
+        }
         let Some((&first, rest)) = algorithms.split_first() else {
             break;
         };
-        if run(mol, first, u32::MAX, left)? {
+        if run_on(mol, first, u32::MAX, left)? {
             stuck = false;
             continue;
         }
@@ -208,13 +296,55 @@ fn descend(
             if *left == 0 {
                 break 'restart;
             }
-            if run(mol, algorithm, FALLBACK_STEPS, left)? {
+            if watch.cancelled() {
+                return Some(Descent::Cancelled);
+            }
+            if run_on(mol, algorithm, FALLBACK_STEPS, left)? {
                 continue 'restart;
             }
         }
+        if !short {
+            return Some(Descent::Settled);
+        }
         break;
     }
-    Some(())
+    Some(Descent::OutOfSteps)
+}
+
+/// One OpenBabel run of `algorithm` from the molecule's coordinates, of at most `steps` steps
+/// — its own setup line search among them (see [`setup_steps`]) — holding `restraints` if
+/// given, OpenBabel's convergence test at [`ECONV`]. The steps it took, its setup included:
+/// none when `steps` leave it none past its setup, and it does not run. `None` when the force
+/// field cannot be set up.
+pub(crate) fn run(
+    mol: &mut ObMol,
+    force_field: ForceField,
+    algorithm: Algorithm,
+    steps: u32,
+    restraints: Option<Constraints>,
+) -> Option<u32> {
+    let setup = setup_steps(algorithm);
+    let steps = steps.saturating_sub(setup);
+    if steps == 0 {
+        return Some(0);
+    }
+    let mut config = Minimizer::new(force_field.id());
+    // A frame every step, so `steps_taken` counts the steps a run took: one stopped after two
+    // of them must not be charged for fifty, or a structure that OpenBabel stops every step or
+    // two runs through its budget doing almost nothing.
+    config
+        .algorithm(algorithm)
+        .max_steps(steps)
+        .energy_convergence(ECONV)
+        .steps_per_frame(1);
+    if let Some(restraints) = restraints {
+        config.constraints(restraints);
+    }
+    let done = mol.minimize(&config);
+    if done.stop_reason() == StopReason::Failed {
+        return None;
+    }
+    Some(done.steps_taken().max(1) + setup)
 }
 
 /// The steps a run under `algorithm` takes before those OpenBabel counts in `steps_taken`.
@@ -255,8 +385,9 @@ const STIFF_RESERVE: u32 = 100;
 /// with restraints (see [`algorithms`]), and from a badly strained start — every atom of
 /// ibuprofen kicked by up to 0.15 Å, a dozen times its relaxed energy — its soft stage alone
 /// sometimes needs more than 2500 steps; one in fifteen to twenty such Optimizes then ended
-/// over a kcal/mol above the restrained minimum.
-const RESTRAINED_BUDGET: u32 = 2;
+/// over a kcal/mol above the restrained minimum. A relaxed scan's point, being restrained, has
+/// as many.
+pub(crate) const RESTRAINED_BUDGET: u32 = 2;
 
 /// At most this many soft-then-stiff passes for a restrained minimisation; one that lowers the
 /// energy by less than [`SETTLED_ENERGY`] (force field units) is the last.

@@ -14,7 +14,7 @@ use super::{
     total_points,
 };
 use crate::three_d::geom::Vec3;
-use crate::three_d::{Constraint, ForceField, OPTIMIZE_STEPS, edit};
+use crate::three_d::{Constraint, ForceField, RESTRAINED_OPTIMIZE_STEPS, edit};
 
 /// Up to this many atoms the drift sentinel (see [`Run::drifted`]) runs after every point.
 const SENTINEL_EVERY_POINT_ATOMS: usize = 2_000;
@@ -64,16 +64,17 @@ pub struct Relax {
     /// molecules' centroids and orientations instead (see [`super::source::Placed`]) and leaves
     /// these out.
     pub constraints: Vec<Constraint>,
-    /// The most minimiser steps per point; a point still moving after them is unconverged.
+    /// The most minimiser steps per relaxation of a point (a point may be relaxed from two
+    /// starts, see [`Run::start_relaxed`]); one still moving after them is unconverged.
     pub steps: u32,
 }
 
 impl Relax {
-    /// Relaxing under `constraints` with an optimisation's step budget.
+    /// Relaxing under `constraints` with a restrained optimisation's step budget.
     pub fn new(constraints: Vec<Constraint>) -> Self {
         Self {
             constraints,
-            steps: OPTIMIZE_STEPS,
+            steps: RESTRAINED_OPTIMIZE_STEPS,
         }
     }
 
@@ -185,11 +186,14 @@ impl Run {
     /// along the last axis it is not at the start of ([`previous_neighbour`] — the previous
     /// point, else the first of the previous row, of the previous slab…).
     ///
-    /// Of the 3D model, the atoms fixed in `relax` stay where they were when the scan started
-    /// at every point: each parameter is set by moving a side that holds none of them (the
-    /// anchor's side too when there is no other, the minimiser moving the anchor anyway), so a
-    /// scan whose fixed atoms sit on both sides of a parameter — which only the minimiser could
-    /// reach, if at all — is refused, as are restraints OpenBabel cannot hold together.
+    /// Of the 3D model, a point is minimised as Optimize minimises ([`Evaluator::relax`]), from
+    /// its neighbour's structure and from the scan's starting one, and the lower of the two
+    /// kept (see [`relax_model_point`]). The atoms fixed in `relax` stay where they were when
+    /// the scan started at every point: each parameter is set by moving a side that holds none
+    /// of them (the anchor's side too when there is no other, the minimiser moving the anchor
+    /// anyway), so a scan whose fixed atoms sit on both sides of a parameter — which only the
+    /// minimiser could reach, if at all — is refused, as are restraints OpenBabel cannot hold
+    /// together.
     ///
     /// Of the assembly, every molecule keeps the place and orientation the design at the
     /// point's values gives it — the centroid of its atoms and their best-fitting turn — while
@@ -242,20 +246,23 @@ impl Run {
                 if let Source::Assembly { .. } = source {
                     return relax_placed(source, evaluator, values, from, steps, cancel);
                 }
-                let mut from = from.unwrap_or(&reference.coords).to_vec();
-                // The minimiser keeps the fixed atoms where they start; put them back where
-                // they were at the scan's start exactly, whatever it left them at.
-                for &a in &fixed {
-                    if let (Some(at), Some(&start)) = (from.get_mut(a), reference.coords.get(a)) {
-                        *at = start;
+                let held = relax.at(&params, values);
+                let relax_from = |evaluator: &mut Evaluator, from: &[Vec3]| {
+                    let mut from = from.to_vec();
+                    // The minimiser keeps the fixed atoms where they start; put them back
+                    // where they were at the scan's start exactly, whatever it left them at.
+                    for &a in &fixed {
+                        if let (Some(at), Some(&start)) = (from.get_mut(a), reference.coords.get(a))
+                        {
+                            *at = start;
+                        }
                     }
-                }
-                let relaxed = match source.at_from(&from, values, &fixed) {
-                    Ok(Point::Coords(coords)) => {
-                        evaluator.relax(&coords, &relax.at(&params, values), steps, cancel)
+                    match source.at_from(&from, values, &fixed) {
+                        Ok(Point::Coords(coords)) => evaluator.relax(&coords, &held, steps, cancel),
+                        Ok(Point::Rebuilt { .. }) | Err(_) => Relaxation::Failed,
                     }
-                    Ok(Point::Rebuilt { .. }) | Err(_) => Relaxation::Failed,
                 };
+                let relaxed = relax_model_point(evaluator, &reference.coords, from, relax_from);
                 let keep = match &relaxed {
                     Relaxation::Done { coords, .. } => Some(coords.clone()),
                     _ => None,
@@ -626,6 +633,28 @@ fn relax_placed(
         _ => None,
     };
     (relaxed, keep)
+}
+
+/// Relax a point of the 3D model with `relax_from` (on `evaluator`, from the structure given)
+/// from the neighbour's minimised structure `from`, if there is one, and from `start` (the
+/// scan's starting structure), keeping the lower (see [`lower`]).
+///
+/// Started from its neighbour alone, each point stays on the neighbour's branch — the side
+/// chains turned as the neighbour has them — up to wherever that branch ends; and a branch can
+/// end well above another the scan's start leads to. A heptyl–propoxy biphenyl (MMFF94s)
+/// relaxed along its C–O–C–C dihedral stayed 0.6 and 1.2 kcal/mol high at 130° and 140°, then
+/// dropped 1.8 kcal/mol at 150°.
+fn relax_model_point(
+    evaluator: &mut Evaluator,
+    start: &[Vec3],
+    from: Option<&[Vec3]>,
+    mut relax_from: impl FnMut(&mut Evaluator, &[Vec3]) -> Relaxation,
+) -> Relaxation {
+    let fresh = relax_from(evaluator, start);
+    match from {
+        Some(from) if fresh != Relaxation::Cancelled => lower(relax_from(evaluator, from), fresh),
+        _ => fresh,
+    }
 }
 
 /// Of two relaxations of one point, the one of the lower energy (`b` on a tie); one that failed
@@ -1068,7 +1097,7 @@ mod energy_tests {
     use crate::assembly::model::{Component, Design, Instance, Step};
     use crate::assembly::place::centroid;
     use crate::scan::{MAX_POINTS, Param, PoseField, StepField};
-    use crate::three_d::Model3d;
+    use crate::three_d::{Model3d, OPTIMIZE_STEPS};
     use chembuider_rs::BondOrder;
 
     fn generate(drawing: &chembuider_rs::Molecule, force_field: ForceField) -> Model3d {
@@ -1633,6 +1662,139 @@ mod energy_tests {
             "{csv}"
         );
         assert!(csv.lines().skip(1).all(|l| l.ends_with(",false")), "{csv}");
+    }
+
+    /// 4-heptyl-4'-propoxybiphenyl, C22H30O: 53 atoms, a biphenyl with seven carbons of chain on
+    /// one ring and a propoxy on the other, as Generate built it under MMFF94s once — fixed, so
+    /// every run scans from the same structure. Atoms 16, 19, 20 and 21 are the propoxy's
+    /// C(ring)–O–C–C.
+    const HEPTYL_PROPOXY_BIPHENYL: &str =
+        include_str!("../../tests/data/heptyl_propoxy_biphenyl_3d.mol");
+
+    /// The model of a 3D molfile, as the 3D view holds it.
+    fn model_from_molfile(molfile: &str, force_field: ForceField) -> Model3d {
+        let mol = openbabel::Molecule::parse(molfile, "mol").expect("molfile");
+        let atoms = mol
+            .atoms()
+            .map(|a| {
+                let (x, y, z) = a.coords();
+                crate::three_d::Atom3d {
+                    element: openbabel::elements::symbol(a.atomic_number()),
+                    pos: [x, y, z],
+                }
+            })
+            .collect();
+        let bonds = mol
+            .bonds()
+            .map(|b| crate::three_d::Bond3d {
+                begin: b.begin_atom_index() as usize,
+                end: b.end_atom_index() as usize,
+                order: u8::try_from(b.order()).unwrap_or(1),
+            })
+            .collect();
+        Model3d {
+            atoms,
+            bonds,
+            force_field,
+            energy: mol.energy(force_field.id()).expect("energy"),
+            energy_unit: energy::unit(force_field),
+            formula: mol.formula(),
+            molfile: molfile.to_owned(),
+        }
+    }
+
+    /// The energy `coords` reach minimised further by OpenBabel's L-BFGS alone for far more
+    /// steps than a point has, holding `dihedral` at `degrees` as stiffly as a scan does.
+    fn minimised_further(
+        reference: &str,
+        coords: &[Vec3],
+        force_field: ForceField,
+        dihedral: [usize; 4],
+        degrees: f64,
+    ) -> f64 {
+        let mut mol = openbabel::Molecule::parse(reference, "mol").expect("molfile");
+        let flat: Vec<f64> = coords.iter().flatten().copied().collect();
+        assert!(mol.set_coordinates(&flat));
+        let [a, b, c, d] = dihedral.map(|i| i as u32);
+        let mut held = openbabel::Constraints::new();
+        held.torsion(a, b, c, d, degrees);
+        held.force_factor(1.0e8);
+        let mut config = openbabel::Minimizer::new(force_field.id());
+        config
+            .algorithm(openbabel::Algorithm::Lbfgs)
+            .max_steps(20_000)
+            .energy_convergence(1.0e-10)
+            .constraints(held);
+        mol.optimize_geometry_with(&config).expect("minimised");
+        mol.energy(force_field.id()).expect("energy")
+    }
+
+    /// The case reported: a 37-point relaxed scan of a dihedral of a 53-atom molecule with
+    /// several rotors, under MMFF94s. The scan used to minimise each point with conjugate
+    /// gradients alone, in segments of 50 steps, under the full restraints from half its budget
+    /// on, and call a stage converged on OpenBabel's word — which it gives on the smallest
+    /// per-atom gradient, not the largest (see `three_d::engine::relax`): 15 of the 37 points
+    /// ended unconverged, up to 2.9 kcal/mol above where they end now, the curve jagged and
+    /// E(180°) 0.87 above E(−180°). Now every point converges, at its restrained minimum (an
+    /// independent minimiser given four times the steps gets no lower), so the curve is
+    /// periodic and smooth.
+    #[test]
+    fn a_relaxed_scan_of_a_flexible_molecule_converges_at_every_point() {
+        let force_field = ForceField::Mmff94s;
+        let model = model_from_molfile(HEPTYL_PROPOXY_BIPHENYL, force_field);
+        assert_eq!(model.atoms.len(), 53);
+        let dihedral = [16, 19, 20, 21];
+        let axis = Axis {
+            param: Param::Dihedral(dihedral),
+            start: -180.0,
+            end: 180.0,
+            points: 37,
+        };
+        let started = Instant::now();
+        let mut run = Run::start_relaxed(
+            Source::model(&model, None, vec![axis.param.clone()]),
+            std::slice::from_ref(&axis),
+            force_field,
+            Relax::new(Vec::new()),
+        )
+        .expect("start");
+        run.wait();
+        eprintln!("37 relaxed points in {:?}", started.elapsed());
+        assert_eq!(run.error, None);
+        assert_eq!(run.scan.done(), 37);
+        let energies: Vec<f64> = run.scan.energies.iter().map(|e| e.unwrap()).collect();
+        let unconverged: Vec<usize> = (0..37).filter(|&i| run.scan.is_unconverged(i)).collect();
+        for (i, e) in energies.iter().enumerate() {
+            let further = minimised_further(
+                HEPTYL_PROPOXY_BIPHENYL,
+                run.structure(i).unwrap(),
+                force_field,
+                dihedral,
+                run.scan.values_at(i)[0],
+            );
+            eprintln!(
+                "{:>5.0}° {e:>9.4} (further {further:>9.4}){}",
+                run.scan.values_at(i)[0],
+                if unconverged.contains(&i) { " U" } else { "" }
+            );
+            assert!(
+                e - further < 0.01,
+                "point {i}: {e}, minimised further to {further}"
+            );
+        }
+        assert!(unconverged.is_empty(), "unconverged: {unconverged:?}");
+        assert!(worst_deviation(&run) < 0.5, "a dihedral not held");
+        // −180° and 180° are one structure.
+        let (first, last) = (energies[0], energies[36]);
+        assert!(
+            (first - last).abs() < 0.01,
+            "E(-180) {first}, E(180) {last}"
+        );
+        // No kinks: the slope changes by little from one point to the next.
+        for i in 1..36 {
+            let bend = energies[i - 1] - 2.0 * energies[i] + energies[i + 1];
+            assert!(bend.abs() < 1.0, "a kink at point {i}: {bend}");
+        }
     }
 
     /// Cancelling a relaxed scan stops it part-way through, also inside a point's minimisation.
@@ -2507,12 +2669,14 @@ mod energy_tests {
         generate(&drawing, force_field)
     }
 
-    /// The cost of a relaxed point and of one minimiser segment (the cancel latency) as the
-    /// atoms grow, behind [`crate::scan::relax_estimate`]
+    /// The cost of a relaxed point — from the scan's start and from its neighbour's structure,
+    /// as [`relax_model_point`] relaxes it — and of one minimiser segment (the cancel latency)
+    /// as the atoms grow, behind [`crate::scan::relax_estimate`]
     /// (`cargo test --release -- --ignored --nocapture relaxed_point_timing`).
     #[test]
     #[ignore = "timing report"]
     fn relaxed_point_timing() {
+        let steps = Relax::new(Vec::new()).steps;
         for carbons in [33, 100, 166] {
             for ff in [ForceField::Mmff94, ForceField::Uff] {
                 let model = alkane(carbons, ff);
@@ -2523,12 +2687,27 @@ mod energy_tests {
                 let never = AtomicBool::new(false);
                 let mut point = Duration::ZERO;
                 for target in [60.0, 0.0, -120.0] {
-                    let Ok(Point::Coords(c)) = source.at(&[target]) else {
+                    // The neighbour 10° back, relaxed first (not timed).
+                    let Ok(Point::Coords(c)) = source.at(&[target - 10.0]) else {
+                        panic!()
+                    };
+                    let held = [param.restraint(target - 10.0).unwrap()];
+                    let Relaxation::Done {
+                        coords: neighbour, ..
+                    } = ev.relax(&c, &held, steps, &never)
+                    else {
                         panic!()
                     };
                     let held = [param.restraint(target).unwrap()];
                     let t = Instant::now();
-                    let _ = ev.relax(&c, &held, OPTIMIZE_STEPS, &never);
+                    let Ok(Point::Coords(c)) = source.at(&[target]) else {
+                        panic!()
+                    };
+                    let _ = ev.relax(&c, &held, steps, &never);
+                    let Ok(Point::Coords(c)) = source.at_from(&neighbour, &[target], &[]) else {
+                        panic!()
+                    };
+                    let _ = ev.relax(&c, &held, steps, &never);
                     point += t.elapsed() / 3;
                 }
                 let Ok(Point::Coords(c)) = source.at(&[0.0]) else {
