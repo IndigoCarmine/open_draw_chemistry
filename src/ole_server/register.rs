@@ -148,6 +148,11 @@ fn set_multi(key: &Key, name: &str, values: &[String]) -> windows::core::Result<
     set(key, name, REG_MULTI_SZ, &data)
 }
 
+/// The string value `name` of the key at `path`, when both exist.
+pub(crate) fn read_string(root: HKEY, path: &str, name: &str) -> Option<String> {
+    get(&open(root, path, KEY_READ)?, name)
+}
+
 /// A string (or multi-string, NUL-separated) value.
 fn get(key: &Key, name: &str) -> Option<String> {
     let name = HSTRING::from(name);

@@ -70,6 +70,77 @@ git push origin v0.1.0
 
 手動実行（**Actions → Release → Run workflow**）した場合は、すべて `0.0.0-dev` としてビルドし、Release を作らずに成果物だけをアップロードします。ワークフロー自体の動作確認に便利です。
 
+## 更新の署名
+
+アプリは起動時に GitHub の最新の Release を確認します（`src/update/`）。自動でインストールするのは、
+アセットの署名がアプリに組み込まれた公開鍵 `resources/update-signing.pub` で検証できたときだけです。
+このファイルに本物の鍵が入るまでは中身がプレースホルダーで、アプリは何もインストールせず Release ページを開きます。
+
+| インストール形式 | 更新ダイアログで「はい」を選ぶと |
+| --- | --- |
+| Windows インストーラ | `…-setup.exe` をダウンロードしてアプリを終了し、インストール時と同じモード（`/CURRENTUSER`、または UAC の確認が出る `/ALLUSERS`）で `/SILENT` 実行してから再起動 |
+| Linux AppImage | 新しい AppImage をダウンロードし、古いファイルに rename で置き換えて再起動。新しいものが起動しなければ古いファイルに戻す |
+| macOS `.app` | `.dmg` をダウンロードし、`hdiutil` と `ditto` でアプリを取り出し、バンドルを入れ替えて（`renamex_np` の `RENAME_SWAP`、ファイルシステムが対応しなければ 2 回の rename）再起動。新しいものが起動しなければ古いバンドルに戻す |
+| Windows ポータブル zip、Linux `.deb`、その他 | Release ページを開く |
+
+ダウンロード・検証・インストールに失敗した場合も Release ページを開きます。Windows のセットアップは、
+ユーザーが書き込めるディレクトリで待つので、実行の直前にもう一度検証します。
+
+AppImage と `.app` の更新は、新しいバージョンをアプリの横に置き、以前のバージョンもそこに残します。名前は
+`.open-draw-chemistry-update-*`（以前のバージョンは `.open-draw-chemistry-update-old-*`）です。
+次回以降の起動時に、1 日より古いものを削除します。以前のバージョンを削除するのは、それが属するアプリが元の場所に
+戻っているときの、そのアプリだけです。インストールを完了も取り消しもできないときは両方のバージョンをディスクに残し、
+その場所をメッセージボックスで知らせます。
+
+パラメータスキャンや 3D の処理の実行中にダウンロードが終わっても、アプリは終了しません（終了すると処理が止まるため）。
+代わりに「今すぐ再起動」のウィンドウを出して待ちます。
+
+署名の準備は最初に一度だけ行います（OpenSSL 3 が必要）:
+
+```bash
+bash scripts/gen-update-key.sh ~/open-draw-chemistry-update-signing.pem
+gh secret set UPDATE_SIGNING_KEY --repo IndigoCarmine/open_draw_chemistry \
+  < ~/open-draw-chemistry-update-signing.pem
+git add resources/update-signing.pub   # コミットする
+```
+
+秘密鍵はリポジトリに入れず、バックアップを取ってください。アプリはビルド時に組み込まれた鍵しか信用しないので、
+**鍵を替えると、インストール済みのアプリは新しい鍵のビルドへ更新するその一度だけ Release ページに進みます**。
+鍵の生成スクリプトは、既存の秘密鍵ファイルも、実際の鍵が入った `resources/update-signing.pub` も上書きしません。
+
+タグをリリースすると、`scripts/sign-update-assets.sh` が各アセットの横に `<asset>.sig` を書き出します。
+`resources/update-signing.pub` が placeholder のままでシークレット `UPDATE_SIGNING_KEY` がなければ、警告を出して署名しません。実際の鍵がコミットされているのにシークレットがないとき、およびシークレットが鍵と一致しないときはリリースを止めます。
+署名は次のテキストに対する 64 バイトの ed25519 署名です。ファイルの内容だけでなく、名前（つまりバージョン）にも結び付いています。OpenSSL でも検証できます:
+
+```text
+open-draw-chemistry-update-v1
+<アセット名>
+<アセットの sha256（小文字の 16 進）>
+```
+
+鍵をコミットする前のビルドと、`.sig` のない Release への更新は自動ではできず、Release ページを開きます。
+
+`cargo test real_ -- --ignored` は実際の API とダウンロードの経路をネットワーク越しに確認します。
+
+### HTTPS とライセンス
+
+アプリがリンクする OpenBabel は **GPL-2.0-only** なので、Apache-2.0 だけのものはリンクできません
+（`MIT OR Apache-2.0` は MIT として使うので問題ありません）。このため `ring`（と、それを使う rustls）も
+`openssl` クレートも使えず、HTTPS は OS のものを使います:
+
+| プラットフォーム | HTTPS |
+| --- | --- |
+| Windows、macOS | `ureq` + `native-tls`（SChannel、Security.framework） |
+| Linux | システムの `curl` を別プロセスとして実行（`src/update/curl.rs`） |
+
+Linux に `curl` がないと、更新の確認はオフラインのときと同じく黙って失敗し、更新は案内されません。
+`.deb` は `curl` パッケージを recommends にしています。
+
+CI が実行する `scripts/check-linked-crates.sh` は、`ring`・`rustls`・`openssl` が 3 つのプラットフォームの
+どれかのビルドに入ると失敗します。`openssl` は `Cargo.lock` と、`cfg` を無視する
+`cargo tree --target all` の出力には残ります。`native-tls` が Linux 向けに宣言しているためですが、
+このアプリは Linux で `native-tls` を使わないので、ビルドされることはありません。
+
 ## 署名と公証（notarization）について
 
 macOS の `.app` は **アドホック署名**（`codesign --sign -`）です。これは Apple Silicon で「アプリが破損しています」と言われずに起動させるために必要な最低限の署名で、公証は通っていません。そのため利用者は初回のみ右クリック →「開く」で起動する必要があります。正式に配布するには有償の Apple Developer アカウント、Developer ID による `codesign`、`xcrun notarytool submit` が必要です。

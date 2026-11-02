@@ -209,6 +209,12 @@ impl Document {
         self.editor.molecule != self.saved
     }
 
+    /// Whether a job of this document is running that quitting would end. These results are
+    /// not in the drawing, so [`Document::is_dirty`] says nothing about them.
+    pub fn has_running_work(&self) -> bool {
+        self.three_d.is_running() || self.scan.as_ref().is_some_and(crate::scan::Run::is_running)
+    }
+
     /// An untitled document nobody has drawn in: opening a file replaces it.
     pub fn is_pristine(&self) -> bool {
         self.path.is_none() && self.editor.molecule.is_blank() && self.editor.undo_stack.is_empty()

@@ -25,6 +25,7 @@ pub mod smiles_row;
 pub mod status;
 pub mod tabs;
 pub mod text_format;
+pub mod update;
 pub mod view3d;
 pub mod viewport3d;
 
@@ -109,6 +110,8 @@ pub enum Command {
     /// IUPAC 名をテキストとして挿入: put that name on the page under the structures.
     InsertIupacName,
     ToggleProperties,
+    /// Turn the update check at startup on or off.
+    ToggleUpdateCheck,
     SetView(ViewMode),
     /// Show the UI in this language (and remember the choice).
     SetLanguage(crate::i18n::Lang),

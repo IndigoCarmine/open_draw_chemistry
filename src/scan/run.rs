@@ -737,13 +737,35 @@ pub fn format_duration(d: Duration) -> String {
 }
 
 #[cfg(test)]
+impl Run {
+    /// A scan that runs until it is cancelled.
+    pub fn running_for_test() -> Run {
+        let source = Source::model(
+            &tests::chain_model(),
+            None,
+            vec![crate::scan::Param::Dihedral([0, 1, 2, 3])],
+        );
+        Run::spawn(
+            source,
+            &[tests::dihedral_axis(3)],
+            ForceField::Uff,
+            |_: &Source, _: &Sender<Message>, cancel: &AtomicBool| {
+                while !cancel.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            },
+        )
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::scan::Param;
     use crate::three_d::{Atom3d, Bond3d, Model3d};
 
     /// A model for the plumbing tests (its energy is never asked of OpenBabel).
-    fn chain_model() -> Model3d {
+    pub(super) fn chain_model() -> Model3d {
         let pos = [
             [0.0, 0.0, 0.0],
             [1.5, 0.0, 0.0],
@@ -773,7 +795,7 @@ mod tests {
         }
     }
 
-    fn dihedral_axis(points: usize) -> Axis {
+    pub(super) fn dihedral_axis(points: usize) -> Axis {
         Axis {
             param: Param::Dihedral([0, 1, 2, 3]),
             start: -180.0,

@@ -355,10 +355,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The signing script and the public key the signatures must match. Nothing here pushes, so
+      # the write token stays out of .git/config, away from what runs in this job.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+
+      # The app installs an update only if its <asset>.sig verifies. While the public key is the
+      # placeholder a missing secret only warns, and the app sends users to the Release page
+      # instead; with a real key committed it stops the release.
+      - name: Sign the assets for the app's automatic update
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: bash scripts/sign-update-assets.sh artifacts
 
       - name: List artifacts
         run: ls -lh artifacts

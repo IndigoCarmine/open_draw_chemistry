@@ -115,6 +115,52 @@ discard = "Don't save"
 # Title of the About window (Help menu).
 title = "About"
 
+[update]
+# In the status bar, as the browser opens. {error} says what went wrong.
+failed = "The update could not be installed automatically ({error}). Opening the release page."
+# Title of the message box when an update stopped half way and could not be undone.
+stranded_title = "Update not finished"
+
+[update.prompt]
+# The dialog at startup when there is a newer version.
+title = "Update available"
+# {version} is the new version, {current} the one running.
+message = "Open DrawChemistry {version} is available. You have {current}."
+# A link to the release's page on GitHub.
+release_notes = "Release notes"
+# The question when Yes installs the update.
+install = "Download and install it now? The app restarts when it is done."
+# The question when this copy cannot update itself.
+open_page = "This copy cannot update itself. Open the release page in your browser?"
+yes = "Yes"
+no = "No"
+
+[update.download]
+# The small window showing the download's progress.
+title = "Downloading update"
+message = "Downloading Open DrawChemistry {version}"
+
+[update.ready]
+# Shown when the download finished during a parameter scan or 3D job, which quitting would end,
+# or when the user cancelled the quit that would have installed the update.
+title = "Update ready"
+message = "The update has been downloaded and verified. Restart the app to install it."
+restart = "Restart now"
+
+[update.error]
+# {url} is a web address that is not GitHub's.
+refused = "refused to download from {url}"
+network = "network error: {error}"
+# {status} is an HTTP status such as 404.
+status = "the server answered {status}"
+size = "the download is not the expected size"
+malformed = "could not read GitHub's answer: {error}"
+signature = "the signature is not valid"
+cancelled = "cancelled"
+install = "could not install: {error}"
+# {paths} lists the places the two versions of the app were left in.
+stranded = "the install could not be finished or undone; both versions are kept at {paths}: move the one you want back to where the app belongs"
+
 [ole.embed]
 load_failed = "Could not read the embedded object: {error}"
 # {app} is the container application, such as Word or PowerPoint.
@@ -212,6 +258,8 @@ manage_fragments = "Manage fragments"
 [menu.help]
 title = "Help"
 about = "About"
+# A checkbox: whether the app looks for a newer version each time it starts.
+check_updates = "Check for updates at startup"
 
 [toolbar]
 # Toolbar tooltips; the shortcut is added after them.
