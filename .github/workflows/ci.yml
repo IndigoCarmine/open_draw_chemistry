@@ -12,8 +12,7 @@ env:
 jobs:
   lint:
     name: Format & clippy
-    # Same Ubuntu as the release's Linux job (see release.yml): the prebuilt OpenBabel needs
-    # libxml2.so.2, which ubuntu-latest (26.04) no longer has.
+    # Same Ubuntu as the release's Linux job (see release.yml).
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

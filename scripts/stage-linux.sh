@@ -12,8 +12,8 @@
 #   usr/share/open-draw-chemistry/openbabel/            the data files (BABEL_DATADIR)
 #
 # The app points OpenBabel at the plugins and data itself (src/three_d/runtime.rs), so nothing
-# needs setting in the environment. Its other libraries (glibc, libstdc++, zlib, and libxml2
-# for the XML-based format plugins) come from the system.
+# needs setting in the environment. Its other libraries (glibc, libstdc++, zlib) come from the
+# system; the XML-based format plugins, the only ones needing libxml2, are not bundled.
 #
 #   scripts/stage-linux.sh <root>
 #
@@ -46,7 +46,19 @@ for lib in "$ob"/lib/lib*.so.*; do
 done
 # OpenBabel installs its plugins and data under a versioned directory (lib/openbabel/3.2.1);
 # the bundle flattens it.
-install -m 644 "$ob"/lib/openbabel/*/*.so "$libdir/openbabel/"
+#
+# The XML-based format plugins (cdxml, cml, cmlreact, pubchem, xml) are left out: they link
+# the system libxml2 under the soname of the machine the prebuilt was built on
+# (libxml2.so.2), which newer distributions no longer ship (Ubuntu 26.04 has libxml2.so.16).
+# The app never asks OpenBabel for those formats (it reads and writes CDXML itself, and only
+# hands OpenBabel mol/sdf/xyz/pdb/mol2/smi), so without them the packages need no libxml2.
+for plugin in "$ob"/lib/openbabel/*/*.so; do
+  if readelf -d "$plugin" | grep -q 'NEEDED.*\[libxml2\.so'; then
+    echo "Leaving out $(basename "$plugin") (needs libxml2)"
+    continue
+  fi
+  install -m 644 "$plugin" "$libdir/openbabel/"
+done
 install -m 644 "$ob"/share/openbabel/*/* "$usr/share/open-draw-chemistry/openbabel/"
 
 # Every library the binary and the plugins need must now resolve, without the build tree.

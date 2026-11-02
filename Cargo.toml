@@ -136,7 +136,7 @@ priority = "optional"
 # eframe dlopens its GL/X11/Wayland libraries rather than linking them, so `$auto`
 # does not detect them. Without listing them the package installs cleanly and
 # then fails to start on a minimal system. (`$auto` does find what the binary and the
-# bundled OpenBabel link: libc, libstdc++, zlib, libxml2.)
+# bundled OpenBabel link: libc, libstdc++, zlib.)
 depends = "$auto, libxkbcommon0, libwayland-client0, libegl1, libgl1, libx11-6, libxcursor1, libxi6, libxrandr2"
 # The update check runs it (see `src/update/curl.rs`); without it the app just never asks.
 recommends = "curl"
