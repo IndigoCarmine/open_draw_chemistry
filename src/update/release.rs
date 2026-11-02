@@ -58,9 +58,10 @@ pub fn is_updatable(current: &str) -> bool {
     Version::parse(current).is_ok_and(|current| current.pre.is_empty())
 }
 
-/// Whether `latest` is newer than `current`, in semver's order: `0.3.0-dev` is before `0.3.0`.
+/// Whether `latest` is newer than `current`, in semver's order: `0.3.0-dev` is before `0.3.0`,
+/// and build metadata (`1.2.3+x`) does not count.
 pub fn is_newer(current: &Version, latest: &Version) -> bool {
-    latest > current
+    latest.cmp_precedence(current).is_gt()
 }
 
 /// The version of `release`, when a build of version `current` should be offered it. A
@@ -246,6 +247,21 @@ mod tests {
         assert!(is_newer(&dev, &release));
         assert!(!is_newer(&release, &dev));
         assert!(!is_newer(&dev, &dev));
+    }
+
+    /// Build metadata does not order versions, and the build of a version is that version.
+    #[test]
+    fn build_metadata_does_not_make_a_version_newer() {
+        let plain = Version::new(1, 2, 3);
+        let built = Version::parse("1.2.3+x").unwrap();
+        assert!(!is_newer(&plain, &built));
+        assert!(!is_newer(&built, &plain));
+        assert!(is_newer(&plain, &Version::parse("1.2.4+x").unwrap()));
+        let release = Release {
+            tag_name: "v1.2.3+x".to_owned(),
+            ..release(&[])
+        };
+        assert_eq!(newer_version("1.2.3", &release), None);
     }
 
     #[test]
