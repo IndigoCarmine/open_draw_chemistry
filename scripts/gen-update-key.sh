@@ -5,15 +5,28 @@
 #   bash scripts/gen-update-key.sh [private-key-file]
 #
 # Writes the private key to the file given (by default outside the repository), which is never
-# to be committed, and the public key to resources/update-signing.pub, which is. Needs OpenSSL 3.
+# to be committed, and the public key to resources/update-signing.pub, which is. Refuses to replace
+# either key. Needs OpenSSL 3.
 set -euo pipefail
 
 private_key="${1:-$HOME/open-draw-chemistry-update-signing.pem}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 public_key_file="${UPDATE_SIGNING_PUBLIC_KEY_FILE:-$repo_root/resources/update-signing.pub}"
 
+# Whether the file $1 holds a real key, by the rule of PublicKey::parse in src/update/signature.rs.
+holds_real_key() {
+  local key
+  [ -f "$1" ] || return 1
+  key="$(grep -v '^[[:space:]]*#' "$1" | tr -d '[:space:]')"
+  [[ "$key" =~ ^[0-9a-fA-F]{64}$ ]] && [[ "$key" =~ [1-9a-fA-F] ]]
+}
+
 if [ -e "$private_key" ]; then
   echo "error: $private_key already exists; a new key would lock out every installed copy" >&2
+  exit 1
+fi
+if holds_real_key "$public_key_file"; then
+  echo "error: $public_key_file already holds a key; a new key would lock out every installed copy" >&2
   exit 1
 fi
 

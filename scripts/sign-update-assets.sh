@@ -10,9 +10,11 @@
 #
 #   open-draw-chemistry-update-v1\n<asset name>\n<sha256 in lower-case hex>\n
 #
-# Without the secret nothing is signed and the release still goes out: the app then sends users
-# to the Release page. A secret that does not match resources/update-signing.pub stops the
-# release, since every signature it made would be rejected. Needs OpenSSL 3.
+# While resources/update-signing.pub holds the placeholder, a missing secret means signing is not
+# set up yet: nothing is signed, the release still goes out and the app sends users to the Release
+# page. Once a real key is committed a missing secret stops the release, since it would quietly
+# turn automatic updates off, and so does a secret that does not match the key, since every
+# signature it made would be rejected. Needs OpenSSL 3.
 set -euo pipefail
 
 dir="${1:?usage: sign-update-assets.sh <directory>}"
@@ -20,7 +22,19 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Overridden only to try this script with a throwaway key.
 public_key_file="${UPDATE_SIGNING_PUBLIC_KEY_FILE:-$repo_root/resources/update-signing.pub}"
 
+# Whether the file $1 holds a real key, by the rule of PublicKey::parse in src/update/signature.rs.
+holds_real_key() {
+  local key
+  [ -f "$1" ] || return 1
+  key="$(grep -v '^[[:space:]]*#' "$1" | tr -d '[:space:]')"
+  [[ "$key" =~ ^[0-9a-fA-F]{64}$ ]] && [[ "$key" =~ [1-9a-fA-F] ]]
+}
+
 if [ -z "${UPDATE_SIGNING_KEY:-}" ]; then
+  if holds_real_key "$public_key_file"; then
+    echo "::error::UPDATE_SIGNING_KEY is not set, but $public_key_file holds a real key"
+    exit 1
+  fi
   echo "::warning::UPDATE_SIGNING_KEY is not set: the release is not signed, so the app will send users to the Release page"
   exit 0
 fi

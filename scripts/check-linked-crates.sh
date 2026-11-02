@@ -11,7 +11,7 @@
 # build.
 set -euo pipefail
 
-targets=(x86_64-pc-windows-msvc x86_64-apple-darwin x86_64-unknown-linux-gnu)
+targets=(x86_64-pc-windows-msvc x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-linux-gnu)
 # ring and openssl carry Apache-2.0 terms, which GPL-2.0-only does not allow; the rest would only
 # bring them, or Mozilla's root certificates (CDLA-Permissive-2.0), back in.
 forbidden=(ring rustls openssl openssl-sys webpki-roots webpki-root-certs)
