@@ -12,7 +12,8 @@ env:
 jobs:
   lint:
     name: Format & clippy
-    runs-on: ubuntu-latest
+    # Same Ubuntu as the release's Linux job (see release.yml).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -48,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
