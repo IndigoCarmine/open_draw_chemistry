@@ -4,24 +4,37 @@
 //! verifying included, and [`Prepared::apply`] does the rest as the app exits.
 
 use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use tempfile::{TempDir, TempPath};
 
+use super::Error;
 use super::http::{self, Transport};
 use super::release::Download;
-use super::{Error, signature};
+use super::signature::{self, PublicKey};
 
 /// Starts every directory and file an update leaves in the temporary directory or beside the
 /// app.
 const TEMP_PREFIX: &str = ".open-draw-chemistry-update-";
 
+/// Starts a previous version kept beside the app, which is only deleted once the app it is the
+/// previous version of is back at its path (see [`remove_stale_beside`]).
+const BACKUP_PREFIX: &str = ".open-draw-chemistry-update-old-";
+
 /// How old a leftover download must be to be deleted, so that one in use by another running
 /// copy of the app is left alone.
 const STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How long a new version gets to fail before it counts as started. A program that cannot run
+/// at all is gone well within this, and the app waits it out as it exits.
+const START_GRACE: Duration = Duration::from_secs(2);
+
+/// How often [`start`] looks at the program it started.
+const START_POLL: Duration = Duration::from_millis(20);
 
 /// A signature file is 64 bytes.
 const SIGNATURE_LIMIT: u64 = 1024;
@@ -192,6 +205,7 @@ pub enum Prepared {
     /// `temp` holds `setup`.
     WindowsInstaller {
         setup: PathBuf,
+        verification: Verification,
         scope: Scope,
         exe: PathBuf,
         temp: TempDir,
@@ -200,6 +214,20 @@ pub enum Prepared {
     AppImage { staged: TempPath, target: PathBuf },
     /// `staging` holds the new bundle, beside `target` for the same reason.
     MacApp { staging: TempDir, target: PathBuf },
+}
+
+/// What an asset was verified against, to do it again later.
+#[derive(Debug)]
+pub struct Verification {
+    key: PublicKey,
+    name: String,
+    signature: Vec<u8>,
+}
+
+impl Verification {
+    fn check(&self, path: &Path) -> Result<(), Error> {
+        signature::verify_file(&self.key, &self.name, path, &self.signature)
+    }
 }
 
 /// Download `download` into a temporary directory, verify it and get it ready to install. The
@@ -229,11 +257,17 @@ pub fn prepare(
     )?;
     file.sync_all()?;
     drop(file);
-    signature::verify_file(&download.key, &download.asset.name, &path, &signature)?;
+    let verification = Verification {
+        key: download.key,
+        name: download.asset.name.clone(),
+        signature,
+    };
+    verification.check(&path)?;
 
     match &download.format {
         InstallFormat::WindowsInstaller { scope, exe } => Ok(Prepared::WindowsInstaller {
             setup: path,
+            verification,
             scope: *scope,
             exe: exe.clone(),
             temp,
@@ -285,10 +319,6 @@ fn new_bundle(staging: &Path) -> PathBuf {
     staging.join("new.app")
 }
 
-fn old_bundle(staging: &Path) -> PathBuf {
-    staging.join("old.app")
-}
-
 /// Run `command`, which must succeed.
 fn run(command: &mut Command) -> Result<(), Error> {
     let status = command
@@ -319,15 +349,132 @@ fn copy_app_from_dmg(dmg: &Path, to: &Path) -> Result<(), Error> {
     copied.and(detached)
 }
 
-/// Put the bundle `new` in `target`'s place, keeping the old one at `old` for as long as that
-/// might fail.
-fn swap_bundle(new: &Path, target: &Path, old: &Path) -> Result<(), Error> {
-    std::fs::rename(target, old)?;
-    if let Err(e) = std::fs::rename(new, target) {
-        std::fs::rename(old, target)?;
+/// A free path beside `target` for a previous version of it, named so that a sweep can tell
+/// which app it belongs to. It is not in a [`TempDir`]: nothing deletes it by going out of scope.
+fn backup_path(target: &Path) -> Result<PathBuf, Error> {
+    let unusable = || Error::Install(target.display().to_string());
+    let dir = target.parent().ok_or_else(unusable)?;
+    let name = target.file_name().ok_or_else(unusable)?.to_string_lossy();
+    (0..1000)
+        .map(|number| dir.join(format!("{BACKUP_PREFIX}{name}.{number}")))
+        .find(|path| path.symlink_metadata().is_err())
+        .ok_or_else(unusable)
+}
+
+/// Whether `rest`, a backup's name after [`BACKUP_PREFIX`], is that of a previous version of
+/// `target`. See [`backup_path`].
+fn is_backup_of(rest: &str, target: &Path) -> bool {
+    let name = target.file_name().map(|name| name.to_string_lossy());
+    rest.rsplit_once('.')
+        .is_some_and(|(of, number)| Some(of) == name.as_deref() && number.parse::<u32>().is_ok())
+}
+
+/// Date a previous version today. Moving it kept the date of its install, and sweeps go by date:
+/// it has to outlast the new version's first start, which sweeps while the old process may still
+/// need it, and it gives a day to go back by hand. If this fails a sweep may just come sooner.
+fn date_backup(path: &Path) {
+    // A directory only opens for reading, and on Windows a file only takes a date if opened for
+    // writing.
+    let file = if path.is_dir() {
+        File::open(path)
+    } else {
+        File::options().write(true).open(path)
+    };
+    let _ = file.and_then(|file| file.set_modified(SystemTime::now()));
+}
+
+/// Delete `path`, whatever it is. What cannot be deleted stays for a later sweep.
+fn discard(path: &Path) {
+    let _ = if path.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+}
+
+/// The two paths to tell the user about when the versions could not be sorted out.
+fn stranded(one: &Path, other: &Path) -> Error {
+    Error::Stranded(vec![one.to_owned(), other.to_owned()])
+}
+
+/// Put the file `new` in `target`'s place, keeping a copy of the old one at `backup`. The rename
+/// is one step, so there is a file at `target` throughout. Returns where the old version is.
+fn swap_file(
+    steps: &dyn Steps,
+    new: &Path,
+    target: &Path,
+    backup: &Path,
+) -> Result<PathBuf, Error> {
+    steps.copy_file(target, backup)?;
+    if let Err(e) = steps.rename(new, target) {
+        discard(backup);
         return Err(e.into());
     }
-    Ok(())
+    Ok(backup.to_owned())
+}
+
+/// Replace the file `target` with `new`, and put the old one back if the new one does not start.
+fn install_file(steps: &dyn Steps, new: &Path, target: &Path) -> Result<(), Error> {
+    let old = swap_file(steps, new, target, &backup_path(target)?)?;
+    date_backup(&old);
+    let Err(error) = steps.launch(&mut Command::new(target)) else {
+        return Ok(());
+    };
+    steps
+        .rename(&old, target)
+        .map_err(|_| stranded(&old, target))?;
+    Err(error)
+}
+
+/// Put the bundle `new` in `target`'s place, the old one going to `backup`, and return where the
+/// old one is. A bundle is a directory, so a rename cannot replace it: where the filesystem
+/// cannot exchange the two there is a moment with nothing at `target`, and the old bundle waits
+/// at `backup` for whatever happens then. An error other than [`Error::Stranded`] changed nothing.
+fn swap_bundle(
+    steps: &dyn Steps,
+    new: &Path,
+    target: &Path,
+    backup: &Path,
+) -> Result<PathBuf, Error> {
+    if steps.exchange(new, target).is_ok() {
+        // `new` holds the old bundle now, and the app is in place whatever happens to it.
+        return Ok(match steps.rename(new, backup) {
+            Ok(()) => backup.to_owned(),
+            Err(_) => new.to_owned(),
+        });
+    }
+    steps.rename(target, backup)?;
+    if let Err(e) = steps.rename(new, target) {
+        return match steps.rename(backup, target) {
+            Ok(()) => Err(e.into()),
+            Err(_) => Err(stranded(new, backup)),
+        };
+    }
+    Ok(backup.to_owned())
+}
+
+/// Put the bundle `old` back at `target`, whose occupant failed to start.
+fn restore_bundle(steps: &dyn Steps, old: &Path, target: &Path) -> Result<(), Error> {
+    let failed = backup_path(target).map_err(|_| stranded(old, target))?;
+    match swap_bundle(steps, old, target, &failed) {
+        Ok(failed) => {
+            discard(&failed);
+            Ok(())
+        }
+        Err(Error::Stranded(paths)) => Err(Error::Stranded(paths)),
+        Err(_) => Err(stranded(old, target)),
+    }
+}
+
+/// Replace the bundle `target` with `new`, and put the old one back if the new one does not start.
+fn install_bundle(steps: &dyn Steps, new: &Path, target: &Path) -> Result<(), Error> {
+    let old = swap_bundle(steps, new, target, &backup_path(target)?)?;
+    date_backup(&old);
+    let Err(error) = steps.launch(Command::new("open").arg("-n").arg(target)) else {
+        return Ok(());
+    };
+    restore_bundle(steps, &old, target)?;
+    Err(error)
 }
 
 /// The Inno Setup command line of a silent update (see the "Setup Command Line Parameters" of
@@ -385,29 +532,132 @@ fn setup_command(
     command
 }
 
-/// Start `command`, which takes it from here, and leave it running.
-fn relaunch(command: &mut Command) -> Result<(), Error> {
-    command
+/// Start `command` and see it through `grace`: a program that fails in that time did not start.
+/// One that finishes well has handed over, which is what `open` does.
+fn start(command: &mut Command, grace: Duration) -> Result<(), Error> {
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
+    let started = Instant::now();
+    while started.elapsed() < grace {
+        if let Some(status) = child.try_wait()? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(Error::Install(format!("{command:?}: {status}")))
+            };
+        }
+        std::thread::sleep(START_POLL);
+    }
     Ok(())
 }
 
+/// Swap what is at `a` and `b` in one step, on the filesystems that can (APFS and HFS+).
+#[cfg(target_os = "macos")]
+fn exchange(a: &Path, b: &Path) -> io::Result<()> {
+    use std::ffi::{CString, c_char, c_int, c_uint};
+    use std::os::unix::ffi::OsStrExt;
+
+    /// From <stdio.h>.
+    const RENAME_SWAP: c_uint = 2;
+    unsafe extern "C" {
+        fn renamex_np(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int;
+    }
+
+    let (a, b) = (
+        CString::new(a.as_os_str().as_bytes())?,
+        CString::new(b.as_os_str().as_bytes())?,
+    );
+    // SAFETY: both are NUL-terminated strings that outlive the call, which does not keep them.
+    if unsafe { renamex_np(a.as_ptr(), b.as_ptr(), RENAME_SWAP) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn exchange(_: &Path, _: &Path) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
+/// The steps that change an install, apart so that tests can fail, or stop after, any of them.
+trait Steps {
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        std::fs::rename(from, to)
+    }
+
+    /// Swap what `a` and `b` hold in one step. An error has changed nothing.
+    fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+        exchange(a, b)
+    }
+
+    /// Make `to` a copy of the file `from`, without touching `from`: a second name for it where
+    /// the filesystem has those, which costs nothing.
+    fn copy_file(&self, from: &Path, to: &Path) -> io::Result<()> {
+        std::fs::hard_link(from, to).or_else(|_| std::fs::copy(from, to).map(drop))
+    }
+
+    /// Start the new version with `command` and see that it does.
+    fn launch(&self, command: &mut Command) -> Result<(), Error> {
+        start(command, START_GRACE)
+    }
+
+    /// Start `command`, which takes it from here, and leave it running.
+    fn hand_over(&self, command: &mut Command) -> Result<(), Error> {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        Ok(())
+    }
+}
+
+/// The real thing.
+struct System;
+
+impl Steps for System {}
+
 impl Prepared {
+    /// A verified update that nothing will ever install, for the tests of what surrounds it.
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Prepared::WindowsInstaller {
+            setup: PathBuf::new(),
+            verification: Verification {
+                key: PublicKey::parse(&"11".repeat(32)).unwrap(),
+                name: String::new(),
+                signature: Vec::new(),
+            },
+            scope: Scope::CurrentUser,
+            exe: PathBuf::new(),
+            temp: tempfile::tempdir().unwrap(),
+        }
+    }
+
     /// Install the update and start the new version, as the app exits. `release_page` is where
     /// a Windows installer that fails later sends the user; an error here is for the caller to
     /// send them there.
     pub fn apply(self, release_page: &str) -> Result<(), Error> {
+        self.apply_with(&System, release_page)
+    }
+
+    fn apply_with(self, steps: &dyn Steps, release_page: &str) -> Result<(), Error> {
         match self {
             Prepared::WindowsInstaller {
                 setup,
+                verification,
                 scope,
                 exe,
                 temp,
             } => {
-                relaunch(&mut setup_command(
+                // It has sat in a directory the user can write to, perhaps for hours, and what
+                // runs next may be elevated.
+                verification.check(&setup)?;
+                steps.hand_over(&mut setup_command(
                     &setup,
                     scope,
                     &exe,
@@ -419,17 +669,25 @@ impl Prepared {
                 Ok(())
             }
             Prepared::AppImage { staged, target } => {
-                staged.persist(&target).map_err(|e| e.error)?;
-                relaunch(&mut Command::new(&target))
+                let staged = staged.keep().map_err(|e| e.error)?;
+                let result = install_file(steps, &staged, &target);
+                if !matches!(result, Err(Error::Stranded(_))) {
+                    discard(&staged);
+                }
+                result
             }
             Prepared::MacApp { staging, target } => {
-                let staging_path = staging.path();
-                swap_bundle(
-                    &new_bundle(staging_path),
-                    &target,
-                    &old_bundle(staging_path),
-                )?;
-                relaunch(Command::new("open").arg("-n").arg(&target))
+                // From here on the only copy of the app may be in there, so only what is said
+                // below deletes it.
+                let staging = staging.keep();
+                let result = install_bundle(steps, &new_bundle(&staging), &target);
+                match &result {
+                    Err(Error::Stranded(_)) => {}
+                    Err(_) => discard(&staging),
+                    // Empty, unless the old bundle could not be moved out; then a sweep has it.
+                    Ok(()) => drop(std::fs::remove_dir(&staging)),
+                }
+                result
             }
         }
     }
@@ -437,31 +695,60 @@ impl Prepared {
 
 /// Delete what an update left in `dir` when the app was killed mid-download.
 pub fn remove_stale(dir: &Path) {
-    remove_older_than(dir, STALE_AFTER);
+    remove_older_than(dir, STALE_AFTER, None);
 }
 
-fn remove_older_than(dir: &Path, age: Duration) {
+/// The same beside what `format` replaces, where an update stages its new version and keeps the
+/// previous one. Previous versions go too: this runs in a copy of the app started from there,
+/// the new version having got that far.
+pub fn remove_stale_beside(format: &InstallFormat) {
+    if let InstallFormat::AppImage(target) | InstallFormat::MacApp(target) = format
+        && let Some(dir) = target.parent()
+    {
+        remove_older_than(dir, STALE_AFTER, Some(target));
+    }
+}
+
+/// Delete what an update left in `dir` over `age` ago. A previous version may be all that is left
+/// of an app, so it only goes when `replaced` says whose it is and that app is there.
+fn remove_older_than(dir: &Path, age: Duration, replaced: Option<&Path>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
-        let stale = entry.metadata().is_ok_and(|metadata| {
-            metadata.is_dir()
-                && metadata
-                    .modified()
-                    .ok()
-                    .and_then(|modified| modified.elapsed().ok())
-                    .is_some_and(|elapsed| elapsed >= age)
-        });
-        if stale && entry.file_name().to_string_lossy().starts_with(TEMP_PREFIX) {
-            // Another user's directory, or one in use, is simply left there.
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let ours = match name.strip_prefix(BACKUP_PREFIX) {
+            Some(rest) => {
+                replaced.is_some_and(|target| target.exists() && is_backup_of(rest, target))
+            }
+            None => name.starts_with(TEMP_PREFIX),
+        };
+        if !ours {
+            continue;
+        }
+        // Not following a link, which is nothing an update leaves.
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let stale = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|elapsed| elapsed >= age);
+        // Another user's, or one in use, is simply left there.
+        if stale && metadata.is_dir() {
             let _ = std::fs::remove_dir_all(entry.path());
+        } else if stale && metadata.is_file() {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::panic::AssertUnwindSafe;
     use std::sync::atomic::Ordering;
 
     use ed25519_dalek::{Signer, SigningKey};
@@ -732,8 +1019,179 @@ mod tests {
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
+    /// Fails, watches or interrupts the steps of [`Prepared::apply_with`] on a real filesystem.
+    #[derive(Default)]
+    struct Faults {
+        /// Whether the filesystem can swap two paths in one step.
+        exchanges: bool,
+        /// Which calls of `rename` fail, counted from 1.
+        failing_renames: &'static [usize],
+        /// Whether starting the new version fails.
+        launch_fails: bool,
+        /// Which step the process dies after, counted from 1 over all that changed the disk.
+        dies_after: Option<usize>,
+        renames: Cell<usize>,
+        changes: Cell<usize>,
+        launches: Cell<usize>,
+        handed_over: Cell<usize>,
+    }
+
+    /// What a kill leaves on disk, plus `Drop`, which a kill does not get to but which is the
+    /// other way this code could lose a copy. Unwinding runs it, so both are covered at once.
+    struct Killed;
+
+    impl Faults {
+        fn changed(&self) {
+            self.changes.set(self.changes.get() + 1);
+            if self.dies_after == Some(self.changes.get()) {
+                std::panic::resume_unwind(Box::new(Killed));
+            }
+        }
+    }
+
+    impl Steps for Faults {
+        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            self.renames.set(self.renames.get() + 1);
+            if self.failing_renames.contains(&self.renames.get()) {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            std::fs::rename(from, to)?;
+            self.changed();
+            Ok(())
+        }
+
+        fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+            if !self.exchanges {
+                return Err(io::ErrorKind::Unsupported.into());
+            }
+            let aside = a.with_extension("swapping");
+            std::fs::rename(a, &aside)?;
+            std::fs::rename(b, a)?;
+            std::fs::rename(&aside, b)?;
+            self.changed();
+            Ok(())
+        }
+
+        fn copy_file(&self, from: &Path, to: &Path) -> io::Result<()> {
+            std::fs::copy(from, to)?;
+            self.changed();
+            Ok(())
+        }
+
+        fn launch(&self, _command: &mut Command) -> Result<(), Error> {
+            self.launches.set(self.launches.get() + 1);
+            if self.launch_fails {
+                return Err(Error::Install("does not start".to_owned()));
+            }
+            Ok(())
+        }
+
+        fn hand_over(&self, _command: &mut Command) -> Result<(), Error> {
+            self.handed_over.set(self.handed_over.get() + 1);
+            Ok(())
+        }
+    }
+
+    /// An AppImage holding "old", with "new" staged beside it.
+    fn staged_appimage() -> (TempDir, PathBuf, Prepared) {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.AppImage");
+        std::fs::write(&target, b"old").unwrap();
+        let source = dir.path().join("source");
+        std::fs::write(&source, b"new").unwrap();
+        let staged = stage_file(&source, &target).unwrap();
+        std::fs::remove_file(&source).unwrap();
+        let prepared = Prepared::AppImage {
+            staged,
+            target: target.clone(),
+        };
+        (dir, target, prepared)
+    }
+
+    /// A bundle standing for the `.app` directory at `path`.
+    fn bundle(path: &Path, content: &[u8]) {
+        std::fs::create_dir_all(path.join("Contents")).unwrap();
+        std::fs::write(path.join("Contents/app"), content).unwrap();
+    }
+
+    /// An app bundle holding "old", with "new" staged beside it.
+    fn staged_bundle() -> (TempDir, PathBuf, Prepared) {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.app");
+        bundle(&target, b"old");
+        let staging = stage_bundle_dir(&target).unwrap();
+        bundle(&new_bundle(staging.path()), b"new");
+        let prepared = Prepared::MacApp {
+            staging,
+            target: target.clone(),
+        };
+        (dir, target, prepared)
+    }
+
+    /// What a file or bundle at `path` holds, if it is whole.
+    fn content(path: &Path) -> Option<Vec<u8>> {
+        std::fs::read(path)
+            .or_else(|_| std::fs::read(path.join("Contents/app")))
+            .ok()
+    }
+
+    /// Every whole copy of the app that is under `dir`, wherever it is.
+    fn copies(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if let Some(bytes) = content(&path) {
+                found.push((path, bytes));
+            } else if path.is_dir() {
+                found.extend(copies(&path));
+            }
+        }
+        found
+    }
+
+    fn holds(dir: &Path, bytes: &[u8]) -> bool {
+        copies(dir).iter().any(|(_, held)| held == bytes)
+    }
+
+    fn entries(dir: &Path) -> usize {
+        std::fs::read_dir(dir).unwrap().count()
+    }
+
+    /// The previous version a finished update keeps, which is outside any staging directory.
+    fn backup(target: &Path) -> Option<PathBuf> {
+        std::fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(BACKUP_PREFIX)
+            })
+            .map(|entry| entry.path())
+    }
+
+    /// Apply `prepared`, dying after step `step`, and say whether it really got that far.
+    fn apply_until_killed(prepared: Prepared, exchanges: bool, step: usize) -> bool {
+        let faults = Faults {
+            exchanges,
+            dies_after: Some(step),
+            ..Faults::default()
+        };
+        let died = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            prepared.apply_with(&faults, "page").unwrap();
+        }));
+        match died {
+            Ok(()) => false,
+            Err(reason) => {
+                assert!(reason.is::<Killed>());
+                true
+            }
+        }
+    }
+
     #[test]
-    fn an_appimage_is_replaced_by_a_rename_keeping_its_permissions() {
+    fn an_appimage_is_replaced_keeping_its_permissions_and_the_old_version() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("App.AppImage");
         std::fs::write(&target, b"old").unwrap();
@@ -746,26 +1204,29 @@ mod tests {
 
         let (download, transport) =
             signed_download(InstallFormat::AppImage(target.clone()), b"new", 3);
-        let Prepared::AppImage { staged, target: to } =
-            prepare_download(&download, &transport).unwrap()
-        else {
+        let prepared = prepare_download(&download, &transport).unwrap();
+        let Prepared::AppImage { staged, .. } = &prepared else {
             panic!("not an AppImage");
         };
         // Nothing has happened to the original yet, and the new file is beside it.
         assert_eq!(std::fs::read(&target).unwrap(), b"old");
         assert_eq!(staged.parent(), target.parent());
         assert_eq!(
-            std::fs::metadata(&staged).unwrap().permissions(),
+            std::fs::metadata(staged).unwrap().permissions(),
             permissions
         );
 
-        staged.persist(&to).unwrap();
+        let faults = Faults::default();
+        prepared.apply_with(&faults, "page").unwrap();
+        assert_eq!(faults.launches.get(), 1);
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert_eq!(
             std::fs::metadata(&target).unwrap().permissions(),
             permissions
         );
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        let backup = backup(&target).expect("the old version");
+        assert_eq!(std::fs::read(backup).unwrap(), b"old");
+        assert_eq!(entries(dir.path()), 2);
     }
 
     #[test]
@@ -776,44 +1237,323 @@ mod tests {
         let source = dir.path().join("source");
         std::fs::write(&source, b"new").unwrap();
         drop(stage_file(&source, &target).unwrap());
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+        assert_eq!(entries(dir.path()), 2);
     }
 
-    /// A bundle standing for the `.app` directory at `path`.
-    fn bundle(path: &Path, content: &[u8]) {
-        std::fs::create_dir_all(path.join("Contents")).unwrap();
-        std::fs::write(path.join("Contents/app"), content).unwrap();
+    /// A rename over the file is one step, so there is always an AppImage to start.
+    #[test]
+    fn an_interrupted_appimage_update_leaves_a_whole_appimage() {
+        for step in 1.. {
+            let (dir, target, prepared) = staged_appimage();
+            let died = apply_until_killed(prepared, false, step);
+            assert!(content(&target).is_some(), "after step {step}");
+            assert!(holds(dir.path(), b"old"), "after step {step}");
+            if !died {
+                assert!(step > 1, "the update must change something");
+                break;
+            }
+        }
     }
 
     #[test]
-    fn a_bundle_is_swapped_into_place() {
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("App.app");
-        bundle(&target, b"old");
-        let staging = stage_bundle_dir(&target).unwrap();
-        bundle(&new_bundle(staging.path()), b"new");
+    fn an_appimage_that_cannot_be_put_in_place_is_left_alone() {
+        let (dir, target, prepared) = staged_appimage();
+        let faults = Faults {
+            failing_renames: &[1],
+            ..Faults::default()
+        };
+        assert!(prepared.apply_with(&faults, "page").is_err());
+        assert_eq!(faults.launches.get(), 0);
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        assert_eq!(entries(dir.path()), 1);
+    }
 
-        swap_bundle(
-            &new_bundle(staging.path()),
-            &target,
-            &old_bundle(staging.path()),
-        )
-        .unwrap();
-        assert_eq!(std::fs::read(target.join("Contents/app")).unwrap(), b"new");
-        drop(staging);
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    #[test]
+    fn an_appimage_that_does_not_start_gives_way_to_the_old_one() {
+        let (dir, target, prepared) = staged_appimage();
+        let faults = Faults {
+            launch_fails: true,
+            ..Faults::default()
+        };
+        let result = prepared.apply_with(&faults, "page");
+        assert!(matches!(result, Err(Error::Install(_))), "{result:?}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        assert_eq!(entries(dir.path()), 1);
+    }
+
+    #[test]
+    fn a_failed_appimage_restore_keeps_both_versions_and_says_where() {
+        let (dir, _target, prepared) = staged_appimage();
+        let faults = Faults {
+            launch_fails: true,
+            failing_renames: &[2],
+            ..Faults::default()
+        };
+        let Err(Error::Stranded(kept)) = prepared.apply_with(&faults, "page") else {
+            panic!("not reported");
+        };
+        assert!(holds(dir.path(), b"old") && holds(dir.path(), b"new"));
+        let held: Vec<_> = kept.iter().filter_map(|path| content(path)).collect();
+        assert!(held.contains(&b"old".to_vec()) && held.contains(&b"new".to_vec()));
+    }
+
+    /// A rename keeps the date of the old install, and the sweep goes by date: the new version's
+    /// first start must not delete what the old process would restore if that start fails.
+    #[test]
+    fn the_previous_version_outlives_the_first_start_of_the_new_one() {
+        let (_dir, target, prepared) = staged_appimage();
+        age(&target);
+        prepared.apply_with(&Faults::default(), "page").unwrap();
+        remove_stale_beside(&InstallFormat::AppImage(target.clone()));
+        assert_eq!(content(&backup(&target).unwrap()).unwrap(), b"old");
+    }
+
+    #[test]
+    fn a_bundle_is_exchanged_into_place_keeping_the_old_one() {
+        let (dir, target, prepared) = staged_bundle();
+        let faults = Faults {
+            exchanges: true,
+            ..Faults::default()
+        };
+        prepared.apply_with(&faults, "page").unwrap();
+        assert_eq!(faults.launches.get(), 1);
+        assert_eq!(content(&target).unwrap(), b"new");
+        assert_eq!(content(&backup(&target).unwrap()).unwrap(), b"old");
+        assert_eq!(entries(dir.path()), 2);
+    }
+
+    #[test]
+    fn a_bundle_is_renamed_into_place_without_an_exchange() {
+        let (dir, target, prepared) = staged_bundle();
+        prepared.apply_with(&Faults::default(), "page").unwrap();
+        assert_eq!(content(&target).unwrap(), b"new");
+        assert_eq!(content(&backup(&target).unwrap()).unwrap(), b"old");
+        assert_eq!(entries(dir.path()), 2);
+    }
+
+    /// With an exchange the app is at its path at every moment.
+    #[test]
+    fn an_interrupted_exchange_leaves_a_whole_app_at_its_path() {
+        for step in 1.. {
+            let (dir, target, prepared) = staged_bundle();
+            let died = apply_until_killed(prepared, true, step);
+            assert!(content(&target).is_some(), "after step {step}");
+            assert!(holds(dir.path(), b"old"), "after step {step}");
+            if !died {
+                assert!(step > 1, "the update must change something");
+                break;
+            }
+        }
+    }
+
+    /// Without one there is a moment with nothing at the path, and the old bundle must be
+    /// somewhere no cleanup reaches, however the process ends.
+    #[test]
+    fn an_interrupted_rename_leaves_the_old_app_recoverable() {
+        for step in 1.. {
+            let (dir, _target, prepared) = staged_bundle();
+            let died = apply_until_killed(prepared, false, step);
+            assert!(holds(dir.path(), b"old"), "after step {step}");
+            if !died {
+                assert!(step > 1, "the update must change something");
+                break;
+            }
+        }
     }
 
     #[test]
     fn a_failed_swap_puts_the_old_bundle_back() {
+        let (dir, target, prepared) = staged_bundle();
+        let faults = Faults {
+            failing_renames: &[2],
+            ..Faults::default()
+        };
+        let result = prepared.apply_with(&faults, "page");
+        assert!(matches!(result, Err(Error::Io(_))), "{result:?}");
+        assert_eq!(faults.launches.get(), 0);
+        assert_eq!(content(&target).unwrap(), b"old");
+        assert_eq!(entries(dir.path()), 1);
+    }
+
+    #[test]
+    fn a_failed_rollback_keeps_both_bundles_and_says_where() {
+        let (dir, target, prepared) = staged_bundle();
+        let faults = Faults {
+            failing_renames: &[2, 3],
+            ..Faults::default()
+        };
+        let Err(Error::Stranded(kept)) = prepared.apply_with(&faults, "page") else {
+            panic!("not reported");
+        };
+        assert!(content(&target).is_none());
+        let held: Vec<_> = kept.iter().filter_map(|path| content(path)).collect();
+        assert!(held.contains(&b"old".to_vec()) && held.contains(&b"new".to_vec()));
+        // Nothing is left to delete either of them.
+        assert!(holds(dir.path(), b"old") && holds(dir.path(), b"new"));
+    }
+
+    /// The exchange worked and the app is in place: the old bundle stays where it ended up.
+    #[test]
+    fn an_exchanged_bundle_that_cannot_be_moved_out_of_staging_is_kept_there() {
+        let (dir, target, prepared) = staged_bundle();
+        let faults = Faults {
+            exchanges: true,
+            failing_renames: &[1],
+            ..Faults::default()
+        };
+        prepared.apply_with(&faults, "page").unwrap();
+        assert_eq!(content(&target).unwrap(), b"new");
+        assert!(holds(dir.path(), b"old"));
+    }
+
+    #[test]
+    fn a_bundle_that_does_not_start_gives_way_to_the_old_one() {
+        for exchanges in [true, false] {
+            let (dir, target, prepared) = staged_bundle();
+            let faults = Faults {
+                exchanges,
+                launch_fails: true,
+                ..Faults::default()
+            };
+            let result = prepared.apply_with(&faults, "page");
+            assert!(matches!(result, Err(Error::Install(_))), "{result:?}");
+            assert_eq!(content(&target).unwrap(), b"old", "exchanges: {exchanges}");
+            assert_eq!(entries(dir.path()), 1, "exchanges: {exchanges}");
+        }
+    }
+
+    /// Whichever step of putting the old bundle back fails, neither version is lost.
+    #[test]
+    fn a_failed_bundle_restore_keeps_both_and_says_where() {
+        // Target to backup and staged to target have gone well; then, of the way back, moving
+        // the failed version aside, or that and moving the old one in and undoing it.
+        for failing in [&[3][..], &[4, 5][..]] {
+            let (dir, _target, prepared) = staged_bundle();
+            let faults = Faults {
+                launch_fails: true,
+                failing_renames: failing,
+                ..Faults::default()
+            };
+            let Err(Error::Stranded(kept)) = prepared.apply_with(&faults, "page") else {
+                panic!("not reported with {failing:?}");
+            };
+            let held: Vec<_> = kept.iter().filter_map(|path| content(path)).collect();
+            assert!(
+                held.contains(&b"old".to_vec()) && held.contains(&b"new".to_vec()),
+                "{failing:?}: {held:?}"
+            );
+            assert!(holds(dir.path(), b"old") && holds(dir.path(), b"new"));
+        }
+    }
+
+    /// `cmd` or `sh` running `script`.
+    fn shell(script: &str) -> Command {
+        let (program, flag) = if cfg!(windows) {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+        let mut command = Command::new(program);
+        command.arg(flag).arg(script);
+        command
+    }
+
+    #[test]
+    fn a_program_that_fails_at_once_has_not_started() {
+        let grace = Duration::from_secs(10);
+        assert!(matches!(
+            start(&mut shell("exit 3"), grace),
+            Err(Error::Install(_))
+        ));
+        assert!(matches!(
+            start(&mut Command::new("no-such-program-at-all"), grace),
+            Err(Error::Io(_))
+        ));
+    }
+
+    /// `open` hands over to the system and leaves.
+    #[test]
+    fn a_program_that_finishes_well_has_started() {
+        start(&mut shell("exit 0"), Duration::from_secs(10)).unwrap();
+    }
+
+    #[test]
+    fn a_program_still_running_after_the_grace_period_has_started() {
+        let waits = if cfg!(windows) {
+            "ping -n 3 127.0.0.1"
+        } else {
+            "sleep 2"
+        };
+        let started = Instant::now();
+        start(&mut shell(waits), Duration::from_millis(50)).unwrap();
+        assert!(started.elapsed() < Duration::from_millis(1500));
+    }
+
+    /// Where hard links cannot be made, as on a FAT stick, the backup is a copy.
+    #[test]
+    fn the_backup_of_a_file_is_a_copy_of_it() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("App.app");
-        bundle(&target, b"old");
-        let missing = dir.path().join("missing.app");
-        let old = dir.path().join("old.app");
-        assert!(swap_bundle(&missing, &target, &old).is_err());
-        assert_eq!(std::fs::read(target.join("Contents/app")).unwrap(), b"old");
-        assert!(!old.exists());
+        let (from, to) = (dir.path().join("from"), dir.path().join("to"));
+        std::fs::write(&from, b"old").unwrap();
+        System.copy_file(&from, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"old");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_system_exchanges_two_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.app"), dir.path().join("b.app"));
+        bundle(&a, b"a");
+        bundle(&b, b"b");
+        System.exchange(&a, &b).unwrap();
+        assert_eq!(content(&a).unwrap(), b"b");
+        assert_eq!(content(&b).unwrap(), b"a");
+    }
+
+    /// A Yes hours ago must not hand the elevated installer whatever is in the temporary
+    /// directory now: anything running as the user can write there.
+    #[test]
+    fn a_setup_changed_after_its_verification_is_not_started() {
+        let (download, transport) = signed_download(windows_format(), b"setup", 5);
+        let prepared = prepare_download(&download, &transport).unwrap();
+        let Prepared::WindowsInstaller { setup, .. } = &prepared else {
+            panic!("not an installer");
+        };
+        std::fs::write(setup, b"SETUP").unwrap();
+        let faults = Faults::default();
+        let result = prepared.apply_with(&faults, "page");
+        assert!(matches!(result, Err(Error::Signature)), "{result:?}");
+        assert_eq!(faults.handed_over.get(), 0);
+    }
+
+    #[test]
+    fn a_missing_setup_is_not_started() {
+        let (download, transport) = signed_download(windows_format(), b"setup", 5);
+        let prepared = prepare_download(&download, &transport).unwrap();
+        let Prepared::WindowsInstaller { setup, .. } = &prepared else {
+            panic!("not an installer");
+        };
+        std::fs::remove_file(setup).unwrap();
+        let faults = Faults::default();
+        assert!(prepared.apply_with(&faults, "page").is_err());
+        assert_eq!(faults.handed_over.get(), 0);
+    }
+
+    #[test]
+    fn an_unchanged_setup_is_started() {
+        let (download, transport) = signed_download(windows_format(), b"setup", 5);
+        let prepared = prepare_download(&download, &transport).unwrap();
+        let Prepared::WindowsInstaller { setup, .. } = &prepared else {
+            panic!("not an installer");
+        };
+        let directory = setup.parent().unwrap().to_owned();
+        let faults = Faults::default();
+        prepared.apply_with(&faults, "page").unwrap();
+        assert_eq!(faults.handed_over.get(), 1);
+        // The script deletes it, in real life.
+        assert!(directory.exists());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -824,11 +1564,140 @@ mod tests {
         std::fs::create_dir(&stale).unwrap();
         std::fs::create_dir(&other).unwrap();
         // Too young to touch.
-        remove_older_than(dir.path(), Duration::from_secs(3600));
+        remove_older_than(dir.path(), Duration::from_secs(3600), None);
         assert!(stale.exists());
-        remove_older_than(dir.path(), Duration::ZERO);
+        remove_older_than(dir.path(), Duration::ZERO, None);
         assert!(!stale.exists());
         assert!(other.exists());
+    }
+
+    #[test]
+    fn stale_files_are_deleted_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale = dir.path().join(format!("{TEMP_PREFIX}abc"));
+        let other = dir.path().join("something-else");
+        std::fs::write(&stale, b"new").unwrap();
+        std::fs::write(&other, b"mine").unwrap();
+        remove_older_than(dir.path(), Duration::from_secs(3600), None);
+        assert!(stale.exists());
+        remove_older_than(dir.path(), Duration::ZERO, None);
+        assert!(!stale.exists());
+        assert!(other.exists());
+    }
+
+    /// Give `path` the date of two days ago.
+    fn age(path: &Path) {
+        File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() - 2 * STALE_AFTER)
+            .unwrap();
+    }
+
+    #[test]
+    fn what_an_update_left_beside_the_app_is_swept() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.AppImage");
+        let staged = dir.path().join(format!("{TEMP_PREFIX}abc"));
+        let mine = dir.path().join("notes.txt");
+        for file in [&target, &staged, &mine] {
+            std::fs::write(file, b"x").unwrap();
+            age(file);
+        }
+        remove_stale_beside(&InstallFormat::AppImage(target.clone()));
+        assert!(!staged.exists());
+        assert!(target.exists() && mine.exists());
+    }
+
+    /// What is young may be in use by another running copy.
+    #[test]
+    fn what_was_left_today_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.AppImage");
+        let staged = dir.path().join(format!("{TEMP_PREFIX}abc"));
+        std::fs::write(&target, b"x").unwrap();
+        std::fs::write(&staged, b"x").unwrap();
+        remove_stale_beside(&InstallFormat::AppImage(target));
+        assert!(staged.exists());
+    }
+
+    #[test]
+    fn formats_that_stage_nothing_beside_the_app_sweep_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("app.exe");
+        let staged = dir.path().join(format!("{TEMP_PREFIX}abc"));
+        std::fs::write(&staged, b"x").unwrap();
+        age(&staged);
+        for format in [
+            InstallFormat::Other,
+            InstallFormat::WindowsInstaller {
+                scope: Scope::CurrentUser,
+                exe,
+            },
+        ] {
+            remove_stale_beside(&format);
+            assert!(staged.exists());
+        }
+    }
+
+    /// The new version got this far, so the previous one has done its job.
+    #[test]
+    fn the_previous_version_goes_once_the_app_is_back_at_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.AppImage");
+        std::fs::write(&target, b"new").unwrap();
+        let backup = dir.path().join(format!("{BACKUP_PREFIX}App.AppImage.0"));
+        std::fs::write(&backup, b"old").unwrap();
+        age(&backup);
+        remove_stale_beside(&InstallFormat::AppImage(target));
+        assert!(!backup.exists());
+    }
+
+    /// It may be the only copy of that app left, and it is not this one's to delete.
+    #[test]
+    fn the_previous_version_of_another_app_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.AppImage");
+        std::fs::write(&target, b"new").unwrap();
+        let other = dir.path().join(format!("{BACKUP_PREFIX}Other.AppImage.0"));
+        let unnumbered = dir.path().join(format!("{BACKUP_PREFIX}App.AppImage"));
+        for file in [&other, &unnumbered] {
+            std::fs::write(file, b"old").unwrap();
+            age(file);
+        }
+        remove_stale_beside(&InstallFormat::AppImage(target));
+        assert!(other.exists() && unnumbered.exists());
+    }
+
+    /// `remove_stale` also runs on the temporary directory, where an AppImage may be kept.
+    #[test]
+    fn a_plain_sweep_leaves_previous_versions_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let backup = dir.path().join(format!("{BACKUP_PREFIX}App.AppImage.0"));
+        std::fs::write(&backup, b"old").unwrap();
+        remove_older_than(dir.path(), Duration::ZERO, None);
+        assert!(backup.exists());
+    }
+
+    #[test]
+    fn with_the_app_missing_its_previous_version_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.AppImage");
+        let backup = dir.path().join(format!("{BACKUP_PREFIX}App.AppImage.0"));
+        std::fs::write(&backup, b"old").unwrap();
+        age(&backup);
+        remove_stale_beside(&InstallFormat::AppImage(target));
+        assert!(backup.exists());
+    }
+
+    #[test]
+    fn a_new_backup_does_not_take_the_name_of_an_older_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.AppImage");
+        let first = backup_path(&target).unwrap();
+        std::fs::write(&first, b"old").unwrap();
+        assert_ne!(backup_path(&target).unwrap(), first);
     }
 
     #[test]

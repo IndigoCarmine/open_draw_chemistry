@@ -463,6 +463,11 @@ impl OpenDrawApp {
         }
     }
 
+    /// Whether a job is running that quitting would end, however clean its document is.
+    fn work_is_running(&self) -> bool {
+        self.docs.iter().any(Document::has_running_work)
+    }
+
     fn request_quit(&mut self, ctx: &egui::Context) {
         self.close_all_embedded();
         if self.docs.iter().any(Document::is_dirty) {
@@ -918,7 +923,7 @@ impl OpenDrawApp {
 
     /// Follow the update: collect what its threads have finished and show its dialogs.
     fn update_update(&mut self, ctx: &egui::Context) {
-        let polled = self.update.poll();
+        let polled = self.update.poll(self.work_is_running());
         self.run_update_event(ctx, polled);
         if self.update.is_quitting() && self.pending_close.is_none() && !self.quit_confirmed {
             self.update.quit_called_off();
@@ -1255,6 +1260,19 @@ fn welcome(ui: &mut egui::Ui, out: &mut Vec<Command>) {
     });
 }
 
+/// With the app gone there is no status bar to say this in. Most failures leave the app as it was
+/// and the Release page says the rest, but only the user can sort out [`update::Error::Stranded`].
+fn report_failed_install(error: &update::Error) {
+    eprintln!("{error}");
+    if matches!(error, update::Error::Stranded(_)) {
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title(t!("update.stranded_title"))
+            .set_description(t!("update.failed", error = error))
+            .show();
+    }
+}
+
 impl eframe::App for OpenDrawApp {
     /// Called by eframe on a timer and at shutdown (needs the `persistence` feature).
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1266,8 +1284,9 @@ impl eframe::App for OpenDrawApp {
         self.update.cancel();
         if self.quit_confirmed
             && let Some((prepared, release_page)) = self.update.take_for_exit()
-            && prepared.apply(&release_page).is_err()
+            && let Err(error) = prepared.apply(&release_page)
         {
+            report_failed_install(&error);
             update::open_page(&release_page);
         }
     }
@@ -1571,6 +1590,56 @@ mod tests {
             assert_eq!(back.view3d.style, style);
             assert_eq!(back.assembly_view.style, style);
         }
+    }
+
+    #[test]
+    fn scans_and_3d_jobs_count_as_running_work_whatever_the_document_says() {
+        let mut app = app_with_one_clean_document();
+        assert!(!app.work_is_running());
+
+        app.docs[0].scan = Some(crate::scan::Run::running_for_test());
+        assert!(!app.docs[0].is_dirty());
+        assert!(app.work_is_running());
+        app.docs[0].scan.as_mut().unwrap().cancel();
+        app.docs[0].scan.as_mut().unwrap().wait();
+        assert!(!app.work_is_running());
+
+        app.docs[0].three_d.state = three_d::JobState::Running(three_d::Task::Optimize);
+        assert!(app.work_is_running());
+    }
+
+    /// A download ending must not take a running scan down with it.
+    #[test]
+    fn a_finished_download_does_not_quit_during_a_scan() {
+        let mut app = app_with_one_clean_document();
+        app.docs[0].scan = Some(crate::scan::Run::running_for_test());
+        app.update = UpdateFlow::downloaded(update::install::Prepared::for_test());
+
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.update_update(&ui.ctx().clone());
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.update.view(), update::flow::View::Ready);
+        assert!(!app.quit_confirmed);
+        app.docs[0].scan.as_mut().unwrap().cancel();
+        app.docs[0].scan.as_mut().unwrap().wait();
+    }
+
+    #[test]
+    fn a_finished_download_quits_when_nothing_is_running() {
+        let mut app = app_with_one_clean_document();
+        app.update = UpdateFlow::downloaded(update::install::Prepared::for_test());
+        app.update_update(&egui::Context::default());
+        assert!(app.quit_confirmed);
+        assert!(app.update.is_quitting());
+    }
+
+    fn app_with_one_clean_document() -> OpenDrawApp {
+        let mut app = OpenDrawApp::default();
+        let config = Config::default();
+        app.docs = vec![Document::new(&config, 1)];
+        app
     }
 
     /// The update check is on unless the user turned it off, including for the state files of

@@ -82,11 +82,21 @@ the app sends users to the Release page instead of installing anything.
 | Installed as | Yes in the update dialog |
 | --- | --- |
 | Windows installer | Downloads `…-setup.exe`, quits, runs it with `/SILENT` in the install's own mode (`/CURRENTUSER`, or `/ALLUSERS` with a UAC prompt), restarts |
-| Linux AppImage | Downloads the new AppImage, renames it over the old file, restarts |
-| macOS `.app` | Downloads the `.dmg`, copies the app out with `hdiutil` and `ditto`, swaps the bundle by renames, restarts |
+| Linux AppImage | Downloads the new AppImage, renames it over the old file, restarts, and goes back to the old file if the new one does not start |
+| macOS `.app` | Downloads the `.dmg`, copies the app out with `hdiutil` and `ditto`, swaps the bundle (`renamex_np` with `RENAME_SWAP`, two renames where the filesystem cannot), restarts, and goes back to the old bundle if the new one does not start |
 | Windows portable zip, Linux `.deb`, anything else | Opens the Release page |
 
-A failed download, verification or install also ends at the Release page.
+A failed download, verification or install also ends at the Release page. The Windows setup is
+verified a second time just before it runs, since it waits in a directory the user can write to.
+
+An AppImage or `.app` update stages the new version beside the app and keeps the previous one
+there, as `.open-draw-chemistry-update-*` (`.open-draw-chemistry-update-old-*` for the previous
+version). A later start of the app deletes what is over a day old. A previous version is only
+deleted by the app it belongs to, once that is back at its path. If an install can neither finish
+nor be undone, both versions stay on disk and a message box says where.
+
+A download that finishes while a parameter scan or 3D job is running does not quit the app, since
+that would end the job. The app waits with the "Restart now" window instead.
 
 To set up signing, once, with OpenSSL 3:
 
@@ -99,11 +109,13 @@ git add resources/update-signing.pub   # and commit it
 
 Keep the private key out of the repository and back it up: a copy of the app only trusts the key
 it was built with, so **replacing the key leaves every installed copy going to the Release page**
-for that one update to a build with the new key. Generating a key refuses to overwrite a file.
+for that one update to a build with the new key. Generating a key refuses to overwrite a private
+key file, or a `resources/update-signing.pub` that already holds a real key.
 
-When a tag is released, `scripts/sign-update-assets.sh` writes `<asset>.sig` beside each asset. If
-the `UPDATE_SIGNING_KEY` secret is missing it warns and signs nothing; if the secret does not
-match `resources/update-signing.pub` it stops the release. A signature is the 64-byte ed25519
+When a tag is released, `scripts/sign-update-assets.sh` writes `<asset>.sig` beside each asset.
+While `resources/update-signing.pub` holds the placeholder and the `UPDATE_SIGNING_KEY` secret is
+missing, it warns and signs nothing. With a real key committed a missing secret stops the release,
+as does a secret that does not match the key. A signature is the 64-byte ed25519
 signature of this text, so it binds the file's name, and with it the version, as well as its
 content, and can be checked with OpenSSL:
 

@@ -21,7 +21,7 @@ pub enum Event {
     OpenPage(String),
     /// The automatic update failed: say so and open this Release page.
     Failed { error: Error, release_page: String },
-    /// A verified update is ready: quit, so that it can be installed.
+    /// A verified update is ready and nothing is in the way: quit, so that it can be installed.
     Quit,
 }
 
@@ -65,7 +65,8 @@ pub enum View<'a> {
         done: u64,
         total: u64,
     },
-    /// Downloaded and verified, and the user has not said to restart yet.
+    /// Downloaded and verified, and the user has to say when to restart: other work was running
+    /// when it finished, or they called the quit off.
     Ready,
 }
 
@@ -88,8 +89,10 @@ impl UpdateFlow {
         let (send, result) = mpsc::channel();
         let thread_transport = transport.clone();
         std::thread::spawn(move || {
+            let format = format();
             install::remove_stale(&std::env::temp_dir());
-            let available = super::check(thread_transport.as_ref(), current, format(), key);
+            install::remove_stale_beside(&format);
+            let available = super::check(thread_transport.as_ref(), current, format, key);
             let _ = send.send(available.ok().flatten());
         });
         self.state = State::Checking { transport, result };
@@ -114,8 +117,10 @@ impl UpdateFlow {
         }
     }
 
-    /// Collect what the background threads have finished.
-    pub fn poll(&mut self) -> Option<Event> {
+    /// Collect what the background threads have finished. `work_running` says that quitting
+    /// now would end work the user is waiting for: a finished download then waits to be told,
+    /// as [`View::Ready`], rather than quit on its own.
+    pub fn poll(&mut self, work_running: bool) -> Option<Event> {
         match &mut self.state {
             State::Checking { result, .. } => match result.try_recv() {
                 Err(TryRecvError::Empty) => None,
@@ -148,9 +153,9 @@ impl UpdateFlow {
                         self.state = State::Ready {
                             prepared,
                             release_page,
-                            quitting: true,
+                            quitting: !work_running,
                         };
-                        Some(Event::Quit)
+                        (!work_running).then_some(Event::Quit)
                     }
                     Err(Error::Cancelled) => None,
                     Err(error) => Some(Event::Failed {
@@ -278,10 +283,29 @@ impl UpdateFlow {
     }
 }
 
+#[cfg(test)]
+impl UpdateFlow {
+    /// A flow whose download has finished, for [`Self::poll`] to find.
+    pub fn downloaded(prepared: Prepared) -> Self {
+        let (send, result) = mpsc::channel();
+        send.send(Ok(prepared)).unwrap();
+        Self {
+            state: State::Downloading(Downloading {
+                version: Version::new(1, 2, 3),
+                release_page: String::new(),
+                total: 0,
+                progress: Arc::default(),
+                cancel: Arc::default(),
+                result,
+            }),
+        }
+    }
+}
+
 /// Everything in this module's check and download, on a fake network.
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime};
 
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::{Digest, Sha256};
@@ -348,7 +372,7 @@ mod tests {
         let start = Instant::now();
         while !done(flow) {
             assert!(start.elapsed() < Duration::from_secs(10), "timed out");
-            if let Some(event) = flow.poll() {
+            if let Some(event) = flow.poll(false) {
                 return Some(event);
             }
             std::thread::sleep(Duration::from_millis(2));
@@ -500,7 +524,7 @@ mod tests {
         flow.cancel();
         assert_eq!(flow.view(), View::Nothing);
         assert!(!flow.is_busy());
-        assert!(flow.poll().is_none());
+        assert!(flow.poll(false).is_none());
     }
 
     /// Cancelling the Save dialog must not leave an install armed for a later quit.
@@ -519,6 +543,51 @@ mod tests {
 
         assert!(matches!(flow.restart(), Some(Event::Quit)));
         assert!(flow.take_for_exit().is_some());
+    }
+
+    /// Quitting ends a scan, so a finished download that nobody is waiting on must not.
+    #[test]
+    fn a_download_finishing_during_other_work_waits_to_be_told() {
+        let (transport, key) = network();
+        let mut flow = checked(transport, "1.0.0", windows(), Some(key));
+        flow.answer(true);
+        let start = Instant::now();
+        while flow.is_busy() {
+            assert!(start.elapsed() < Duration::from_secs(10), "timed out");
+            assert!(flow.poll(true).is_none());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(flow.view(), View::Ready);
+        assert!(!flow.is_quitting());
+        assert!(flow.take_for_exit().is_none());
+        assert!(matches!(flow.restart(), Some(Event::Quit)));
+        assert!(flow.take_for_exit().is_some());
+    }
+
+    /// What a killed run left beside the app goes at the next start, and not only for the
+    /// temporary directory.
+    #[test]
+    fn the_check_sweeps_beside_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("App.AppImage");
+        let staged = dir.path().join(".open-draw-chemistry-update-abc");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::write(&staged, b"new").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&staged)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3 * 24 * 60 * 60))
+            .unwrap();
+        let (transport, key) = network();
+        checked(
+            transport,
+            "1.0.0",
+            InstallFormat::AppImage(target.clone()),
+            Some(key),
+        );
+        assert!(!staged.exists());
+        assert!(target.exists());
     }
 
     #[test]

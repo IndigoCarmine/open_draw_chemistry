@@ -118,6 +118,8 @@ title = "About"
 [update]
 # In the status bar, as the browser opens. {error} says what went wrong.
 failed = "The update could not be installed automatically ({error}). Opening the release page."
+# Title of the message box when an update stopped half way and could not be undone.
+stranded_title = "Update not finished"
 
 [update.prompt]
 # The dialog at startup when there is a newer version.
@@ -139,7 +141,8 @@ title = "Downloading update"
 message = "Downloading Open DrawChemistry {version}"
 
 [update.ready]
-# Shown when the user cancelled the quit that would have installed the update.
+# Shown when the download finished during a parameter scan or 3D job, which quitting would end,
+# or when the user cancelled the quit that would have installed the update.
 title = "Update ready"
 message = "The update has been downloaded and verified. Restart the app to install it."
 restart = "Restart now"
@@ -155,6 +158,8 @@ malformed = "could not read GitHub's answer: {error}"
 signature = "the signature is not valid"
 cancelled = "cancelled"
 install = "could not install: {error}"
+# {paths} lists the places the two versions of the app were left in.
+stranded = "the install could not be finished or undone; both versions are kept at {paths}: move the one you want back to where the app belongs"
 
 [ole.embed]
 load_failed = "Could not read the embedded object: {error}"

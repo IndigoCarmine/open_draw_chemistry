@@ -9,6 +9,7 @@
 //! All network traffic goes through [`http::Transport`], so the tests never need the network.
 
 use std::fmt;
+use std::path::PathBuf;
 
 use semver::Version;
 
@@ -49,6 +50,9 @@ pub enum Error {
     Cancelled,
     Io(std::io::Error),
     Install(String),
+    /// An install stopped half way and could not be undone: these paths hold the versions it
+    /// was moving, which nothing deletes.
+    Stranded(Vec<PathBuf>),
 }
 
 impl fmt::Display for Error {
@@ -63,6 +67,13 @@ impl fmt::Display for Error {
             Error::Cancelled => f.write_str(t!("update.error.cancelled")),
             Error::Io(e) => write!(f, "{e}"),
             Error::Install(error) => f.write_str(&t!("update.error.install", error = error)),
+            Error::Stranded(paths) => {
+                let paths: Vec<_> = paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect();
+                f.write_str(&t!("update.error.stranded", paths = paths.join(", ")))
+            }
         }
     }
 }
