@@ -218,7 +218,12 @@ jobs:
   # ------------------------------------------------------------------ Linux --
   linux:
     name: Linux installers
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the prebuilt OpenBabel's XML format plugins link libxml2.so.2,
+    # which Ubuntu 26.04 (ubuntu-latest since late 2026) no longer ships (its libxml2 is
+    # libxml2.so.16), so scripts/stage-linux.sh stops on "libxml2.so.2 => not found" there.
+    # Building on the older release also keeps the glibc the .deb and the AppImage require low,
+    # so they run on more distributions. Move this on together with the openbabel_rs prebuilt.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
