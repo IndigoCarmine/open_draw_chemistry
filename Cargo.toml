@@ -6,8 +6,7 @@ edition = "2024"
 rust-version = "1.95"
 description = "A chemical structure and reaction drawing application (ChemDraw-compatible CDX/CDXML)"
 authors = ["IndigoCarmine"]
-# GPL because the 3D builder links OpenBabel (GPL-2.0).
-license = "GPL-2.0-or-later"
+license = "AGPL-3.0-or-later"
 repository = "https://github.com/IndigoCarmine/open_draw_chemistry"
 readme = "README.md"
 
@@ -42,24 +41,23 @@ moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_r
 # The viewer's vector types, needed to drive its camera and renderer directly.
 lin_alg = { version = "1.4.3", features = ["computer_graphics"] }
 
-# 2D → 3D generation, force-field optimisation, SMILES and 3D file reading (see `src/three_d/`).
-# Required: openbabel-sys links the prebuilt OpenBabel that `scripts/fetch-openbabel.sh`
-# downloads (or builds OpenBabel from source with CMake). Every release ships its libraries,
-# plugins and data beside the executable (see .github/workflows/release.yml).
-openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4.8" }
-
 # AcaudaOffice's embedded objects without COM (see `src/acauda.rs`). Dual MIT/Apache-2.0. Pinned
 # to a rev because it is not on crates.io; `default-features = false` because only hosts read
 # manifests.
 acauda-embed = { git = "https://github.com/IndigoCarmine/acauda-embed", rev = "9b78881a2d703fe97483f64f0c99cb851226df80", default-features = false }
+
+# Molecular mechanics (see `src/three_d/engine.rs` and `src/scan/energy.rs`): UFF and
+# MMFF94/94s energies and minimisation, and the ETKDG embedding that builds 3D models from the
+# drawing; also reading 3D files and laying a read structure out in 2D (`src/three_d/read.rs`).
+# Pure Rust (ports of RDKit's, BSD-3-Clause). Pinned to a tag: not on crates.io.
+molecule_optimizer_rs = { git = "https://github.com/IndigoCarmine/molecule_optimizer_rs", tag = "v0.2.0" }
 
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # The startup update check and automatic install (see `src/update/`): the ed25519 and SHA-256
 # that verify a download, and the rest for comparing versions, vetting URLs, the download's
-# temporary directory and the Release page. Mind the licences of anything added here:
-# OpenBabel is GPL-2.0-only, which rules out what is only Apache-2.0, such as ring and openssl.
+# temporary directory and the Release page.
 ed25519-dalek = { version = "3.0.0", default-features = false }
 sha2 = { version = "0.11.1", default-features = false }
 semver = "1.0.28"
@@ -128,6 +126,11 @@ CDX/CDXML files.
 """
 
 # Release binaries: smaller and faster, at the cost of longer link times.
+# The force fields and the embedder are numeric loops that run tens of times slower unoptimised;
+# optimise them in debug builds and tests too, so Generate, Optimize and scans keep their speed.
+[profile.dev.package.molecule_optimizer_rs]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "thin"
@@ -144,21 +147,14 @@ section = "science"
 priority = "optional"
 # eframe dlopens its GL/X11/Wayland libraries rather than linking them, so `$auto`
 # does not detect them. Without listing them the package installs cleanly and
-# then fails to start on a minimal system. (`$auto` does find what the binary and the
-# bundled OpenBabel link: libc, libstdc++, zlib.)
+# then fails to start on a minimal system. (`$auto` does find what the binary links: libc and
+# the like.)
 depends = "$auto, libxkbcommon0, libwayland-client0, libegl1, libgl1, libx11-6, libxcursor1, libxi6, libxrandr2"
 # The update check runs it (see `src/update/curl.rs`); without it the app just never asks.
 recommends = "curl"
-# The app and its private OpenBabel come from the tree scripts/stage-linux.sh lays out in
-# target/deb-root (the binary's rpath, $ORIGIN/../lib/open-draw-chemistry, reaches the
-# libraries in /usr/lib/open-draw-chemistry). The release workflow
-# also creates target/deb-root/DEBIAN, which tells dpkg-shlibdeps (behind `$auto`) that the
-# bundled libraries belong to this package rather than lacking a package of their own.
+# The app comes from the tree scripts/stage-linux.sh lays out in target/deb-root.
 assets = [
     ["target/deb-root/usr/bin/open_draw_chemistry", "usr/bin/", "755"],
-    ["target/deb-root/usr/lib/open-draw-chemistry/*.so.*", "usr/lib/open-draw-chemistry/", "644"],
-    ["target/deb-root/usr/lib/open-draw-chemistry/openbabel/*.so", "usr/lib/open-draw-chemistry/openbabel/", "644"],
-    ["target/deb-root/usr/share/open-draw-chemistry/openbabel/*", "usr/share/open-draw-chemistry/openbabel/", "644"],
     ["installer/linux/open-draw-chemistry.desktop", "usr/share/applications/", "644"],
     ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/open-draw-chemistry.png", "644"],
 ]

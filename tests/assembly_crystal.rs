@@ -1,5 +1,5 @@
 //! The crystal step end to end: a monomer copied by a space group's operations into a unit
-//! cell, repeated, written out as CIF and PDB, and (with OpenBabel) read back.
+//! cell, repeated, written out as CIF and PDB, and the PDB read back.
 
 use open_draw_chemistry::assembly::build::build;
 use open_draw_chemistry::assembly::export::{self, AssemblyExport};
@@ -296,12 +296,10 @@ fn a_crystal_exports_as_cif_and_pdb() {
     assert_eq!(&cryst[6..33], "   14.000   16.000   18.000");
     assert_eq!(pdb.lines().filter(|l| l.starts_with("HETATM")).count(), 96);
 
-    // OpenBabel reads the CIF's asymmetric unit as it is (it does not fill the cell
-    // unless asked to), so it sees the three atoms.
-    let mol = openbabel::Molecule::parse(&cif, "cif").expect("OpenBabel reads the CIF");
-    assert_eq!(mol.num_atoms(), 3);
-    let mol = openbabel::Molecule::parse(&pdb, "pdb").expect("OpenBabel reads the PDB");
-    assert_eq!(mol.num_atoms(), 96);
+    // The PDB reads back with every atom.
+    let mols = molecule_optimizer_rs::io::read_str(&pdb, molecule_optimizer_rs::io::Format::Pdb)
+        .expect("the PDB reads back");
+    assert_eq!(mols.iter().map(|m| m.num_atoms()).sum::<usize>(), 96);
 }
 
 #[test]

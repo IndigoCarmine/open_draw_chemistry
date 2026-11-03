@@ -9,7 +9,7 @@
 [![Website](https://img.shields.io/badge/website-open__draw__chemistry-7c5cff?logo=googlechrome&logoColor=white)](https://indigocarmine.github.io/open_draw_chemistry-site/)
 [![CI](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml/badge.svg)](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/IndigoCarmine/open_draw_chemistry?color=7c5cff)](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)
-[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust)
 
@@ -43,14 +43,14 @@ Rust と [egui](https://github.com/emilk/egui) で作られており、Windows�
 | 📂 **ChemDraw 互換** | `.cdx` / `.cdxml` を開いて保存。まだ表示できないオブジェクトも、保存時にそのまま残ります。 |
 | 🏷️ **IUPAC 名** | IUPAC 2013 勧告の優先名に対応しています。E/Z・R/S、環・スピロ・二環、無機塩も扱えます。基官能名・慣用名などの別名も一覧でき、名前はコピーしたり図に書き込んだりできます。 |
 | 🔬 **解析** | 分子式、精密質量・分子量、同位体パターン（m/z）、元素分析を、描いたそばから表示します。 |
-| 🧊 **3D** | OpenBabel で 3D モデルを生成します（くさびの立体を反映し、Ph / OMe などの略号を展開）。MMFF94・UFF・GAFF で最適化し、3D で表示・編集して、MOL / SDF / XYZ / PDB に書き出せます。 |
+| 🧊 **3D** | 3D モデルを生成します（ETKDG。くさびの立体を反映し、Ph / OMe などの略号を展開）。MMFF94・MMFF94s・UFF で最適化し、3D で表示・編集して、MOL / SDF / XYZ / PDB に書き出せます。 |
 | 🧩 **集合体とスキャン** | モノマーから環・積層・らせん・結晶格子を組み立てます。原子の衝突を調べ、距離・角度を測れます。多次元のエネルギースキャンは rigid と relaxed の両方に対応しています。 |
 | 📝 **Office 連携**（Windows） | ChemDraw がない PC でも、Word・PowerPoint に埋め込まれた ChemDraw オブジェクトを編集できます。コピーすると、ChemDraw 互換の構造と図がクリップボードに入ります。 |
 | 🌐 **11 言語** | 日本語、English、简体中文、繁體中文、한국어、Deutsch、Français、Español、Italiano、Português (Brasil)、Русский。 |
 
 ## 🚀 はじめる
 
-**ダウンロード**：[ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)または[最新リリース](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)から、お使いの OS 用のインストーラかポータブル版を入手してください。OpenBabel を同梱しているので、ほかに入れるものはありません。
+**ダウンロード**：[ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)または[最新リリース](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)から、お使いの OS 用のインストーラかポータブル版を入手してください。ほかに入れるものはありません。
 
 > macOS：まだ公証を受けていないので、初回は右クリック →「開く」で起動してください。
 > Windows：インストーラがまだ署名されていないので、SmartScreen の警告が出ることがあります。
@@ -58,7 +58,6 @@ Rust と [egui](https://github.com/emilk/egui) で作られており、Windows�
 **ソースからビルド**（Rust 1.95 以上）：
 
 ```bash
-bash scripts/fetch-openbabel.sh   # 最初に一度：ビルド済みの OpenBabel を取得
 cargo run -- path/to/file.cdx     # ファイルの指定は省略可
 ```
 
@@ -85,11 +84,11 @@ AcaudaOffice は [acauda-embed](https://github.com/IndigoCarmine/acauda-embed) �
 
 ## 🧱 使っているもの
 
-- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)：構造式エディタのウィジェット、IUPAC 命名、解析パネル
+- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)：構造式エディタのウィジェット、SMILES、IUPAC 命名、解析パネル
 - [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs)：ChemDraw ファイルの読み書き
-- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs)：[OpenBabel](https://openbabel.org) の Rust バインディング（3D 生成、力場、SMILES）
+- [molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs)：純 Rust の分子力学（RDKit から移植した UFF・MMFF94・ETKDG。3D 生成、最適化、スキャン、3D ファイルの読み込み）
 - [egui](https://github.com/emilk/egui)：UI
 
 ## 📄 ライセンス
 
-GPL-2.0-or-later です。[LICENSE](LICENSE) を参照してください。OpenBabel をリンクしているため GPL になっています。
+AGPL-3.0-or-later です。[LICENSE](LICENSE) を参照してください。

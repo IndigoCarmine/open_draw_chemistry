@@ -1,5 +1,5 @@
 //! The assembly builder end to end: a benzene monomer built into a stack of rosettes, written
-//! out as PDB, XYZ and MOL2, and read back through OpenBabel with every atom.
+//! out as PDB, XYZ and MOL2, and read back with every atom.
 
 use std::time::Instant;
 
@@ -13,7 +13,7 @@ use open_draw_chemistry::three_d::geom::Clash;
 use open_draw_chemistry::three_d::read::{Format3d, read};
 use open_draw_chemistry::three_d::{Atom3d, Bond3d};
 
-/// Benzene, from the test file through OpenBabel.
+/// Benzene, from the test file through the app's 3D reader.
 fn benzene() -> Component {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/benzene.mol2");
     let text = std::fs::read_to_string(path).unwrap();
@@ -73,11 +73,19 @@ fn a_benzene_rosette_stack_exports_and_reads_back() {
     for format in AssemblyExport::ALL {
         let text = export::export(format, &built, design, "benzene rosette");
         assert!(!text.is_empty());
-        let mol = openbabel::Molecule::parse(&text, format.extension())
-            .unwrap_or_else(|_| panic!("OpenBabel could not read the {format:?} export"));
-        assert_eq!(mol.num_atoms() as usize, 720, "{format:?}");
+        let reader = match format {
+            AssemblyExport::Pdb => molecule_optimizer_rs::io::Format::Pdb,
+            AssemblyExport::Xyz => molecule_optimizer_rs::io::Format::Xyz,
+            AssemblyExport::Mol2 => molecule_optimizer_rs::io::Format::Mol2,
+            AssemblyExport::Cif => unreachable!("not offered without a crystal"),
+        };
+        let mols = molecule_optimizer_rs::io::read_str(&text, reader)
+            .unwrap_or_else(|e| panic!("the {format:?} export could not be read back: {e}"));
+        let atoms: usize = mols.iter().map(|m| m.num_atoms()).sum();
+        assert_eq!(atoms, 720, "{format:?}");
         if format != AssemblyExport::Xyz {
-            assert_eq!(mol.num_bonds() as usize, 720, "{format:?} keeps the bonds");
+            let bonds: usize = mols.iter().map(|m| m.num_bonds()).sum();
+            assert_eq!(bonds, 720, "{format:?} keeps the bonds");
         }
     }
 

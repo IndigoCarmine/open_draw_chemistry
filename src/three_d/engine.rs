@@ -1,52 +1,227 @@
-//! The OpenBabel side of [`super`]: building, minimising and writing models.
+//! The molecular mechanics behind [`super`]: building, minimising and writing models with
+//! molecule_optimizer_rs (UFF and MMFF94/94s ported from RDKit, ETKDG for the 3D build).
 //!
-//! Every call here is slow and serialised by OpenBabel's process-wide lock, so it belongs on
-//! a background thread (see [`super::job`]).
+//! Every call here takes a while on a large structure, so it belongs on a background thread
+//! (see [`super::job`]).
 
+use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use openbabel::{Algorithm, Constraints, Minimizer, Molecule as ObMol, StopReason};
+use molecule_optimizer_rs::calc::{self, OptimizeOptions};
+use molecule_optimizer_rs::distgeom::EmbedParams;
+use molecule_optimizer_rs::ff::mmff::{MmffBuilder, MmffVariant};
+use molecule_optimizer_rs::ff::uff::UffBuilder;
+use molecule_optimizer_rs::ff::{self, ForceField as Field, ForceFieldBuilder};
+use molecule_optimizer_rs::io::{self, Format};
+use molecule_optimizer_rs::optim::{self, IterationInfo, MinimizeOptions, MinimizeStatus};
+use molecule_optimizer_rs::{BondOrder, Molecule};
 
 use super::{Atom3d, Bond3d, Constraint, Error, Export3d, ForceField, Model3d};
 
-/// The quality settings tried in turn until one gives a usable model. OpenBabel's builder can
-/// leave atoms piled up or unrelaxable on an awkward structure; another setting usually
-/// does not.
-const ATTEMPTS: [&str; 3] = ["med", "slow", "fast"];
+/// The embedding seeds tried in turn until one gives a usable model.
+const SEEDS: [i32; 3] = [42, 7, 1234];
 
-/// Two atoms closer than this (Å) mean the builder failed; the shortest real bond, H–H, is 0.74.
+/// Two atoms closer than this (Å) mean the build failed; the shortest real bond, H–H, is 0.74.
 const MIN_DISTANCE: f64 = 0.5;
 
-/// Build a 3D model from a 2D molfile: add hydrogens, generate coordinates, then relax them
-/// under `force_field` for up to [`GENERATE_BUDGET`] × `steps` steps (see [`relax`]).
-pub fn generate(molfile: &str, force_field: ForceField, steps: u32) -> Result<Model3d, Error> {
-    let mut last = Error::GenerationFailed;
-    for speed in ATTEMPTS {
-        let mut mol = ObMol::parse(molfile, "mol").map_err(|_| Error::Unreadable)?;
-        mol.add_hydrogens();
-        if !mol.generate_3d_with(speed) {
-            continue;
-        }
-        let mut left = steps.saturating_mul(GENERATE_BUDGET);
-        let mut energy = relax(&mut mol, force_field, &mut left, &[])?;
-        // A drawing with a straight run of atoms (say a chain drawn along one line) often
-        // comes out of the builder with that run still straight: sp³ centres at 180°. That is
-        // a saddle point the minimiser cannot leave, because every force along the line is
-        // symmetric, so the model keeps an absurd energy and its torsions are undefined —
-        // a dihedral set or restrained there lands anywhere. A small kick off the line breaks
-        // the symmetry and the same minimisation then relaxes it properly.
-        for kick in 0..KICKS {
-            let straight = model(&mol, force_field, energy)
-                .map(|m| has_straightened_centre(&m))
-                .unwrap_or(false);
-            if !straight {
-                break;
+/// How many times its `steps` a freshly built model may take to relax: an embedded structure
+/// starts further from its minimum than one the user already relaxed.
+const GENERATE_BUDGET: u32 = 8;
+
+/// How many times its `steps` a restrained Optimize (or a relaxed scan's point) may take: the
+/// structure first has to be pulled to the restrained values.
+pub(crate) const RESTRAINED_BUDGET: u32 = 2;
+
+/// The restraints' stiffness: kcal/mol/Å² for a distance (½·k·Δ²), kcal/mol/deg² for an angle
+/// or a dihedral (k·Δ²) — what the library's own scans use. A restrained distance then ends
+/// within a few thousandths of an ångström of its value, an angle within a few hundredths of a
+/// degree.
+const DISTANCE_FORCE: f64 = 1.0e4;
+const ANGLE_FORCE: f64 = 1.0e3;
+
+/// Non-bonded terms over every pair of atoms, wherever they start: a scan moves molecules
+/// that begin far apart up against each other, and a salt's ions interact.
+const NO_CUTOFF: f64 = 1.0e9;
+
+/// A molfile as a molecule the force fields can type (rings, aromaticity, hybridisation
+/// perceived). Hydrogens the molfile leaves implicit stay implicit.
+pub(crate) fn read(molfile: &str) -> Result<Molecule, Error> {
+    io::read_molfile(molfile).map_err(|_| Error::Unreadable)
+}
+
+/// The library's builder for `force_field`.
+fn builder(force_field: ForceField) -> Box<dyn ForceFieldBuilder> {
+    match force_field {
+        ForceField::Mmff94 | ForceField::Mmff94s => Box::new(MmffBuilder {
+            variant: if force_field == ForceField::Mmff94 {
+                MmffVariant::Mmff94
+            } else {
+                MmffVariant::Mmff94s
+            },
+            nonbonded_thresh: NO_CUTOFF,
+            ignore_interfrag_interactions: false,
+            ..MmffBuilder::default()
+        }),
+        ForceField::Uff => Box::new(UffBuilder {
+            vdw_thresh: NO_CUTOFF,
+            ignore_interfrag_interactions: false,
+        }),
+    }
+}
+
+/// `force_field` set up for `mol` holding `constraints`, or [`Error::ForceField`] when it has
+/// no type or parameter for one of its atoms.
+pub(crate) fn field(
+    mol: &Molecule,
+    force_field: ForceField,
+    constraints: &[Constraint],
+) -> Result<Box<dyn Field>, Error> {
+    builder(force_field)
+        .build_dyn(mol, &restraints(constraints, mol.num_atoms()))
+        .map_err(|_| Error::ForceField(force_field))
+}
+
+/// The app's constraints as the library's restraints, those that do not fit the molecule left
+/// out.
+fn restraints(constraints: &[Constraint], atoms: usize) -> Vec<ff::Constraint> {
+    constraints
+        .iter()
+        .filter(|c| c.is_valid_for(atoms))
+        .map(|c| match *c {
+            Constraint::Fix(i) => ff::Constraint::Fixed { i },
+            Constraint::Distance([i, j], length) => {
+                ff::Constraint::distance(i, j, length, DISTANCE_FORCE)
             }
-            jitter(&mut mol, kick);
-            let mut left = steps.saturating_mul(GENERATE_BUDGET);
-            energy = relax(&mut mol, force_field, &mut left, &[])?;
+            Constraint::Angle([i, j, k], degrees) => {
+                ff::Constraint::angle(i, j, k, degrees, ANGLE_FORCE)
+            }
+            Constraint::Torsion([i, j, k, l], degrees) => {
+                ff::Constraint::dihedral(i, j, k, l, degrees, ANGLE_FORCE)
+            }
+        })
+        .collect()
+}
+
+/// How a minimisation ended (see [`relax`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Relaxed {
+    /// The geometry reached, the molecule's own energy there (the restraints' penalty left
+    /// out), and whether it is a minimum: the minimiser converged before the steps ran out.
+    Done {
+        coords: Vec<[f64; 3]>,
+        energy: f64,
+        converged: bool,
+    },
+    /// The cancel flag was raised part-way.
+    Cancelled,
+}
+
+/// A restart that lowers the minimised energy (restraints included) by less than this
+/// (kcal/mol) finds the minimum reached (see [`relax`]).
+const SETTLED_ENERGY: f64 = 1.0e-4;
+
+/// Minimise `mol` from `coords` under `force_field` holding `constraints`, for at most `steps`
+/// iterations of the library's BFGS in all, looking at `cancel` (if any) after every one.
+///
+/// BFGS stops on RDKit's convergence test, which scales the gradient by the energy and the
+/// coordinates: on a large, restrained structure it can stop on a slope that still leads half
+/// a kcal/mol lower. So a run that converged is restarted from where it stopped (with a fresh
+/// Hessian), and the minimisation is converged once a restart no longer lowers the energy by
+/// [`SETTLED_ENERGY`].
+pub(crate) fn relax(
+    mol: &Molecule,
+    coords: &[[f64; 3]],
+    force_field: ForceField,
+    constraints: &[Constraint],
+    steps: u32,
+    cancel: Option<&AtomicBool>,
+) -> Result<Relaxed, Error> {
+    let builder = builder(force_field);
+    let constraints = restraints(constraints, mol.num_atoms());
+    let mut watch = |_: &IterationInfo<'_>| {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
         }
-        match model(&mol, force_field, energy) {
+    };
+    let failed = || Error::ForceField(force_field);
+    let mut left = steps.max(1) as usize;
+    let mut at = coords.to_vec();
+    let mut before = f64::INFINITY;
+    loop {
+        let options = OptimizeOptions {
+            minimize: MinimizeOptions {
+                max_iters: left,
+                ..MinimizeOptions::default()
+            },
+            constraints: constraints.clone(),
+        };
+        let done =
+            calc::optimize::optimize_coords(mol, &at, builder.as_ref(), &options, &mut watch)
+                .map_err(|_| failed())?;
+        if done.status == MinimizeStatus::Cancelled {
+            return Ok(Relaxed::Cancelled);
+        }
+        if !done.ff_energy.is_finite() {
+            return Err(failed());
+        }
+        at = done.coords;
+        left = left.saturating_sub(done.iterations.max(1));
+        let converged = done.status == MinimizeStatus::Converged;
+        let settled = converged && before - done.energy < SETTLED_ENERGY;
+        before = done.energy;
+        if settled || !converged || left == 0 {
+            return Ok(Relaxed::Done {
+                coords: at,
+                energy: done.ff_energy,
+                converged: settled,
+            });
+        }
+    }
+}
+
+/// [`relax`] where nothing cancels it: Generate and Optimize run to the end.
+fn relax_all(
+    mol: &Molecule,
+    coords: &[[f64; 3]],
+    force_field: ForceField,
+    constraints: &[Constraint],
+    steps: u32,
+) -> Result<(Vec<[f64; 3]>, f64), Error> {
+    match relax(mol, coords, force_field, constraints, steps, None)? {
+        Relaxed::Done { coords, energy, .. } => Ok((coords, energy)),
+        Relaxed::Cancelled => unreachable!("nothing raises the flag"),
+    }
+}
+
+/// Up to `steps` iterations of the library's BFGS on `field` from the flat coordinates `pos`
+/// (moved in place), without restraints or a cancel flag: one segment of a held relaxation
+/// (see `scan::energy`). The iterations taken, one at least.
+pub(crate) fn descend(field: &dyn Field, pos: &mut [f64], steps: u32) -> u32 {
+    let options = MinimizeOptions {
+        max_iters: steps.max(1) as usize,
+        ..MinimizeOptions::default()
+    };
+    let done = optim::minimize_with(field, pos, &options, false, &mut optim::NoObserver);
+    (done.iterations as u32).max(1)
+}
+
+/// Build a 3D model from a 2D molfile: add the hydrogens, embed the structure with ETKDG (the
+/// stereo its wedges and double bonds show kept), then relax it under `force_field` for up to
+/// [`GENERATE_BUDGET`] × `steps` iterations.
+pub fn generate(molfile: &str, force_field: ForceField, steps: u32) -> Result<Model3d, Error> {
+    let drawing = read(molfile)?;
+    let mut last = Error::GenerationFailed;
+    for seed in SEEDS {
+        let Some(built) = embed(&drawing, seed) else {
+            continue;
+        };
+        let budget = steps.saturating_mul(GENERATE_BUDGET);
+        let (coords, energy) = relax_all(&built, &built.coords, force_field, &[], budget)?;
+        match model(&built, &coords, force_field, energy) {
+            // An sp³ centre left straight is a saddle point the minimiser cannot leave; another
+            // embedding does not start there.
             Ok(model) if has_straightened_centre(&model) => last = Error::GenerationFailed,
             Ok(model) => return Ok(model),
             Err(e) => last = e,
@@ -55,378 +230,19 @@ pub fn generate(molfile: &str, force_field: ForceField, steps: u32) -> Result<Mo
     Err(last)
 }
 
-/// How many times its `steps` a freshly built model may take to relax: as many as the rounds
-/// of `steps` it was given before, when each of OpenBabel's runs stopped early (see [`relax`]).
-const GENERATE_BUDGET: u32 = 8;
-
-/// Minimise holding `constraints` (none for a plain relaxation) until the atoms stop moving or
-/// the `left` minimiser steps are spent (and deducted), and return the molecule's own energy —
-/// without the restraint penalty — at the geometry reached, as [`energy`] reports it.
-///
-/// OpenBabel's minimisers (steepest descent, conjugate gradients, L-BFGS) stop as soon as one
-/// step changes the energy by less than their energy criterion while the *smallest* per-atom
-/// gradient is under 0.1 (`maxgrad` in forcefield.cpp keeps a minimum, not a maximum). At the
-/// default criterion, 1e-6, that holds the first time a line search makes little progress —
-/// often a few steps into the thousands asked for, well short of the minimum. So the runs here
-/// take [`ECONV`] instead, a run is restarted from where it stopped, and a run that cannot
-/// move the atoms is answered with the next of the force field's [`algorithms`] (see
-/// [`descend`]).
-///
-/// A strained model of a hundred-odd atoms under UFF or GAFF is still far from its minimum
-/// after thousands of steps, at several milliseconds a step, so there the budget is what ends
-/// the minimisation — the same number of steps that bounded OpenBabel's runs before.
-fn relax(
-    mol: &mut ObMol,
-    force_field: ForceField,
-    left: &mut u32,
-    constraints: &[Constraint],
-) -> Result<f64, Error> {
-    match relax_watched(mol, force_field, left, constraints, &Watch::NONE)? {
-        Relaxed::Done { energy, .. } => Ok(energy),
-        // Nothing raises `Watch::NONE`'s flag.
-        Relaxed::Cancelled => Err(Error::ForceField(force_field)),
-    }
-}
-
-/// How a minimisation ended (see [`relax_watched`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Relaxed {
-    /// The molecule's own energy at the geometry reached (the restraints' penalty left out),
-    /// and whether that geometry is a minimum: the last restart of every one of the force
-    /// field's [`algorithms`] could not move the atoms, and — restrained — another
-    /// soft-then-stiff pass, which may itself end out of steps, found nothing lower. Not
-    /// converged when the steps ran out before that.
-    Done { energy: f64, converged: bool },
-    /// The watched flag was raised part-way; the molecule holds wherever it got to.
-    Cancelled,
-}
-
-/// What a minimisation looks at between OpenBabel's runs: a flag that stops it, and the most
-/// steps one run may take, so a raised flag is seen within that many.
-pub(crate) struct Watch<'a> {
-    pub cancel: &'a AtomicBool,
-    pub segment: u32,
-}
-
-/// Never raised: Generate and Optimize run to the end.
-static NEVER: AtomicBool = AtomicBool::new(false);
-
-impl Watch<'_> {
-    /// No flag, and runs as long as OpenBabel takes them.
-    const NONE: Watch<'static> = Watch {
-        cancel: &NEVER,
-        segment: u32::MAX,
-    };
-
-    fn cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Relaxed)
-    }
-}
-
-/// [`relax`], looking at `watch` between OpenBabel's runs, and telling whether it converged
-/// (see [`Relaxed`]): what a relaxed scan minimises each of its points with.
-pub(crate) fn relax_watched(
-    mol: &mut ObMol,
-    force_field: ForceField,
-    left: &mut u32,
-    constraints: &[Constraint],
-    watch: &Watch,
-) -> Result<Relaxed, Error> {
-    let failed = || Error::ForceField(force_field);
-    let algorithms = algorithms(force_field, !constraints.is_empty());
-    if constraints.is_empty() {
-        let descent =
-            descend(mol, force_field, algorithms, &[], None, left, watch).ok_or_else(failed)?;
-        if descent == Descent::Cancelled {
-            return Ok(Relaxed::Cancelled);
-        }
-        return Ok(Relaxed::Done {
-            energy: mol.energy(force_field.id()).ok_or_else(failed)?,
-            converged: descent == Descent::Settled,
-        });
-    }
-    // Restraints at their full stiffness leave the minimiser hardly any room: their curvature
-    // (2e8 per Å² for a distance) demands steps far below the first ones a fresh run tries, so
-    // a restart often cannot take a single one and the structure stays a few tenths of a
-    // kcal/mol above its restrained minimum. Under softer ones the rest of the structure moves
-    // freely and the restrained values end up within about a degree; the full stiffness then
-    // has only that to correct. Another such pass still finds a little more; passes repeat
-    // until one no longer lowers the energy.
-    //
-    // The soft stage leaves the full stiffness [`STIFF_RESERVE`] steps at least (half of what
-    // is left, rounded up, if that is fewer), so it always gets its turn — the last step left,
-    // if that is all: straight from the soft stage, a structure misses a restrained dihedral by
-    // up to a degree or two.
-    //
-    // Converged once a pass whose stiff stage ended at a minimum (no restart could move the
-    // atoms) is followed by one that lowers the energy by less than that. That next pass
-    // starts by leaving the minimum, under the soft restraints, and may run out of steps on
-    // its way back, stopped anywhere above it with the restrained values not yet held: so one
-    // that found nothing lower hands back the minimum before it, whose verdict it does not
-    // change. Given four times the steps, no such pass under UFF ended lower.
-    let mut energy = f64::INFINITY;
-    let mut converged = false;
-    let mut minimum: Option<Vec<f64>> = None;
-    for _ in 0..RESTRAINED_PASSES {
-        let mut soft = *left - left.div_ceil(2).min(STIFF_RESERVE);
-        let given = soft;
-        let factor = Some(SOFT_FORCE_FACTOR);
-        let descent = descend(
-            mol,
-            force_field,
-            algorithms,
-            constraints,
-            factor,
-            &mut soft,
-            watch,
-        )
-        .ok_or_else(failed)?;
-        *left -= given - soft;
-        if descent == Descent::Cancelled {
-            return Ok(Relaxed::Cancelled);
-        }
-        let stiff = descend(mol, force_field, algorithms, constraints, None, left, watch)
-            .ok_or_else(failed)?;
-        if stiff == Descent::Cancelled {
-            return Ok(Relaxed::Cancelled);
-        }
-        let reached = mol.energy(force_field.id()).ok_or_else(failed)?;
-        let settled = energy - reached < SETTLED_ENERGY;
-        if settled && let Some(minimum) = &minimum {
-            mol.set_coordinates(minimum);
-            return Ok(Relaxed::Done {
-                energy,
-                converged: true,
-            });
-        }
-        converged = settled && stiff == Descent::Settled;
-        energy = reached;
-        minimum = (stiff == Descent::Settled).then(|| coordinates(mol));
-        if settled || *left == 0 {
-            break;
-        }
-    }
-    Ok(Relaxed::Done { energy, converged })
-}
-
-/// OpenBabel's minimisers in the order [`descend`] tries them under `force_field`:
-///
-/// * L-BFGS first wherever the openbabel crate allows it (it refuses it with UFF, where it
-///   corrupts the heap): it reaches the minimum quickly, restraints as stiff as
-///   [`FORCE_FACTOR`] makes them included.
-/// * Under GAFF, conjugate gradients next. L-BFGS only tries points along the gradient, short
-///   ones at that, and GAFF's analytic gradient does not always match its energy: on taxol
-///   L-BFGS cannot take a single step from the built geometry. Conjugate gradients' line
-///   search looks for the lowest energy along its direction. They lead under UFF without
-///   restraints.
-/// * Steepest descent last, whose line search does the same along the plain gradient. It
-///   alone gets anywhere under UFF with restraints: conjugate gradients stall far above the
-///   restrained minimum there, even under the soft ones.
-fn algorithms(force_field: ForceField, restrained: bool) -> &'static [Algorithm] {
-    use Algorithm::{ConjugateGradients, Lbfgs, SteepestDescent};
-    match force_field {
-        ForceField::Mmff94 | ForceField::Mmff94s => &[Lbfgs, SteepestDescent],
-        ForceField::Gaff => &[Lbfgs, ConjugateGradients, SteepestDescent],
-        ForceField::Uff if restrained => &[SteepestDescent],
-        ForceField::Uff => &[ConjugateGradients, SteepestDescent],
-    }
-}
-
-/// How [`descend`] ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Descent {
-    /// No run could move the atoms: a fresh restart of every algorithm found nothing lower.
-    Settled,
-    /// The steps ran out with the atoms still moving (or too few were left for a run).
-    OutOfSteps,
-    /// The watched flag was raised.
-    Cancelled,
-}
-
-/// Run the first of `algorithms` again and again from where it stopped, holding `constraints`
-/// (at `force_factor` instead of [`FORCE_FACTOR`] if given), until no run moves the atoms or
-/// the `left` steps are spent (and deducted). A run that does not move them is answered with
-/// the next algorithm, for at most [`FALLBACK_STEPS`], before believing it; once one does, the
-/// first takes over again — unless it is stuck again at once, as L-BFGS is all along on taxol
-/// under GAFF, and then the next leads from there on. No run is longer than `watch`'s segment,
-/// and its flag is looked at before each. `None` if the force field cannot be set up.
-fn descend(
-    mol: &mut ObMol,
-    force_field: ForceField,
-    algorithms: &[Algorithm],
-    constraints: &[Constraint],
-    force_factor: Option<f64>,
-    left: &mut u32,
-    watch: &Watch,
-) -> Option<Descent> {
-    // A run had too few steps left to take any, so moved nothing for want of them.
-    let mut short = false;
-    let mut run_on = |mol: &mut ObMol, algorithm: Algorithm, most: u32, left: &mut u32| {
-        let restraints = (!constraints.is_empty()).then(|| {
-            let mut restraints = to_openbabel(constraints, mol.num_atoms());
-            if let Some(factor) = force_factor {
-                restraints.force_factor(factor);
-            }
-            restraints
-        });
-        let before = coordinates(mol);
-        let steps = most.min(watch.segment).min(*left);
-        let taken = run(mol, force_field, algorithm, steps, restraints)?;
-        if taken == 0 {
-            short = true;
-            return Some(false);
-        }
-        #[cfg(test)]
-        tests::record(
-            algorithm,
-            force_factor.is_some(),
-            taken - setup_steps(algorithm),
-        );
-        *left = left.saturating_sub(taken);
-        Some(rms_shift(&before, &coordinates(mol)) >= SETTLED_SHIFT)
-    };
-    let mut algorithms = algorithms;
-    // The first algorithm could not move the atoms on its last run.
-    let mut stuck = false;
-    'restart: while *left > 0 {
-        if watch.cancelled() {
-            return Some(Descent::Cancelled);
-        }
-        let Some((&first, rest)) = algorithms.split_first() else {
-            break;
+/// `drawing` embedded in 3D with `seed`. ETKDG starts from the distance matrix's
+/// eigenvectors, which fails on a long flexible structure (a C166 chain, say); then it starts
+/// from random coordinates, as RDKit advises for large molecules.
+fn embed(drawing: &Molecule, seed: i32) -> Option<Molecule> {
+    [false, true].into_iter().find_map(|use_random_coords| {
+        let params = EmbedParams {
+            random_seed: seed,
+            use_random_coords,
+            ..EmbedParams::etkdg_v3()
         };
-        if run_on(mol, first, u32::MAX, left)? {
-            stuck = false;
-            continue;
-        }
-        if stuck && !rest.is_empty() {
-            algorithms = rest;
-            stuck = false;
-            continue;
-        }
-        stuck = true;
-        for &algorithm in rest {
-            if *left == 0 {
-                break 'restart;
-            }
-            if watch.cancelled() {
-                return Some(Descent::Cancelled);
-            }
-            if run_on(mol, algorithm, FALLBACK_STEPS, left)? {
-                continue 'restart;
-            }
-        }
-        if !short {
-            return Some(Descent::Settled);
-        }
-        break;
-    }
-    Some(Descent::OutOfSteps)
+        calc::build_3d(drawing, &params, &mut optim::NoObserver).ok()
+    })
 }
-
-/// One OpenBabel run of `algorithm` from the molecule's coordinates, of at most `steps` steps
-/// — its own setup line search among them (see [`setup_steps`]) — holding `restraints` if
-/// given, OpenBabel's convergence test at [`ECONV`]. The steps it took, its setup included:
-/// none when `steps` leave it none past its setup, and it does not run. `None` when the force
-/// field cannot be set up.
-pub(crate) fn run(
-    mol: &mut ObMol,
-    force_field: ForceField,
-    algorithm: Algorithm,
-    steps: u32,
-    restraints: Option<Constraints>,
-) -> Option<u32> {
-    let setup = setup_steps(algorithm);
-    let steps = steps.saturating_sub(setup);
-    if steps == 0 {
-        return Some(0);
-    }
-    let mut config = Minimizer::new(force_field.id());
-    // A frame every step, so `steps_taken` counts the steps a run took: one stopped after two
-    // of them must not be charged for fifty, or a structure that OpenBabel stops every step or
-    // two runs through its budget doing almost nothing.
-    config
-        .algorithm(algorithm)
-        .max_steps(steps)
-        .energy_convergence(ECONV)
-        .steps_per_frame(1);
-    if let Some(restraints) = restraints {
-        config.constraints(restraints);
-    }
-    let done = mol.minimize(&config);
-    if done.stop_reason() == StopReason::Failed {
-        return None;
-    }
-    Some(done.steps_taken().max(1) + setup)
-}
-
-/// The steps a run under `algorithm` takes before those OpenBabel counts in `steps_taken`.
-/// Conjugate gradients set out with a line search along the gradient
-/// (`ConjugateGradientsInitialize` in forcefield.cpp), and the openbabel crate starts counting
-/// after it; steepest descent and L-BFGS only evaluate the starting point first. Left
-/// uncharged, that step made every run of conjugate gradients overrun the budget by one.
-fn setup_steps(algorithm: Algorithm) -> u32 {
-    match algorithm {
-        Algorithm::ConjugateGradients => 1,
-        Algorithm::SteepestDescent | Algorithm::Lbfgs => 0,
-    }
-}
-
-/// The energy change per step (force field units) under which OpenBabel's minimisers may stop
-/// (see [`relax`]). At its default, 1e-6, L-BFGS stops every few dozen steps near a minimum,
-/// and restarted without the curvature it had learnt it crawls along a shallow valley (a
-/// methyl turning in ibuprofen) through thousands of steps; much lower, it creeps on along the
-/// flat valleys of a long chain (C60H122) for its whole budget for a thousandth of a kcal/mol.
-const ECONV: f64 = 1.0e-8;
-
-/// The most steps a run of any but the first of [`algorithms`] may take: they have only to
-/// get the first moving again. Let run on, steepest descent creeps along a shallow valley for
-/// as long as it is allowed, never slowing enough for OpenBabel to stop it.
-const FALLBACK_STEPS: u32 = 100;
-
-/// The restraints' stiffness while the structure first relaxes around them (see [`relax`]).
-const SOFT_FORCE_FACTOR: f64 = 1.0e6;
-
-/// The fewest steps a restrained minimisation's soft stage leaves to the full stiffness (see
-/// [`relax`]), which has only what the soft stage left of the restraints to correct: a few
-/// steps for a distance on ibuprofen, a few hundred for a dihedral under UFF. It gets whatever
-/// steps the soft stage did not use besides.
-const STIFF_RESERVE: u32 = 100;
-
-/// How many times its `steps` a restrained Optimize may take: it is two minimisations, under
-/// the soft restraints and then the full ones. Under UFF only steepest descent gets anywhere
-/// with restraints (see [`algorithms`]), and from a badly strained start — every atom of
-/// ibuprofen kicked by up to 0.15 Å, a dozen times its relaxed energy — its soft stage alone
-/// sometimes needs more than 2500 steps; one in fifteen to twenty such Optimizes then ended
-/// over a kcal/mol above the restrained minimum. A relaxed scan's point, being restrained, has
-/// as many.
-pub(crate) const RESTRAINED_BUDGET: u32 = 2;
-
-/// At most this many soft-then-stiff passes for a restrained minimisation; one that lowers the
-/// energy by less than [`SETTLED_ENERGY`] (force field units) is the last.
-const RESTRAINED_PASSES: u32 = 4;
-const SETTLED_ENERGY: f64 = 1.0e-3;
-
-/// A run that moves the atoms less than this (RMS, Å) found nothing left to do.
-const SETTLED_SHIFT: f64 = 1.0e-6;
-
-fn coordinates(mol: &ObMol) -> Vec<f64> {
-    mol.atoms()
-        .flat_map(|a| {
-            let (x, y, z) = a.coords();
-            [x, y, z]
-        })
-        .collect()
-}
-
-/// Root-mean-square displacement of the atoms between two flat coordinate lists.
-fn rms_shift(a: &[f64], b: &[f64]) -> f64 {
-    let atoms = (a.len() / 3).max(1) as f64;
-    (a.iter().zip(b).map(|(p, q)| (p - q).powi(2)).sum::<f64>() / atoms).sqrt()
-}
-
-/// How many times a straightened model is kicked and re-minimised before the next attempt.
-const KICKS: u32 = 3;
 
 fn has_straightened_centre(model: &Model3d) -> bool {
     let coords: Vec<[f64; 3]> = model.atoms.iter().map(|a| a.pos).collect();
@@ -438,124 +254,136 @@ fn has_straightened_centre(model: &Model3d) -> bool {
     .is_empty()
 }
 
-/// Move every atom by up to 0.15 Å in each direction, deterministically (a fixed sequence
-/// per `round`), so a builder's symmetric saddle point can relax.
-fn jitter(mol: &mut ObMol, round: u32) {
-    let mut state = 0x9E37_79B9_7F4A_7C15u64 ^ u64::from(round).wrapping_mul(0xD1B5_4A32_D192_ED03);
-    let mut next = || {
-        // xorshift64*: plenty for a reproducible kick.
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        let x = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
-        (x >> 11) as f64 / (1u64 << 53) as f64 * 0.3 - 0.15
-    };
-    let flat: Vec<f64> = mol
-        .atoms()
-        .flat_map(|a| {
-            let (x, y, z) = a.coords();
-            [x, y, z]
-        })
-        .map(|c| c + next())
-        .collect();
-    mol.set_coordinates(&flat);
-}
-
 /// Minimise an existing 3D model (a molfile written by [`model`]) further, holding
-/// `constraints`, for at most `steps` steps — [`RESTRAINED_BUDGET`] times that with
-/// restraints (see [`relax`]).
+/// `constraints`, for at most `steps` iterations — [`RESTRAINED_BUDGET`] times that with
+/// restraints.
 pub fn optimize(
     molfile: &str,
     force_field: ForceField,
     steps: u32,
     constraints: &[Constraint],
 ) -> Result<Model3d, Error> {
-    let mut mol = ObMol::parse(molfile, "mol").map_err(|_| Error::Unreadable)?;
-    let mut left = if constraints.is_empty() {
+    let mol = read(molfile)?;
+    let steps = if constraints.is_empty() {
         steps
     } else {
         steps.saturating_mul(RESTRAINED_BUDGET)
     };
-    let energy = relax(&mut mol, force_field, &mut left, constraints)?;
-    model(&mol, force_field, energy)
+    let (coords, energy) = relax_all(&mol, &mol.coords, force_field, constraints, steps)?;
+    model(&mol, &coords, force_field, energy)
 }
 
-/// The single-point energy of a model's geometry.
+/// The single-point energy of a model's geometry (kcal/mol).
 pub fn energy(molfile: &str, force_field: ForceField) -> Result<f64, Error> {
-    let mol = ObMol::parse(molfile, "mol").map_err(|_| Error::Unreadable)?;
-    mol.energy(force_field.id())
+    let mol = read(molfile)?;
+    let field = field(&mol, force_field, &[])?;
+    Some(field.energy(&mol.flat_coords()))
         .filter(|e| e.is_finite())
         .ok_or(Error::ForceField(force_field))
 }
 
-/// How stiff restraints are. OpenBabel uses one factor for the whole set, and a torsion
-/// restraint is a cosine well only `0.002 × factor` deep that the force field's own torsion
-/// term outweighs at the default 50 000; at 1e8 a pinned dihedral holds, and distance and angle
-/// restraints (harmonic) still behave. Measured in chem_3d_builder_rs.
-const FORCE_FACTOR: f64 = 1.0e8;
-
-pub(super) fn to_openbabel(constraints: &[Constraint], atoms: u32) -> Constraints {
-    let mut ob = Constraints::new();
-    let n = atoms as usize;
-    // Indices are checked against the molecule, so the casts below cannot truncate.
-    let i = |a: usize| a as u32;
-    for c in constraints.iter().filter(|c| c.is_valid_for(n)) {
-        match *c {
-            Constraint::Fix(a) => ob.fix_atom(i(a)),
-            Constraint::Distance([a, b], length) => ob.distance(i(a), i(b), length),
-            Constraint::Angle([a, b, c], degrees) => ob.angle(i(a), i(b), i(c), degrees),
-            Constraint::Torsion([a, b, c, d], degrees) => {
-                ob.torsion(i(a), i(b), i(c), i(d), degrees)
-            }
-        };
-    }
-    ob.force_factor(FORCE_FACTOR);
-    ob
-}
-
 /// Write a model's molfile out in `format`.
 pub fn export(molfile: &str, format: Export3d) -> Result<String, Error> {
-    let mol = ObMol::parse(molfile, "mol").map_err(|_| Error::Unreadable)?;
-    mol.write(format.extension())
-        .map_err(|_| Error::ExportFailed(format))
+    let mol = read(molfile)?;
+    let format = match format {
+        Export3d::Mol => Format::Mol,
+        Export3d::Sdf => Format::Sdf,
+        Export3d::Xyz => Format::Xyz,
+        Export3d::Pdb => Format::Pdb,
+        Export3d::Mol2 => Format::Mol2,
+    };
+    Ok(io::write_str(&mol, None, format))
 }
 
-/// The model OpenBabel's molecule holds, or [`Error::GenerationFailed`] when its geometry or
-/// energy is unusable.
-fn model(mol: &ObMol, force_field: ForceField, energy: f64) -> Result<Model3d, Error> {
-    let atoms: Vec<Atom3d> = mol
-        .atoms()
-        .map(|a| {
-            let (x, y, z) = a.coords();
-            Atom3d {
-                element: openbabel::elements::symbol(a.atomic_number()),
-                pos: [x, y, z],
-            }
-        })
-        .collect();
-    let bonds: Vec<Bond3d> = mol
-        .bonds()
-        .map(|b| Bond3d {
-            begin: b.begin_atom_index() as usize,
-            end: b.end_atom_index() as usize,
-            order: u8::try_from(b.order()).unwrap_or(1),
-        })
-        .collect();
-    let model = Model3d {
-        atoms,
-        bonds,
-        force_field,
-        energy,
-        energy_unit: openbabel::forcefield_energy_unit(force_field.id())
-            .unwrap_or_else(|| "kcal/mol".to_owned()),
-        formula: mol.formula(),
-        molfile: mol.write("mol").map_err(|_| Error::GenerationFailed)?,
-    };
+/// The model of `mol` at `coords`, or [`Error::GenerationFailed`] when its geometry or energy
+/// is unusable.
+pub(crate) fn model(
+    mol: &Molecule,
+    coords: &[[f64; 3]],
+    force_field: ForceField,
+    energy: f64,
+) -> Result<Model3d, Error> {
+    let model = assemble(mol, coords, force_field, energy);
     if usable(&model) {
         Ok(model)
     } else {
         Err(Error::GenerationFailed)
     }
+}
+
+/// The model of `mol` at `coords`, as it is (a file opened keeps its geometry, usable or not).
+pub(crate) fn assemble(
+    mol: &Molecule,
+    coords: &[[f64; 3]],
+    force_field: ForceField,
+    energy: f64,
+) -> Model3d {
+    let mut placed = mol.clone();
+    placed.coords = coords.to_vec();
+    // Bond orders as the molfile has them: Kekulé, not aromatic.
+    let kekule = molecule_optimizer_rs::perception::kekulized_copy(&placed)
+        .unwrap_or_else(|_| placed.clone());
+    let atoms: Vec<Atom3d> = placed
+        .atoms()
+        .iter()
+        .zip(coords)
+        .map(|(a, &pos)| Atom3d {
+            element: a.symbol().to_owned(),
+            pos,
+        })
+        .collect();
+    let bonds: Vec<Bond3d> = kekule
+        .bonds()
+        .iter()
+        .map(|b| Bond3d {
+            begin: b.begin,
+            end: b.end,
+            order: match b.order {
+                BondOrder::Double => 2,
+                BondOrder::Triple => 3,
+                BondOrder::Aromatic => 5,
+                _ => 1,
+            },
+        })
+        .collect();
+    Model3d {
+        formula: formula(&atoms),
+        atoms,
+        bonds,
+        force_field,
+        energy,
+        energy_unit: ENERGY_UNIT.to_owned(),
+        molfile: io::write_molblock(&placed),
+    }
+}
+
+/// The unit every force field here reports its energy in.
+pub(crate) const ENERGY_UNIT: &str = "kcal/mol";
+
+/// The molecular formula in Hill order: C, then H, then the rest alphabetically (all
+/// alphabetically when there is no carbon).
+pub(crate) fn formula(atoms: &[Atom3d]) -> String {
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    for a in atoms {
+        *counts.entry(a.element.as_str()).or_default() += 1;
+    }
+    let mut out = String::new();
+    let mut put = |element: &str, n: usize| {
+        out.push_str(element);
+        if n > 1 {
+            out.push_str(&n.to_string());
+        }
+    };
+    if let Some(c) = counts.remove("C") {
+        put("C", c);
+        if let Some(h) = counts.remove("H") {
+            put("H", h);
+        }
+    }
+    for (element, n) in counts {
+        put(element, n);
+    }
+    out
 }
 
 /// Finite energy and coordinates, and no two atoms on top of each other.
@@ -577,105 +405,158 @@ fn usable(model: &Model3d) -> bool {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use crate::three_d::{OPTIMIZE_STEPS, edit, geom};
-    use std::cell::RefCell;
+    use crate::three_d::{GENERATE_STEPS, OPTIMIZE_STEPS, edit, geom};
 
-    /// One OpenBabel minimisation [`descend`] ran: its algorithm, whether under the soft
-    /// restraints, and the steps OpenBabel reported taking.
-    #[derive(Clone, Copy, Debug)]
-    struct Run {
-        algorithm: Algorithm,
-        soft: bool,
-        reported: u32,
+    /// The model of a 3D molfile under `force_field`, as the 3D view holds it.
+    pub(crate) fn model_from_molfile(molfile: &str, force_field: ForceField) -> Model3d {
+        let mol = read(molfile).expect("molfile");
+        let energy = field(&mol, force_field, &[])
+            .expect("force field")
+            .energy(&mol.flat_coords());
+        model(&mol, &mol.coords, force_field, energy).expect("model")
     }
 
-    impl Run {
-        /// The line searches the run really took. OpenBabel's conjugate gradients take one
-        /// more than they report: their initialisation (`ConjugateGradientsInitialize` in the
-        /// vendored forcefield.cpp) moves the atoms along the gradient first, and the shim
-        /// (`optimizer_run_trajectory`) only counts the steps after it. Steepest descent's and
-        /// L-BFGS's initialisations only evaluate the starting point.
-        fn line_searches(self) -> u32 {
-            match self.algorithm {
-                Algorithm::ConjugateGradients => self.reported + 1,
-                Algorithm::SteepestDescent | Algorithm::Lbfgs => self.reported,
+    /// A 2D molfile as a structure editor writes it (laid out by RDKit once), from
+    /// `tests/data/drawn/`.
+    fn drawing(name: &str) -> &'static str {
+        macro_rules! drawn {
+            ($($name:literal),*) => {
+                match name {
+                    $($name => include_str!(concat!("../../tests/data/drawn/", $name, ".mol")),)*
+                    _ => panic!("no drawing of {name}"),
+                }
+            };
+        }
+        drawn!(
+            "butane",
+            "benzene",
+            "acetic_acid",
+            "acetamide",
+            "acetate",
+            "methylammonium",
+            "ammonium_acetate",
+            "nitromethane",
+            "pyridinium",
+            "pentane",
+            "ethanol"
+        )
+    }
+
+    fn built(name: &str, force_field: ForceField) -> Model3d {
+        generate(drawing(name), force_field, GENERATE_STEPS)
+            .unwrap_or_else(|e| panic!("{name} under {force_field}: {e:?}"))
+    }
+
+    fn pentane() -> Model3d {
+        built("pentane", ForceField::Uff)
+    }
+
+    /// Structures with the groups a force field types specially: alkane, aromatic ring,
+    /// carboxylic acid, amide, carboxylate, ammonium, a salt (two ions), a nitro group, an
+    /// aromatic cation.
+    const TYPED: [(&str, &str); 9] = [
+        ("butane", "C4H10"),
+        ("benzene", "C6H6"),
+        ("acetic_acid", "C2H4O2"),
+        ("acetamide", "C2H5NO"),
+        ("acetate", "C2H3O2"),
+        ("methylammonium", "CH6N"),
+        ("ammonium_acetate", "C2H7NO2"),
+        ("nitromethane", "CH3NO2"),
+        ("pyridinium", "C5H6N"),
+    ];
+
+    /// Every force field sets up on every typed structure, adds the hydrogens it should, and
+    /// the molfile a model carries — what Optimize and the energy readout read — gives the
+    /// same energy at the same geometry.
+    #[test]
+    fn every_force_field_types_the_model_molfile_as_generated() {
+        for (name, formula) in TYPED {
+            for force_field in ForceField::ALL {
+                let model = built(name, force_field);
+                assert_eq!(model.formula, formula, "{name} under {force_field}");
+                assert_eq!(model.energy_unit, "kcal/mol");
+                let again = energy(&model.molfile, force_field)
+                    .unwrap_or_else(|e| panic!("{name} under {force_field}: {e:?}"));
+                // Only as close as the molfile's coordinates, written to 1e-4 Å.
+                assert!(
+                    (again - model.energy).abs() < 1e-2 * (1.0 + model.energy.abs()),
+                    "{name} under {force_field}: generated E {}, read back {again}",
+                    model.energy
+                );
             }
         }
     }
 
-    thread_local! {
-        static RUNS: RefCell<Vec<Run>> = const { RefCell::new(Vec::new()) };
-    }
-
-    pub(super) fn record(algorithm: Algorithm, soft: bool, reported: u32) {
-        RUNS.with(|runs| {
-            runs.borrow_mut().push(Run {
-                algorithm,
-                soft,
-                reported,
-            })
-        });
-    }
-
-    /// The runs [`descend`] made on this thread during `f`, and what `f` returned.
-    fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<Run>) {
-        RUNS.with(|runs| runs.borrow_mut().clear());
-        let out = f();
-        (out, RUNS.with(|runs| runs.take()))
-    }
-
-    /// The line searches `runs` took in all.
-    fn line_searches(runs: &[Run]) -> u32 {
-        runs.iter().map(|r| r.line_searches()).sum()
-    }
-
-    /// Pentane, built and relaxed by OpenBabel.
-    fn pentane() -> Model3d {
-        let mut mol = ObMol::parse("CCCCC", "smi").expect("parse");
-        mol.add_hydrogens();
-        assert!(mol.generate_3d());
-        let energy = mol.energy("UFF").expect("energy");
-        model(&mol, ForceField::Uff, energy).expect("model")
-    }
-
-    /// [`geom`]'s measurements and edits agree with OpenBabel's — the sign of the dihedral in
-    /// particular, since a restraint typed in the panel goes to OpenBabel as is.
+    /// [`geom`]'s measurements agree with the library's: a dihedral restrained to a value the
+    /// panel shows ends at that value as the panel measures it.
     #[test]
-    fn geometry_agrees_with_openbabel() {
-        let mut m = pentane();
-        let g = edit::graph(&m);
-        let chain = [0usize, 1, 2, 3];
-        let coords =
-            geom::set_dihedral(&edit::coords(&m), &g, chain, 75.0, None).expect("dihedral");
-        edit::set_coords(&mut m, &coords);
-        let mol = ObMol::parse(&m.molfile, "mol").expect("edited molfile");
-        let ours = geom::dihedral(coords[0], coords[1], coords[2], coords[3]);
-        let theirs = mol.torsion(0, 1, 2, 3);
-        assert!((ours - 75.0).abs() < 1e-3, "{ours}");
-        assert!(
-            (geom::wrap_degrees(ours - theirs)).abs() < 0.05,
-            "ours {ours}, OpenBabel {theirs}"
-        );
-        assert!((mol.angle(0, 1, 2) - geom::angle(coords[0], coords[1], coords[2])).abs() < 0.05);
-        // The edited molfile is what the energy is computed from.
-        assert!(energy(&m.molfile, ForceField::Uff).is_ok());
-    }
-
-    #[test]
-    fn a_restrained_distance_holds_through_optimisation() {
+    fn a_restrained_dihedral_ends_where_the_panel_measures_it() {
         let m = pentane();
-        let restrained = [Constraint::Distance([0, 4], 3.2), Constraint::Fix(2)];
+        for target in [75.0, -75.0, 180.0] {
+            let out = optimize(
+                &m.molfile,
+                ForceField::Uff,
+                OPTIMIZE_STEPS,
+                &[Constraint::Torsion([0, 1, 2, 3], target)],
+            )
+            .expect("optimise");
+            let c = edit::coords(&out);
+            let at = geom::dihedral(c[0], c[1], c[2], c[3]);
+            assert!(
+                geom::wrap_degrees(at - target).abs() < 0.25,
+                "target {target}, dihedral {at}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_restrained_distance_and_angle_hold_through_optimisation() {
+        let m = pentane();
+        let restrained = [
+            Constraint::Distance([0, 4], 3.2),
+            Constraint::Angle([1, 2, 3], 118.0),
+            Constraint::Fix(2),
+        ];
         let fixed = m.atoms[2].pos;
-        let out = optimize(&m.molfile, ForceField::Uff, 500, &restrained).expect("optimise");
-        assert!(
-            (out.distance(0, 4) - 3.2).abs() < 0.1,
-            "{}",
-            out.distance(0, 4)
-        );
-        assert!(
-            geom::distance(out.atoms[2].pos, fixed) < 1e-3,
-            "the fixed atom stayed"
-        );
+        for force_field in ForceField::ALL {
+            let out =
+                optimize(&m.molfile, force_field, OPTIMIZE_STEPS, &restrained).expect("optimise");
+            let c = edit::coords(&out);
+            assert!(
+                (out.distance(0, 4) - 3.2).abs() < 0.01,
+                "{force_field}: {}",
+                out.distance(0, 4)
+            );
+            let angle = geom::angle(c[1], c[2], c[3]);
+            assert!((angle - 118.0).abs() < 0.1, "{force_field}: {angle}");
+            assert!(
+                geom::distance(out.atoms[2].pos, fixed) < 1e-3,
+                "{force_field}: the fixed atom moved"
+            );
+        }
+    }
+
+    /// An angle and a dihedral restrained together both hold (OpenBabel dropped the dihedral).
+    #[test]
+    fn an_angle_and_a_dihedral_hold_together() {
+        let m = pentane();
+        let restrained = [
+            Constraint::Angle([0, 1, 2], 120.0),
+            Constraint::Torsion([1, 2, 3, 4], 65.0),
+        ];
+        for force_field in ForceField::ALL {
+            let out =
+                optimize(&m.molfile, force_field, OPTIMIZE_STEPS, &restrained).expect("optimise");
+            let c = edit::coords(&out);
+            let angle = geom::angle(c[0], c[1], c[2]);
+            let dihedral = geom::dihedral(c[1], c[2], c[3], c[4]);
+            assert!((angle - 120.0).abs() < 0.1, "{force_field}: angle {angle}");
+            assert!(
+                geom::wrap_degrees(dihedral - 65.0).abs() < 0.25,
+                "{force_field}: dihedral {dihedral}"
+            );
+        }
     }
 
     fn butane_drawing() -> chembuider_rs::Molecule {
@@ -689,73 +570,31 @@ pub(super) mod tests {
         drawing
     }
 
-    /// A chain drawn along one straight line used to come out of the builder about half the
-    /// time still straight (C–C–C at 180°, E ≈ 470 kJ/mol under UFF): a saddle point that
-    /// minimisation cannot leave, with undefined torsions — so a dihedral set and restrained
-    /// there drifted anywhere on optimisation. Generation must never hand one back.
+    /// A chain drawn along one straight line gives a relaxed chain, never one with an sp³
+    /// centre left straight (a saddle point with undefined torsions).
     #[test]
     fn a_straight_drawing_gives_a_relaxed_chain() {
-        let drawing = butane_drawing();
-        for _ in 0..12 {
-            let m = crate::three_d::generate(
-                &drawing,
-                &chembuider_rs::Config::default(),
-                ForceField::Uff,
-            )
-            .expect("generate");
-            assert!(
-                !has_straightened_centre(&m),
-                "a straight sp3 centre was kept"
-            );
-            let c = edit::coords(&m);
-            let bend = geom::angle(c[0], c[1], c[2]);
-            assert!((100.0..125.0).contains(&bend), "C-C-C {bend}");
-            // Relaxed butane is ~3 kJ/mol (UFF); the straight saddle ~470, half-way off it ~300.
-            assert!(m.energy < 30.0, "unrelaxed: E {}", m.energy);
-        }
+        let m = crate::three_d::generate(
+            &butane_drawing(),
+            &chembuider_rs::Config::default(),
+            ForceField::Uff,
+        )
+        .expect("generate");
+        assert!(
+            !has_straightened_centre(&m),
+            "a straight sp3 centre was kept"
+        );
+        let c = edit::coords(&m);
+        let bend = geom::angle(c[0], c[1], c[2]);
+        assert!((100.0..125.0).contains(&bend), "C-C-C {bend}");
+        // Relaxed butane is under 1 kcal/mol (UFF).
+        assert!(m.energy < 5.0, "unrelaxed: E {}", m.energy);
     }
 
-    /// Structures with the groups a force field types specially: alkane, aromatic ring,
-    /// carboxylic acid, amide, carboxylate, ammonium, a salt (two ions), a nitro group, an
-    /// aromatic cation.
-    const TYPED: [(&str, &str); 9] = [
-        ("butane", "CCCC"),
-        ("benzene", "c1ccccc1"),
-        ("acetic acid", "CC(=O)O"),
-        ("acetamide", "CC(=O)N"),
-        ("acetate", "CC(=O)[O-]"),
-        ("methylammonium", "C[NH3+]"),
-        ("ammonium acetate", "[NH4+].CC(=O)[O-]"),
-        ("nitromethane", "C[N+](=O)[O-]"),
-        ("pyridinium", "c1cc[nH+]cc1"),
-    ];
-
-    /// The 2D molfile the app hands [`generate`] for `smiles` (OpenBabel's layout of it).
-    fn drawing(smiles: &str) -> String {
-        let mut mol = ObMol::parse(smiles, "smi").expect("smiles");
-        assert!(mol.generate_2d());
-        mol.write("mol").expect("molfile")
-    }
-
-    fn built(smiles: &str, force_field: ForceField) -> Model3d {
-        generate(&drawing(smiles), force_field, super::super::GENERATE_STEPS)
-            .unwrap_or_else(|e| panic!("{smiles} under {force_field}: {e:?}"))
-    }
-
-    /// The model of a 3D molfile under `force_field`, as the 3D view holds it.
-    pub(crate) fn model_from_molfile(molfile: &str, force_field: ForceField) -> Model3d {
-        let mol = ObMol::parse(molfile, "mol").expect("molfile");
-        let energy = mol.energy(force_field.id()).expect("energy");
-        super::model(&mol, force_field, energy).expect("model")
-    }
-
-    /// Where the Optimize tests start: acetamide, sodium acetate and ibuprofen, each as
-    /// [`generate`] built it under each force field once. The builder places the atoms
-    /// differently every time, and from some of its builds Optimize ends differently, so the
-    /// tests start from these, and where a build failed them, from that build (see
-    /// `optimize_reaches_the_minimum` and `optimize_moves_the_atoms_with_and_without_restraints`).
-    const OPTIMIZE_STARTS: [(&str, ForceField, &str); 12] = {
-        use ForceField::{Gaff, Mmff94, Mmff94s, Uff};
+    /// Where the Optimize tests start: acetamide, sodium acetate and ibuprofen as OpenBabel's
+    /// builder once placed them.
+    const OPTIMIZE_STARTS: [(&str, ForceField, &str); 9] = {
+        use ForceField::{Mmff94, Mmff94s, Uff};
         macro_rules! start {
             ($name:literal, $force_field:expr, $file:literal) => {
                 (
@@ -769,633 +608,152 @@ pub(super) mod tests {
             start!("acetamide", Mmff94, "acetamide_mmff94.mol"),
             start!("acetamide", Mmff94s, "acetamide_mmff94s.mol"),
             start!("acetamide", Uff, "acetamide_uff.mol"),
-            start!("acetamide", Gaff, "acetamide_gaff.mol"),
             start!("sodium acetate", Mmff94, "sodium_acetate_mmff94.mol"),
             start!("sodium acetate", Mmff94s, "sodium_acetate_mmff94s.mol"),
             start!("sodium acetate", Uff, "sodium_acetate_uff.mol"),
-            start!("sodium acetate", Gaff, "sodium_acetate_gaff.mol"),
             start!("ibuprofen", Mmff94, "ibuprofen_mmff94.mol"),
             start!("ibuprofen", Mmff94s, "ibuprofen_mmff94s.mol"),
             start!("ibuprofen", Uff, "ibuprofen_uff.mol"),
-            start!("ibuprofen", Gaff, "ibuprofen_gaff.mol"),
         ]
     };
 
-    /// `name` as built under `force_field` in [`OPTIMIZE_STARTS`].
-    fn optimize_start(name: &str, force_field: ForceField) -> Model3d {
-        let (_, _, molfile) = OPTIMIZE_STARTS
-            .into_iter()
-            .find(|&(n, f, _)| n == name && f == force_field)
-            .unwrap_or_else(|| panic!("no start for {name} under {force_field}"));
-        model_from_molfile(molfile, force_field)
-    }
-
-    /// Element, formal charge, aromaticity, OpenBabel atom type.
-    type TypedAtom = (u32, i32, bool, String);
-
-    /// What a force field's typing reads off a molecule: per atom its element, charge,
-    /// aromaticity and OpenBabel type; the bonds with their orders, in a fixed order.
-    fn typing(mol: &ObMol) -> (Vec<TypedAtom>, Vec<(u32, u32, u32)>) {
-        let atoms = mol
-            .atoms()
-            .map(|a| {
-                (
-                    a.atomic_number(),
-                    a.formal_charge(),
-                    a.is_aromatic(),
-                    a.type_name(),
-                )
-            })
-            .collect();
-        let mut bonds: Vec<_> = mol
-            .bonds()
-            .map(|b| {
-                let (i, j) = (b.begin_atom_index(), b.end_atom_index());
-                (i.min(j), i.max(j), b.order())
-            })
-            .collect();
-        bonds.sort_unstable();
-        (atoms, bonds)
-    }
-
-    /// Root-mean-square of the model's force field's gradient over all coordinates (energy unit
-    /// per Å) at the model's own coordinates, by central differences of OpenBabel's own energy.
-    /// Not at its molfile's: rounded to 1e-4 Å, under UFF's stiff bonds the rounding alone
-    /// makes an RMS gradient of 0.2–0.35 kJ/mol/Å at a minimum where the model's is 0.002.
+    /// Root-mean-square of the force field's gradient (kcal/mol/Å) at the model's own
+    /// coordinates, by central differences of the energy.
     fn rms_gradient(model: &Model3d) -> f64 {
-        let force_field = model.force_field;
-        let mut mol = ObMol::parse(&model.molfile, "mol").expect("molfile");
+        let mol = read(&model.molfile).expect("molfile");
+        let field = field(&mol, model.force_field, &[]).expect("force field");
         let x0: Vec<f64> = model.atoms.iter().flat_map(|a| a.pos).collect();
         let h = 1e-5;
         let mut sum = 0.0;
         for i in 0..x0.len() {
             let mut x = x0.clone();
             x[i] = x0[i] + h;
-            mol.set_coordinates(&x);
-            let up = mol.energy(force_field.id()).expect("energy");
+            let up = field.energy(&x);
             x[i] = x0[i] - h;
-            mol.set_coordinates(&x);
-            let down = mol.energy(force_field.id()).expect("energy");
+            let down = field.energy(&x);
             sum += ((up - down) / (2.0 * h)).powi(2);
         }
         (sum / x0.len() as f64).sqrt()
     }
 
-    /// Root-mean-square displacement between two models of the same molecule (Å).
-    fn shift(a: &Model3d, b: &Model3d) -> f64 {
-        let n = a.atoms.len();
-        ((0..n)
-            .map(|i| geom::distance(a.atoms[i].pos, b.atoms[i].pos).powi(2))
-            .sum::<f64>()
-            / n as f64)
-            .sqrt()
-    }
-
-    /// `model` with every atom kicked off its relaxed position (see [`jitter`]).
-    fn kicked(model: &Model3d, force_field: ForceField) -> Model3d {
-        let mut mol = ObMol::parse(&model.molfile, "mol").expect("molfile");
-        jitter(&mut mol, 7);
-        let energy = mol.energy(force_field.id()).expect("energy");
-        super::model(&mol, force_field, energy).expect("model")
-    }
-
-    /// How far apart two energies of one geometry may be (times 1 + |E|) when one is computed
-    /// from the molfile, whose coordinates are rounded to 1e-4 Å: the residual gradient of a
-    /// relaxed model times that rounding. A wrong atom type or charge moves it far more.
-    const ROUNDING: f64 = 1e-3;
-
-    /// Every force field sets up on every typed structure, and the molfile a model carries —
-    /// what Optimize and the energy readout parse — gives the force field the same molecule
-    /// generation typed: same atoms, charges, aromaticity, atom types and bond orders, so
-    /// the same energy at the same geometry.
-    #[test]
-    fn every_force_field_types_the_model_molfile_as_generated() {
-        for (name, smiles) in TYPED {
-            let mut fresh = ObMol::parse(&drawing(smiles), "mol").expect("drawing");
-            fresh.add_hydrogens();
-            for force_field in ForceField::ALL {
-                let model = built(smiles, force_field);
-                let read = ObMol::parse(&model.molfile, "mol").expect("model molfile");
-                assert_eq!(
-                    typing(&read),
-                    typing(&fresh),
-                    "{name}: the molfile changed it"
-                );
-                let again = energy(&model.molfile, force_field)
-                    .unwrap_or_else(|e| panic!("{name} under {force_field}: {e:?}"));
-                // Only as close as the molfile's coordinates, written to 1e-4 Å.
-                assert!(
-                    (again - model.energy).abs() < ROUNDING * (1.0 + model.energy.abs()),
-                    "{name} under {force_field}: generated E {}, read back {again}",
-                    model.energy
-                );
-            }
-        }
-    }
-
-    /// Minimise `molfile` without restraints from a budget of `budget` steps, as Optimize does
-    /// (see [`relax_watched`]): the energy reached, whether at a minimum, and the steps spent.
-    fn minimised(molfile: &str, force_field: ForceField, budget: u32) -> (f64, bool, u32) {
-        let mut mol = ObMol::parse(molfile, "mol").expect("molfile");
-        let mut left = budget;
-        match relax_watched(&mut mol, force_field, &mut left, &[], &Watch::NONE) {
-            Ok(Relaxed::Done { energy, converged }) => (energy, converged, budget - left),
-            other => panic!("under {force_field}: {other:?}"),
-        }
-    }
-
-    /// How Optimize ends from one of [`OPTIMIZE_STARTS`].
-    #[derive(Clone, Copy, Debug, PartialEq)]
-    enum Ends {
-        /// At a minimum, within its steps.
-        AtAMinimum,
-        /// Within its steps, at a stationary point a minimiser cannot tell from a minimum.
-        OnAPlateau,
-        /// With its steps spent, still on its way down.
-        OutOfSteps,
-    }
-
-    /// How Optimize ends from `name` as built under `force_field` in [`OPTIMIZE_STARTS`].
-    ///
-    /// * Sodium acetate under GAFF, from this build: the sodium sits where the ion pair's
-    ///   energy is flat (an RMS gradient of 0.001), and every minimiser stops there — L-BFGS
-    ///   given 20 000 steps at OpenBabel's own criterion too, and small kicks of 1e-5 to 1e-2 Å
-    ///   do not get it off. The molfile's rounding (1e-4 Å) happens to: a second Optimize goes
-    ///   on 0.13 lower, to a minimum 1.2 Å away.
-    /// * Sodium acetate under UFF, from this build: OpenBabel's UFF has no electrostatics, so
-    ///   the sodium barely feels the acetate and drifts over a plateau, conjugate gradients
-    ///   stopping every two steps. It takes some 21 000 steps to the minimum; steepest
-    ///   descent, run straight, is no lower after Optimize's 2500. There the budget ends it.
-    fn ending(name: &str, force_field: ForceField) -> Ends {
-        match (name, force_field) {
-            ("sodium acetate", ForceField::Gaff) => Ends::OnAPlateau,
-            ("sodium acetate", ForceField::Uff) => Ends::OutOfSteps,
-            _ => Ends::AtAMinimum,
-        }
-    }
-
-    /// Optimize must finish the minimisation. OpenBabel's own minimisers stop after a handful
-    /// of their 2500 steps: they stop once the energy changes by less than 1e-6 in one step
-    /// and the *smallest* per-atom gradient is below 0.1 (`maxgrad` keeps a minimum), which
-    /// holds the first time a line search makes no progress — leaving ibuprofen 0.5 kJ/mol
-    /// above its minimum under GAFF and every further Optimize creeping down a little more.
-    /// Where the minimum is out of its steps' reach, Optimize spends them all on the way down
-    /// (see [`ending`]).
+    /// Optimize finishes the minimisation: it ends at a minimum (a small gradient), within its
+    /// steps, lower than it started; a second Optimize hardly moves it; and the energy reported
+    /// is the energy of the geometry handed back.
     #[test]
     fn optimize_reaches_the_minimum() {
-        // Not ammonium acetate: OpenBabel's UFF has no electrostatics, so its two ions barely
-        // attract and sit on a plateau no minimiser settles on reliably.
         for (name, force_field, molfile) in OPTIMIZE_STARTS {
+            let what = format!("{name} under {force_field}");
             let model = model_from_molfile(molfile, force_field);
             let once = optimize(&model.molfile, force_field, OPTIMIZE_STEPS, &[]).unwrap();
             let twice = optimize(&once.molfile, force_field, OPTIMIZE_STEPS, &[]).unwrap();
-            let what = format!("{name} under {force_field}");
-            let tolerance = |e: f64| ROUNDING * (1.0 + e.abs());
             assert!(
-                once.energy <= model.energy + tolerance(model.energy),
+                once.energy <= model.energy + 1e-6,
                 "{what}: E rose {} -> {}",
                 model.energy,
                 once.energy
             );
-            // The energy reported is the energy of the geometry handed back.
             let at = energy(&once.molfile, force_field).unwrap();
-            assert!((at - once.energy).abs() < tolerance(at), "{what}");
-            // An independent minimiser, given far more steps from the same start: OpenBabel's
-            // L-BFGS, or its steepest descent under UFF (which refuses L-BFGS).
-            let algorithm = match force_field {
-                ForceField::Uff => Algorithm::SteepestDescent,
-                _ => Algorithm::Lbfgs,
+            assert!(
+                (at - once.energy).abs() < 1e-2,
+                "{what}: {at} vs {}",
+                once.energy
+            );
+            let mol = read(&model.molfile).unwrap();
+            let Relaxed::Done { converged, .. } =
+                relax(&mol, &mol.coords, force_field, &[], OPTIMIZE_STEPS, None).unwrap()
+            else {
+                unreachable!()
             };
-            let mut mol = ObMol::parse(&model.molfile, "mol").unwrap();
-            let mut config = Minimizer::new(force_field.id());
-            config.algorithm(algorithm).max_steps(20_000);
-            mol.optimize_geometry_with(&config).unwrap();
-            let best = mol.energy(force_field.id()).unwrap();
-            let (_, converged, spent) = minimised(&model.molfile, force_field, OPTIMIZE_STEPS);
+            assert!(
+                converged,
+                "{what}: not at a minimum after {OPTIMIZE_STEPS} steps"
+            );
             let g = rms_gradient(&once);
-            match ending(name, force_field) {
-                Ends::AtAMinimum => {
-                    assert!(
-                        converged && spent < OPTIMIZE_STEPS,
-                        "{what}: not at a minimum after {spent} steps"
-                    );
-                    assert!(
-                        (once.energy - twice.energy).abs() < 0.02,
-                        "{what}: a second Optimize still moved E {} -> {}",
-                        once.energy,
-                        twice.energy
-                    );
-                    assert!(g < 0.3, "{what}: RMS gradient {g} after Optimize");
-                    // The independent minimiser gets no lower.
-                    assert!(
-                        once.energy < best + 0.01,
-                        "{what}: Optimize stopped at {}, {algorithm:?} reaches {best}",
-                        once.energy
-                    );
-                }
-                Ends::OnAPlateau => {
-                    assert!(
-                        converged && spent < OPTIMIZE_STEPS,
-                        "{what}: not settled after {spent} steps"
-                    );
-                    assert!(g < 0.01, "{what}: RMS gradient {g}, not a stationary point");
-                    assert!(
-                        once.energy < best + 0.01,
-                        "{what}: Optimize stopped at {}, {algorithm:?} reaches {best}",
-                        once.energy
-                    );
-                    assert!(
-                        twice.energy <= once.energy + tolerance(once.energy),
-                        "{what}: a second Optimize rose {} -> {}",
-                        once.energy,
-                        twice.energy
-                    );
-                }
-                Ends::OutOfSteps => {
-                    assert!(
-                        !converged && spent == OPTIMIZE_STEPS,
-                        "{what}: expected the steps to run out, converged {converged} in {spent}"
-                    );
-                    assert!(
-                        twice.energy < once.energy,
-                        "{what}: a second Optimize did not go on down {} -> {}",
-                        once.energy,
-                        twice.energy
-                    );
-                    // Given the steps it needs, the same minimisation stops at the minimum, as
-                    // low as the independent minimiser gets.
-                    let budget = 20 * OPTIMIZE_STEPS;
-                    let (reached, converged, spent) =
-                        minimised(&model.molfile, force_field, budget);
-                    assert!(
-                        converged && spent < budget,
-                        "{what}: not at a minimum after {spent} steps"
-                    );
-                    assert!(
-                        reached < best + 0.01,
-                        "{what}: {budget} steps reach {reached}, {algorithm:?} {best}"
-                    );
-                }
-            }
-        }
-    }
-
-    /// From a disturbed geometry, Optimize moves the atoms back down to a minimum, with and
-    /// without restraints; a restrained one holds its restraints and is settled (another
-    /// Optimize under them changes little). With restraints as stiff as [`FORCE_FACTOR`]
-    /// makes them, OpenBabel's conjugate gradients used to stop within a step or two — or
-    /// crawl through all of them — far above the restrained minimum.
-    #[test]
-    fn optimize_moves_the_atoms_with_and_without_restraints() {
-        // Ibuprofen: 0 and 1 are a methyl and its CH, 3 the CH2 and 4 the ring carbon on it.
-        // Not an angle: OpenBabel's angle restraint (forcefield.cpp, `GetConstraintEnergy`)
-        // takes its energy in degrees but its gradient per radian, so its pull is 57 times too
-        // weak for its energy and every minimiser stops dead a few steps in, the rest of the
-        // structure unrelaxed. That is OpenBabel's to fix.
-        let restraint_sets = [
-            vec![],
-            vec![Constraint::Fix(4)],
-            vec![Constraint::Distance([0, 4], 3.0)],
-            vec![Constraint::Torsion([0, 1, 3, 4], 60.0)],
-        ];
-        for force_field in ForceField::ALL {
-            let start = kicked(&optimize_start("ibuprofen", force_field), force_field);
-            for restraints in &restraint_sets {
-                let what = format!("{force_field} holding {restraints:?}");
-                let once = optimize(&start.molfile, force_field, OPTIMIZE_STEPS, restraints)
-                    .unwrap_or_else(|e| panic!("{what}: {e:?}"));
-                assert!(
-                    shift(&start, &once) > 0.05,
-                    "{what}: the atoms barely moved"
-                );
-                assert!(
-                    once.energy < start.energy - 10.0,
-                    "{what}: E {} -> {}",
-                    start.energy,
-                    once.energy
-                );
-                let c = edit::coords(&once);
-                for r in restraints {
-                    match *r {
-                        Constraint::Fix(a) => assert!(
-                            geom::distance(c[a], start.atoms[a].pos) < 1e-3,
-                            "{what}: the fixed atom moved"
-                        ),
-                        Constraint::Distance([a, b], d) => {
-                            let at = geom::distance(c[a], c[b]);
-                            assert!((at - d).abs() < 0.01, "{what}: distance {at}");
-                        }
-                        Constraint::Torsion([a, b, cc, d], t) => {
-                            let at = geom::dihedral(c[a], c[b], c[cc], c[d]);
-                            assert!(
-                                geom::wrap_degrees(at - t).abs() < 1.0,
-                                "{what}: dihedral {at}"
-                            );
-                        }
-                        Constraint::Angle(..) => unreachable!(),
-                    }
-                }
-                let twice =
-                    optimize(&once.molfile, force_field, OPTIMIZE_STEPS, restraints).unwrap();
-                // Restrained, a first Optimize ends up to ~0.1 above the restrained minimum (and
-                // a rerun may still turn a floppy group a little): at full stiffness OpenBabel's
-                // minimisers can hardly step (see `relax`). Before, it ended tens to hundreds
-                // above it.
-                let settled = if restraints.is_empty() { 0.02 } else { 0.2 };
-                assert!(
-                    (once.energy - twice.energy).abs() < settled,
-                    "{what}: not settled, a second Optimize moved E {} -> {}",
-                    once.energy,
-                    twice.energy
-                );
-                if restraints.is_empty() && consistent_gradient(force_field) {
-                    assert!(
-                        shift(&once, &twice) < 0.01,
-                        "{what}: a second Optimize moved the atoms"
-                    );
-                } else if restraints.is_empty() {
-                    // Settled as far as OpenBabel's gradient goes (see `consistent_gradient`).
-                    let g = rms_gradient(&once);
-                    assert!(g < 0.1, "{what}: RMS gradient {g} after Optimize");
-                }
-            }
-        }
-    }
-
-    /// Whether OpenBabel's analytic gradient under `force_field` agrees with its energy closely
-    /// enough to place a minimum within 0.01 Å. Under MMFF94 and MMFF94s it does not, which is
-    /// OpenBabel's side, fixed in OPE-28: where every minimiser stops on ibuprofen — L-BFGS and
-    /// steepest descent cannot take a step from there, at an energy criterion of 1e-14 too —
-    /// the energy's own gradient is still 0.04 kcal/mol/Å RMS, and stepping down it lowers the
-    /// energy by 1e-4. So from the 1e-4 Å the molfile's rounding moves the atoms, a second
-    /// Optimize may slide them along a flat mode: 0.03 Å for 0.003 kcal/mol from the MMFF94
-    /// start, 0.015 Å from the MMFF94s one.
-    fn consistent_gradient(force_field: ForceField) -> bool {
-        !matches!(force_field, ForceField::Mmff94 | ForceField::Mmff94s)
-    }
-
-    /// A restrained minimisation relaxes under soft restraints first and then holds them at
-    /// full stiffness (see [`relax`]). The soft stage used to be given every step left, so on
-    /// a strained start it spent them all, the full stiffness never ran, and the model came
-    /// back held a hundred times too weakly: the dihedral ended up to a degree off its target
-    /// instead of within a tenth of one.
-    #[test]
-    fn a_restraint_is_held_at_full_stiffness_however_few_the_steps() {
-        let torsion = [0, 1, 3, 4];
-        let target = 60.0;
-        for force_field in ForceField::ALL {
-            let start = kicked(&optimize_start("ibuprofen", force_field), force_field);
-            for steps in [25, 50, 100] {
-                let restraint = [Constraint::Torsion(torsion, target)];
-                let out = optimize(&start.molfile, force_field, steps, &restraint)
-                    .unwrap_or_else(|e| panic!("{force_field}: {e:?}"));
-                let c = edit::coords(&out);
-                let [a, b, cc, d] = torsion;
-                let at = geom::dihedral(c[a], c[b], c[cc], c[d]);
-                assert!(
-                    geom::wrap_degrees(at - target).abs() < 0.25,
-                    "{force_field} in {steps} steps: dihedral {at}"
-                );
-            }
-        }
-    }
-
-    /// Minimise `molfile` under `force_field` holding `constraints` from a budget of `budget`
-    /// steps (see [`relax`]), and check what that spent: the steps charged to the budget are
-    /// the line searches OpenBabel really took (see [`Run::line_searches`]), and no more than
-    /// the budget. The energy reached, the molfile reached and the steps spent.
-    fn relaxed_within(
-        molfile: &str,
-        force_field: ForceField,
-        budget: u32,
-        constraints: &[Constraint],
-        what: &str,
-    ) -> (f64, String, u32) {
-        let mut mol = ObMol::parse(molfile, "mol").expect("molfile");
-        let mut left = budget;
-        let (energy, runs) = recording(|| relax(&mut mol, force_field, &mut left, constraints));
-        let energy = energy.unwrap_or_else(|e| panic!("{what}: {e:?}"));
-        let charged = budget - left;
-        let taken = line_searches(&runs);
-        assert_eq!(
-            taken, charged,
-            "{what}: took {taken} steps, charged {charged}"
-        );
-        assert!(taken <= budget, "{what}: took {taken} steps of {budget}");
-        (energy, mol.write("mol").expect("molfile"), taken)
-    }
-
-    /// Every step OpenBabel takes is charged to the budget, and no minimisation takes more
-    /// steps than it is given. Conjugate gradients take one more step than OpenBabel reports
-    /// (see [`Run::line_searches`]) and used to be charged only those reported, so every run
-    /// of them overran what was left by one: a run asked for the last step took two.
-    #[test]
-    fn a_minimisation_takes_no_more_steps_than_its_budget() {
-        let restraint_sets = [vec![], vec![Constraint::Torsion([0, 1, 3, 4], 60.0)]];
-        for force_field in ForceField::ALL {
-            let start = kicked(&optimize_start("ibuprofen", force_field), force_field);
-            for restraints in &restraint_sets {
-                for budget in [1, 2, 3, 10, 100] {
-                    let what = format!("{force_field} holding {restraints:?} in {budget} steps");
-                    relaxed_within(&start.molfile, force_field, budget, restraints, &what);
-                }
-            }
-        }
-    }
-
-    /// A restrained minimisation's soft stage always leaves the full stiffness a step at least
-    /// (see [`relax`]): with a single step left it used to take it itself, and the model came
-    /// back held only by the soft restraints.
-    #[test]
-    fn a_restrained_minimisation_ends_at_full_stiffness() {
-        let restraint = [Constraint::Torsion([0, 1, 3, 4], 60.0)];
-        for force_field in ForceField::ALL {
-            let start = kicked(&optimize_start("ibuprofen", force_field), force_field);
-            for budget in [1, 2, 3, 5] {
-                let mut mol = ObMol::parse(&start.molfile, "mol").expect("molfile");
-                let mut left = budget;
-                let (energy, runs) =
-                    recording(|| relax(&mut mol, force_field, &mut left, &restraint));
-                energy.unwrap_or_else(|e| panic!("{force_field}: {e:?}"));
-                // A pass that ends with a soft run leaves no steps for another, so this is the
-                // full stiffness following every soft stage.
-                assert!(
-                    runs.last().is_some_and(|r| !r.soft),
-                    "{force_field} in {budget} steps: ended under the soft restraints, {runs:?}"
-                );
-            }
-        }
-    }
-
-    /// A restrained minimisation's first pass ends at a minimum and the next, to see whether a
-    /// lower one is near, leaves it under the soft restraints. However few steps that pass has
-    /// to get back, the minimum before it is what comes back, and it is one: the pass used to
-    /// be taken for the result, so a butane eclipsed under UFF ended a little above the minimum
-    /// it had reached, called unconverged — about one relaxed scan in forty, wherever the steps
-    /// happened to run out. Given four times the steps, no such pass found anything lower.
-    #[test]
-    fn a_pass_out_of_steps_keeps_the_minimum_before_it() {
-        let force_field = ForceField::Uff;
-        let torsion = [0, 1, 2, 3];
-        let target = -120.0;
-        let start = model_from_molfile(
-            include_str!("../../tests/data/optimize/butane_uff.mol"),
-            force_field,
-        );
-        let graph = edit::graph(&start);
-        let turned = geom::set_dihedral(&edit::coords(&start), &graph, torsion, target, None)
-            .expect("turn the dihedral");
-        let flat: Vec<f64> = turned.iter().flatten().copied().collect();
-        let restraint = [Constraint::Torsion(torsion, target)];
-        let cancel = AtomicBool::new(false);
-        // In segments as a relaxed scan's.
-        let watch = Watch {
-            cancel: &cancel,
-            segment: 50,
-        };
-        let relaxed_in = |budget: u32| {
-            let mut mol = ObMol::parse(&start.molfile, "mol").expect("molfile");
-            assert!(mol.set_coordinates(&flat));
-            let mut left = budget;
-            let (relaxed, runs) =
-                recording(|| relax_watched(&mut mol, force_field, &mut left, &restraint, &watch));
-            let Ok(Relaxed::Done { energy, converged }) = relaxed else {
-                panic!("in {budget} steps: {relaxed:?}");
-            };
-            let at = coordinates(&mol);
-            let point = |a: usize| [at[3 * a], at[3 * a + 1], at[3 * a + 2]];
-            let [a, b, c, d] = torsion.map(point);
-            (energy, converged, geom::dihedral(a, b, c, d), runs)
-        };
-
-        let budget = OPTIMIZE_STEPS * RESTRAINED_BUDGET;
-        let (minimum, converged, _, runs) = relaxed_in(budget);
-        assert!(converged, "in {budget} steps, E {minimum}");
-        // The first pass: up to where the soft restraints come back after the full ones.
-        let stiff = runs.iter().position(|r| !r.soft).expect("a stiff stage");
-        let next = runs[stiff..].iter().position(|r| r.soft);
-        let first = line_searches(&runs[..stiff + next.expect("a second pass")]);
-        // The first pass is the same in all of these: the soft stage's share of the steps,
-        // all but 100, is as long as that pass.
-        for second in [100, 150, 200, 300, 500, 1000] {
-            let steps = first + second;
-            let (energy, converged, at, _) = relaxed_in(steps);
-            assert!(converged, "{second} steps after the first pass: E {energy}");
+            assert!(g < 0.1, "{what}: RMS gradient {g} after Optimize");
             assert!(
-                (energy - minimum).abs() < 1e-3,
-                "{second} steps after the first pass: E {energy}, the minimum {minimum}"
-            );
-            assert!(
-                geom::wrap_degrees(at - target).abs() < 0.25,
-                "{second} steps after the first pass: dihedral {at}"
+                (once.energy - twice.energy).abs() < 0.02,
+                "{what}: a second Optimize still moved E {} -> {}",
+                once.energy,
+                twice.energy
             );
         }
     }
 
-    /// Paclitaxel (taxol), C47H51NO14: 113 atoms with its hydrogens, a crowded polycyclic core
-    /// and floppy side chains, as OpenBabel's builder (`generate_3d_with("med")` on its 2D
-    /// layout) placed it once. The builder places it differently every time, and how long a
-    /// minimisation takes with it, so the tests below start from this one: of eight builds,
-    /// the one MMFF94 took longest to relax (some 1200 steps; the others took 500 to 1000).
+    #[test]
+    fn a_raised_flag_cancels_a_relaxation() {
+        let m = pentane();
+        let mol = read(&m.molfile).unwrap();
+        let cancel = AtomicBool::new(true);
+        let kicked: Vec<[f64; 3]> = mol
+            .coords
+            .iter()
+            .enumerate()
+            .map(|(i, p)| [p[0] + 0.1 * (i % 3) as f64, p[1], p[2]])
+            .collect();
+        let relaxed = relax(&mol, &kicked, ForceField::Uff, &[], 100, Some(&cancel)).unwrap();
+        assert_eq!(relaxed, Relaxed::Cancelled);
+    }
+
+    #[test]
+    fn exports_every_format() {
+        let m = built("ethanol", ForceField::Mmff94);
+        for format in Export3d::ALL {
+            let text = export(&m.molfile, format).expect("export");
+            assert!(!text.is_empty(), "{format:?}");
+        }
+    }
+
+    #[test]
+    fn hill_formula() {
+        let atoms = |symbols: &[&str]| -> Vec<Atom3d> {
+            symbols
+                .iter()
+                .map(|s| Atom3d {
+                    element: (*s).to_owned(),
+                    pos: [0.0; 3],
+                })
+                .collect()
+        };
+        assert_eq!(formula(&atoms(&["O", "C", "H", "H", "C", "Br"])), "C2H2BrO");
+        assert_eq!(formula(&atoms(&["O", "H", "H"])), "H2O");
+        assert_eq!(formula(&atoms(&["Na", "Cl"])), "ClNa");
+    }
+
+    /// Paclitaxel (taxol): 113 atoms with its hydrogens, a crowded polycyclic core and floppy
+    /// side chains, as OpenBabel's builder once placed it.
     const TAXOL_3D: &str = include_str!("../../tests/data/taxol_3d.mol");
 
-    /// A mid-sized molecule relaxes, on Generate and on Optimize, at least as low as it did
-    /// before OpenBabel's runs were restarted, and within the steps those runs were bounded by
-    /// — a restrained Optimize within [`RESTRAINED_BUDGET`] times them. Where it `converges`
-    /// (L-BFGS under MMFF), it stops at a minimum before the budget runs out; elsewhere the
-    /// budget is what ends it (a strained taxol under UFF or GAFF is still far from its minimum
-    /// after thousands of conjugate-gradient steps).
-    fn relaxes_a_mid_sized_molecule(force_field: ForceField, converges: bool) {
-        use crate::three_d::GENERATE_STEPS;
-        assert_eq!(ObMol::parse(TAXOL_3D, "mol").unwrap().num_atoms(), 113);
-        let tolerance = |e: f64| ROUNDING * (1.0 + e.abs());
-        let what = |stage: &str| format!("taxol under {force_field}, {stage}");
-        // At a minimum, as `optimize_reaches_the_minimum` has it.
-        let at_a_minimum = |molfile: &str, spent: u32, budget: u32, stage: &str| {
-            if converges {
-                assert!(spent < budget, "{}: spent all {budget} steps", what(stage));
-                let g = rms_gradient(&model_from_molfile(molfile, force_field));
-                assert!(g < 0.3, "{}: RMS gradient {g}", what(stage));
-            }
-        };
-
-        // Generate: before, rounds of `GENERATE_STEPS` conjugate-gradient steps until a round
-        // changed the energy by less than 1%, at most eight.
-        let mut before = ObMol::parse(TAXOL_3D, "mol").unwrap();
-        let mut base = before
-            .optimize_geometry(force_field.id(), GENERATE_STEPS)
-            .unwrap();
-        for _ in 1..GENERATE_BUDGET {
-            let next = before
-                .optimize_geometry(force_field.id(), GENERATE_STEPS)
-                .unwrap();
-            let settled = (base - next).abs() < 0.01 * base.abs().max(1.0);
-            base = next;
-            if settled {
-                break;
-            }
-        }
-        let budget = GENERATE_STEPS * GENERATE_BUDGET;
-        let (generated, molfile, spent) =
-            relaxed_within(TAXOL_3D, force_field, budget, &[], &what("Generate"));
-        assert!(
-            generated <= base + tolerance(base),
-            "{}: E {generated}, before {base}",
-            what("Generate")
-        );
-        at_a_minimum(&molfile, spent, budget, "Generate");
-
-        // Optimize, from the model as it was generated before: one conjugate-gradient run.
-        let start = before.write("mol").unwrap();
-        let mut once = ObMol::parse(&start, "mol").unwrap();
-        let base = once
-            .optimize_geometry(force_field.id(), OPTIMIZE_STEPS)
-            .unwrap();
-        let (optimized, molfile, spent) =
-            relaxed_within(&start, force_field, OPTIMIZE_STEPS, &[], &what("Optimize"));
-        assert!(
-            optimized <= base + tolerance(base),
-            "{}: E {optimized}, before {base}",
-            what("Optimize")
-        );
-        at_a_minimum(&molfile, spent, OPTIMIZE_STEPS, "Optimize");
-
-        // A restrained Optimize from the same model, holding the side chain 0.1 Å further from
-        // the core than it was.
-        let ends = RESTRAINED_ENDS;
-        let held = |molfile: &str| model_from_molfile(molfile, force_field);
-        let target = held(&start).distance(ends[0], ends[1]) + 0.1;
-        let restraint = [Constraint::Distance(ends, target)];
-        let budget = OPTIMIZE_STEPS * RESTRAINED_BUDGET;
-        let (_, molfile, _) =
-            relaxed_within(&start, force_field, budget, &restraint, &what("restrained"));
-        let at = held(&molfile).distance(ends[0], ends[1]);
-        assert!(
-            (at - target).abs() < 0.01,
-            "{}: distance {at}, restrained to {target}",
-            what("restrained")
-        );
-    }
-
-    /// Two carbons of [`TAXOL_3D`]: the methyl on its core's double bond, and the side chain's
-    /// carbon next to the ester.
-    const RESTRAINED_ENDS: [usize; 2] = [0, 22];
-
+    /// A mid-sized molecule relaxes to a minimum within Optimize's steps under MMFF, and a
+    /// restrained Optimize holds its restraint.
     #[test]
     fn relaxes_a_mid_sized_molecule_under_mmff() {
-        relaxes_a_mid_sized_molecule(ForceField::Mmff94, true);
-        relaxes_a_mid_sized_molecule(ForceField::Mmff94s, true);
-    }
+        for force_field in [ForceField::Mmff94, ForceField::Mmff94s] {
+            let start = model_from_molfile(TAXOL_3D, force_field);
+            assert_eq!(start.atoms.len(), 113);
+            let mol = read(TAXOL_3D).unwrap();
+            let Relaxed::Done {
+                energy, converged, ..
+            } = relax(&mol, &mol.coords, force_field, &[], OPTIMIZE_STEPS, None).unwrap()
+            else {
+                unreachable!()
+            };
+            assert!(converged, "taxol under {force_field}: not converged");
+            assert!(energy < start.energy, "taxol under {force_field}");
 
-    #[test]
-    #[ignore = "slow: a minute or two in a debug build, spending every step of the budget"]
-    fn relaxes_a_mid_sized_molecule_under_uff() {
-        relaxes_a_mid_sized_molecule(ForceField::Uff, false);
-    }
-
-    #[test]
-    #[ignore = "slow: a minute or two in a debug build, spending every step of the budget"]
-    fn relaxes_a_mid_sized_molecule_under_gaff() {
-        relaxes_a_mid_sized_molecule(ForceField::Gaff, false);
+            let ends = [0, 22];
+            let target = start.distance(ends[0], ends[1]) + 0.1;
+            let out = optimize(
+                TAXOL_3D,
+                force_field,
+                OPTIMIZE_STEPS,
+                &[Constraint::Distance(ends, target)],
+            )
+            .unwrap();
+            let at = out.distance(ends[0], ends[1]);
+            assert!(
+                (at - target).abs() < 0.01,
+                "{force_field}: {at}, restrained to {target}"
+            );
+        }
     }
 }

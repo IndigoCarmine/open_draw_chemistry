@@ -880,9 +880,6 @@ fn constraints_section(
         if let Some(n) = remove {
             edit3d.constraints.remove(n);
         }
-        if let Some(warning) = three_d::edit::conflict(&edit3d.constraints) {
-            ui.label(RichText::new(warning).size(11.0).color(ink.warn));
-        }
     });
 }
 

@@ -1,9 +1,14 @@
 //! The SMILES of the selected structures (or of the whole drawing), for the 解析 panel.
 //!
-//! The drawing goes through [`molfile::to_molfile`], which keeps wedges and hashes and expands
-//! abbreviations, and OpenBabel writes a canonical **isomeric** SMILES: it perceives tetrahedral
-//! centres from the 2D coordinates plus wedges, and double-bond geometry from the coordinates.
-//! There is no stereo-less fallback: if OpenBabel fails the panel shows why.
+//! Written by chembuider-rs's own [`to_smiles`], the same writer as the SMILES file export, so
+//! no OpenBabel is involved. The string is **canonical** (it depends only on the chemical
+//! graph) but carries **no stereochemistry**: wedges, hashes and double-bond geometry are not
+//! read, so enantiomers and E/Z isomers give the same string. Rings come out in Kekulé form
+//! (`C1=CC=CC=C1`, not `c1ccccc1`), as the editor stores them.
+//!
+//! Abbreviations ("Ph", "OMe", "CO_2Et") are expanded into their atoms first, with the same
+//! machinery as the 3D builder ([`molfile::expand_labels`]); a label that is neither an element
+//! nor a known abbreviation is refused rather than written as a wildcard.
 //!
 //! Brackets with a number (`[CH2–CH2–O]3`, a multiple group) are written out first, so the
 //! SMILES is that of the molecule they stand for, as are the panel's formula and masses. A
@@ -12,10 +17,12 @@
 use std::collections::HashSet;
 
 use chembuider_rs::molecule::bracket::expand;
+use chembuider_rs::molecule::smiles::to_smiles;
 use chembuider_rs::widget::analysis::analysis_target;
 use chembuider_rs::{BondOrder, Config, Molecule};
 
 use crate::three_d::Error;
+use crate::three_d::molfile;
 
 /// The structures the SMILES is of: those with a selected atom, or everything drawn, numbered
 /// brackets written out (see the module docs). Page objects (arrows, text, tables, brackets
@@ -27,8 +34,8 @@ pub fn target(mol: &Molecule, selection: &HashSet<u32>) -> Molecule {
     target
 }
 
-/// The canonical isomeric SMILES of `mol` (already the [`target`]), or a short reason
-/// why there is none. May be slow for a big drawing: call it off the UI thread.
+/// The canonical SMILES (no stereo, Kekulé rings) of `mol` (already the [`target`]), or a
+/// short reason why there is none. May be slow for a big drawing: call it off the UI thread.
 pub fn compute(mol: &Molecule, config: &Config) -> Result<String, String> {
     if mol.atoms.is_empty() {
         return Err(t!("smiles.error.empty").to_owned());
@@ -36,7 +43,7 @@ pub fn compute(mol: &Molecule, config: &Config) -> Result<String, String> {
     if mol.bonds.iter().any(|b| b.order == BondOrder::Quadruple) {
         return Err(t!("smiles.error.quadruple_bond").to_owned());
     }
-    openbabel_smiles(mol, config).map_err(|e| match e {
+    expanded_smiles(mol, config).map_err(|e| match e {
         Error::UnknownLabels(labels) => {
             t!(
                 "smiles.error.unknown_labels",
@@ -47,17 +54,11 @@ pub fn compute(mol: &Molecule, config: &Config) -> Result<String, String> {
     })
 }
 
-fn openbabel_smiles(mol: &Molecule, config: &Config) -> Result<String, Error> {
-    let molfile = crate::three_d::molfile::to_molfile(mol, config)?;
-    let ob = openbabel::Molecule::parse(&molfile, "mol").map_err(|_| Error::Unreadable)?;
-    // "can" is canonical and, since OpenBabel 3, isomeric by default. It writes
-    // "<smiles>\t<title>\n"; only the first field is the SMILES.
-    let out = ob.write("can").map_err(|_| Error::Unreadable)?;
-    out.split_whitespace()
-        .next()
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .ok_or(Error::Unreadable)
+/// [`to_smiles`] of `mol` with its abbreviations expanded (a multiple group that could not be
+/// written out is refused, as for 3D).
+fn expanded_smiles(mol: &Molecule, config: &Config) -> Result<String, Error> {
+    let mol = molfile::expand_labels(&molfile::built_structure(mol)?, config)?;
+    Ok(to_smiles(&mol))
 }
 
 #[cfg(test)]
@@ -167,13 +168,9 @@ mod tests {
     fn a_numbered_repeat_unit_is_written_out() {
         let all = HashSet::new();
         let s = compute(&target(&glyme("3"), &all), &config()).unwrap();
-        assert_eq!(canonical(&s), canonical("COCCOCCOCCC"), "CH3(CH2CH2O)3CH3");
+        assert_eq!(s, "CCCOCCOCCOC", "CH3(CH2CH2O)3CH3");
         let s = compute(&target(&glyme("n"), &all), &config()).unwrap();
-        assert_eq!(
-            canonical(&s),
-            canonical("CCCOC"),
-            "n = 1, the end groups kept"
-        );
+        assert_eq!(s, "CCCOC", "n = 1, the end groups kept");
     }
 
     #[test]
@@ -193,36 +190,82 @@ mod tests {
         assert!(compute(&Molecule::default(), &config()).is_err());
     }
 
-    fn canonical(smiles: &str) -> String {
-        let ob = openbabel::Molecule::parse(smiles, "smi").unwrap();
-        ob.write("can")
-            .unwrap()
-            .split_whitespace()
-            .next()
-            .unwrap()
-            .to_owned()
+    /// A hexagon of alternating single and double bonds, as the editor stores benzene.
+    fn benzene(mol: &mut Molecule, dx: f32) -> Vec<u32> {
+        let ids: Vec<u32> = (0..6)
+            .map(|k| {
+                let angle = k as f32 * std::f32::consts::FRAC_PI_3;
+                mol.add_atom("C".into(), [dx + 1.5 * angle.cos(), 1.5 * angle.sin()], 0)
+            })
+            .collect();
+        for k in 0..6 {
+            let order = if k % 2 == 0 {
+                BondOrder::Double
+            } else {
+                BondOrder::Single
+            };
+            mol.add_bond(ids[k], ids[(k + 1) % 6], order);
+        }
+        ids
     }
 
     #[test]
-    fn a_wedge_gives_the_drawn_configuration() {
-        let r = compute(&butan_2_ol(BondStereo::WedgeUp), &config()).unwrap();
-        assert!(r.contains('@'), "{r}");
-        // (R)-butan-2-ol.
-        assert_eq!(r, canonical("C[C@@H](O)CC"));
-        let s = compute(&butan_2_ol(BondStereo::WedgeDown), &config()).unwrap();
-        assert_eq!(s, canonical("C[C@H](O)CC"));
-        assert_ne!(r, s);
-        // No wedge: no stereo.
+    fn benzene_is_written_kekule() {
+        let mut m = Molecule::default();
+        benzene(&mut m, 0.0);
+        assert_eq!(compute(&m, &config()).unwrap(), "C1=CC=CC=C1");
+    }
+
+    #[test]
+    fn abbreviations_are_expanded() {
+        // Methanol drawn as C–OMe is dimethyl ether, not a wildcard.
+        let mut m = Molecule::default();
+        let c = m.add_atom("C".into(), [0.0, 0.0], 0);
+        let ome = m.add_atom("OMe".into(), [1.5, 0.0], 0);
+        m.add_bond(c, ome, BondOrder::Single);
+        assert_eq!(compute(&m, &config()).unwrap(), "COC");
+
+        // Toluene drawn as Me–Ph equals toluene drawn in full.
+        let mut drawn = Molecule::default();
+        let me = drawn.add_atom("C".into(), [0.0, 0.0], 0);
+        let ph = drawn.add_atom("Ph".into(), [1.5, 0.0], 0);
+        drawn.add_bond(me, ph, BondOrder::Single);
+        let mut full = Molecule::default();
+        let ring = benzene(&mut full, 3.0);
+        let me = full.add_atom("C".into(), [6.0, 0.0], 0);
+        full.add_bond(ring[0], me, BondOrder::Single);
+        let s = compute(&drawn, &config()).unwrap();
+        assert!(!s.contains('*'), "{s}");
+        assert_eq!(s, compute(&full, &config()).unwrap());
+    }
+
+    #[test]
+    fn the_selection_scopes_an_expanded_abbreviation() {
+        let mut m = Molecule::default();
+        ethanol(&mut m, 0.0);
+        let c = m.add_atom("C".into(), [10.0, 0.0], 0);
+        let ph = m.add_atom("Ph".into(), [11.5, 0.0], 0);
+        m.add_bond(c, ph, BondOrder::Single);
+        let selected: HashSet<u32> = [ph].into_iter().collect();
+        let mut toluene = Molecule::default();
+        let ring = benzene(&mut toluene, 0.0);
+        let me = toluene.add_atom("C".into(), [3.0, 0.0], 0);
+        toluene.add_bond(ring[0], me, BondOrder::Single);
+        assert_eq!(
+            compute(&target(&m, &selected), &config()).unwrap(),
+            compute(&toluene, &config()).unwrap()
+        );
+    }
+
+    #[test]
+    fn stereo_marks_are_not_written() {
         let plain = compute(&butan_2_ol(BondStereo::None), &config()).unwrap();
         assert!(!plain.contains('@'), "{plain}");
-    }
-
-    #[test]
-    fn double_bond_geometry_is_kept() {
+        for stereo in [BondStereo::WedgeUp, BondStereo::WedgeDown] {
+            assert_eq!(compute(&butan_2_ol(stereo), &config()).unwrap(), plain);
+        }
         let e = compute(&but_2_ene(true), &config()).unwrap();
-        let z = compute(&but_2_ene(false), &config()).unwrap();
-        assert!(e.contains('/') || e.contains('\\'), "{e}");
-        assert_eq!(e, canonical("C/C=C/C"));
-        assert_eq!(z, canonical("C/C=C\\C"));
+        assert!(!e.contains('/') && !e.contains('\\'), "{e}");
+        assert_eq!(e, compute(&but_2_ene(false), &config()).unwrap());
     }
 }

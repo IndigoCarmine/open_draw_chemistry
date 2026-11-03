@@ -1,75 +1,34 @@
 #!/usr/bin/env bash
-# Lay out the Linux app with its OpenBabel under <root>/usr, the tree both the AppImage
-# (root = AppDir) and the .deb (root = target/deb-root, see [package.metadata.deb] in
-# Cargo.toml) are made from:
+# Lay out the Linux app under <root>/usr, the tree both the AppImage (root = AppDir) and the
+# .deb (root = target/deb-root, see [package.metadata.deb] in Cargo.toml) are made from:
 #
-#   usr/bin/open_draw_chemistry                         rpath $ORIGIN/../lib/open-draw-chemistry
-#   usr/lib/open-draw-chemistry/libopenbabel.so.8       OpenBabel and its InChI library, under
-#   usr/lib/open-draw-chemistry/libinchi.so.1           their sonames
-#   usr/lib/open-draw-chemistry/openbabel/*.so          the format/force-field plugins
-#                                                       (BABEL_LIBDIR; their own rpath $ORIGIN/..
-#                                                       finds the libraries above)
-#   usr/share/open-draw-chemistry/openbabel/            the data files (BABEL_DATADIR)
+#   usr/bin/open_draw_chemistry
 #
-# The app points OpenBabel at the plugins and data itself (src/three_d/runtime.rs), so nothing
-# needs setting in the environment. Its other libraries (glibc, libstdc++, zlib) come from the
-# system; the XML-based format plugins, the only ones needing libxml2, are not bundled.
+# Its libraries (glibc and the like) come from the system. The release workflow adds the
+# .desktop file and the icon to the AppImage itself; the .deb takes them straight from the
+# repository.
 #
 #   scripts/stage-linux.sh <root>
 #
-# Run after `cargo build --release` and scripts/fetch-openbabel.sh. Needs patchelf.
+# Run after `cargo build --release`.
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="${1:?usage: stage-linux.sh <root>}"
 target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
 exe="$target_dir/release/open_draw_chemistry"
-ob="${OPENBABEL_SYS_PREBUILT_DIR:-$root_dir/third_party/openbabel-prebuilt}"
 
 [ -f "$exe" ] || { echo "error: $exe not found; run cargo build --release first" >&2; exit 1; }
-[ -d "$ob/lib/openbabel" ] || { echo "error: no OpenBabel in $ob; run scripts/fetch-openbabel.sh" >&2; exit 1; }
 
 usr="$dest/usr"
-libdir="$usr/lib/open-draw-chemistry"
-mkdir -p "$usr/bin" "$libdir/openbabel" "$usr/share/open-draw-chemistry/openbabel"
-
+mkdir -p "$usr/bin"
 install -m 755 "$exe" "$usr/bin/open_draw_chemistry"
-# The build linked against the prebuilt's absolute lib directory; point the binary at the
-# copy beside it instead.
-patchelf --set-rpath '$ORIGIN/../lib/open-draw-chemistry' "$usr/bin/open_draw_chemistry"
 
-# Each real shared library (not its symlinks) under the soname the loader asks for.
-for lib in "$ob"/lib/lib*.so.*; do
-  [ -L "$lib" ] && continue
-  soname="$(patchelf --print-soname "$lib")"
-  install -m 644 "$lib" "$libdir/$soname"
-done
-# OpenBabel installs its plugins and data under a versioned directory (lib/openbabel/3.2.1);
-# the bundle flattens it.
-#
-# The XML-based format plugins (cdxml, cml, cmlreact, pubchem, xml) are left out: they link
-# the system libxml2 under the soname of the machine the prebuilt was built on
-# (libxml2.so.2), which newer distributions no longer ship (Ubuntu 26.04 has libxml2.so.16).
-# The app never asks OpenBabel for those formats (it reads and writes CDXML itself, and only
-# hands OpenBabel mol/sdf/xyz/pdb/mol2/smi), so without them the packages need no libxml2.
-for plugin in "$ob"/lib/openbabel/*/*.so; do
-  if readelf -d "$plugin" | grep -q 'NEEDED.*\[libxml2\.so'; then
-    echo "Leaving out $(basename "$plugin") (needs libxml2)"
-    continue
-  fi
-  install -m 644 "$plugin" "$libdir/openbabel/"
-done
-install -m 644 "$ob"/share/openbabel/*/* "$usr/share/open-draw-chemistry/openbabel/"
-
-# Every library the binary and the plugins need must now resolve, without the build tree.
-missing="$(ldd "$usr/bin/open_draw_chemistry" "$libdir"/openbabel/*.so | grep 'not found' | sort -u || true)"
+# Every library the binary needs must resolve on this system.
+missing="$(ldd "$usr/bin/open_draw_chemistry" | grep 'not found' | sort -u || true)"
 if [ -n "$missing" ]; then
   echo "error: unresolved libraries in the staged app:" >&2
   echo "$missing" >&2
-  exit 1
-fi
-if patchelf --print-rpath "$usr/bin/open_draw_chemistry" | grep -qF "$ob"; then
-  echo "error: the binary still points into the build tree" >&2
   exit 1
 fi
 echo "Staged the Linux app under $usr"

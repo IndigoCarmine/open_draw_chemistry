@@ -20,8 +20,8 @@
 //!
 //! Aromatic rings are perceived first: five- and six-membered chordless rings, planar within
 //! [`RING_PLANARITY_MAX`], whose π electrons follow Hückel's 4n + 2 rule — counted from the
-//! bond orders, so a Kekulé structure (alternating single/double), OpenBabel's aromatic bond
-//! order 5 and heteroaromatics (pyridine, pyrrole, furan, thiophene …) all qualify. Two rings
+//! bond orders, so a Kekulé structure (alternating single/double), the aromatic bond order
+//! 5 and heteroaromatics (pyridine, pyrrole, furan, thiophene …) all qualify. Two rings
 //! that share no atom and are not bonded to each other (fused or biaryl rings are not a
 //! contact) stack, after Marcou & Rognan (*J. Chem. Inf. Model.* 2007, 47, 195) and PLIP
 //! (Salentin et al., *Nucleic Acids Res.* 2015, 43, W443), when, with d the distance between
@@ -70,7 +70,7 @@ pub const RING_PLANARITY_MAX: f64 = 0.15;
 /// At most this many of each kind are kept (a huge crystal would otherwise list millions).
 pub const MAX_INTERACTIONS: usize = 100_000;
 
-/// OpenBabel's aromatic bond order.
+/// The aromatic bond order (as a [`super::Bond3d`] may carry it).
 const AROMATIC: u8 = 5;
 
 /// What to look for, and where.

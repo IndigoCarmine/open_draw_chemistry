@@ -9,7 +9,7 @@
 [![Website](https://img.shields.io/badge/website-open__draw__chemistry-7c5cff?logo=googlechrome&logoColor=white)](https://indigocarmine.github.io/open_draw_chemistry-site/en/)
 [![CI](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml/badge.svg)](https://github.com/IndigoCarmine/open_draw_chemistry/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/IndigoCarmine/open_draw_chemistry?color=7c5cff)](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)
-[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust)
 
@@ -41,7 +41,7 @@ Windows, macOS and Linux.
 | 📂 **ChemDraw-compatible** | Open and save `.cdx` / `.cdxml`. Objects the editor can't show yet are kept when you save. |
 | 🏷️ **IUPAC names** | Preferred IUPAC names (2013 recommendations), including E/Z and R/S, rings, spiro and bicyclic systems, and inorganic salts. Alternatives are listed too: functional-class, retained and other systematic names. Copy a name or put it on the page. |
 | 🔬 **Analysis** | Formula, exact mass and molecular weight, isotope pattern (m/z) and elemental analysis, updated as you draw. |
-| 🧊 **3D** | Generate a 3D model with OpenBabel, which respects wedges and expands Ph / OMe. Optimise it with MMFF94, UFF or GAFF, view and edit it in 3D, and export MOL, SDF, XYZ or PDB. |
+| 🧊 **3D** | Generate a 3D model (ETKDG), which respects wedges and expands Ph / OMe. Optimise it with MMFF94, MMFF94s or UFF, view and edit it in 3D, and export MOL, SDF, XYZ or PDB. |
 | 🧩 **Assemblies and scans** | Build rings, stacks, helices and crystal lattices from monomers. Check clashes, and measure distances and angles. Run multi-dimensional energy scans, rigid or relaxed. |
 | 📝 **Office integration** (Windows) | Edit ChemDraw objects in Word and PowerPoint on a PC without ChemDraw. Copy puts a ChemDraw-compatible structure and a picture on the clipboard. |
 | 🌐 **11 languages** | English, 日本語, 简体中文, 繁體中文, 한국어, Deutsch, Français, Español, Italiano, Português (Brasil), Русский. |
@@ -49,7 +49,7 @@ Windows, macOS and Linux.
 ## 🚀 Get started
 
 **Download** the installer or portable package for your platform from the
-[website](https://indigocarmine.github.io/open_draw_chemistry-site/en/) or the [latest release](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest). OpenBabel is bundled, so there is nothing else to install.
+[website](https://indigocarmine.github.io/open_draw_chemistry-site/en/) or the [latest release](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest). There is nothing else to install.
 
 > macOS: the app isn't notarised yet, so the first time, right-click it and choose **Open**.
 > Windows: the installer isn't signed yet, so SmartScreen may warn you.
@@ -57,7 +57,6 @@ Windows, macOS and Linux.
 **Build from source** (Rust 1.95+):
 
 ```bash
-bash scripts/fetch-openbabel.sh   # one-time: fetch the prebuilt OpenBabel
 cargo run -- path/to/file.cdx     # the file is optional
 ```
 
@@ -91,11 +90,11 @@ so ChemDraw and Word can still open it.
 
 ## 🧱 Built on
 
-- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs): the structure editor widget, the IUPAC namer and the analysis panel
+- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs): the structure editor widget, SMILES, the IUPAC namer and the analysis panel
 - [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs): ChemDraw file codecs
-- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs): Rust bindings to [OpenBabel](https://openbabel.org), used for 3D generation, force fields and SMILES
+- [molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs): pure-Rust molecular mechanics (UFF, MMFF94 and ETKDG ported from RDKit), used for 3D generation, optimisation and scans, and for reading 3D files
 - [egui](https://github.com/emilk/egui): the UI
 
 ## 📄 License
 
-GPL-2.0-or-later. See [LICENSE](LICENSE). The app is GPL because it links OpenBabel.
+AGPL-3.0-or-later. See [LICENSE](LICENSE).

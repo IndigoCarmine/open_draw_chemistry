@@ -1112,7 +1112,7 @@ impl OpenDrawApp {
                 ui.label(format!("Version {}", crate::APP_VERSION));
                 ui.separator();
                 ui.label(env!("CARGO_PKG_DESCRIPTION"));
-                ui.label("License: GPL-2.0-or-later");
+                ui.label("License: AGPL-3.0-or-later");
                 ui.hyperlink(env!("CARGO_PKG_REPOSITORY"));
             });
         self.show_about = open;
@@ -1958,7 +1958,7 @@ mod tests {
         assert!(commands.is_empty());
     }
 
-    /// A hand-built water model, so the assembly tests need no OpenBabel generation.
+    /// A hand-built water model, so the assembly tests need no 3D generation.
     fn water_model() -> three_d::Model3d {
         use three_d::{Atom3d, Bond3d};
         let atom = |element: &str, pos| Atom3d {

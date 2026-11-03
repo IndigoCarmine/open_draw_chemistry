@@ -1,8 +1,6 @@
-//! HTTPS through the system's `curl` program, where TLS would otherwise mean linking OpenSSL.
-//!
-//! The app links OpenBabel, which is GPL-2.0-only, and the `openssl` crate is Apache-2.0: the two
-//! cannot be linked together, but a separate program is not linked at all. Without `curl` every
-//! request fails, so the update check stays silent, as it does offline.
+//! HTTPS through the system's `curl` program on Linux, so the app links no TLS library there
+//! (see "HTTPS" in docs/DEVELOPMENT.md). Without `curl` every request fails, so the update check
+//! stays silent, as it does offline.
 //!
 //! curl makes one request and follows no redirect: the status and `Location` come back ahead of
 //! the body on its output, and [`super::http::open`] decides about the next hop as it does for

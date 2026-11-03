@@ -16,8 +16,7 @@ pub const MAX_PICKED: usize = 4;
 /// Geometry snapshots kept for undo.
 const HISTORY: usize = 100;
 
-/// A restraint the next optimisation keeps (atom indices into [`Model3d::atoms`], 0-based as
-/// OpenBabel's constraints are).
+/// A restraint the next optimisation keeps (atom indices into [`Model3d::atoms`], 0-based).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Constraint {
     /// The atom does not move.
@@ -103,14 +102,6 @@ impl Constraint {
             Constraint::Torsion(..) => t!("three_d.edit.constraint_torsion"),
         }
     }
-}
-
-/// OpenBabel ignores torsion restraints when an angle restraint is present in the same set, so
-/// the panel warns rather than letting one silently not apply.
-pub fn conflict(constraints: &[Constraint]) -> Option<&'static str> {
-    let has = |f: fn(&Constraint) -> bool| constraints.iter().any(f);
-    (has(|c| matches!(c, Constraint::Angle(..))) && has(|c| matches!(c, Constraint::Torsion(..))))
-        .then(|| t!("three_d.edit.constraint_conflict"))
 }
 
 /// One history entry: the geometry (and energy) before or after an edit.
@@ -826,15 +817,6 @@ mod tests {
         assert_eq!(edit.active_constraints(3).len(), 1, "atom 3 does not exist");
         edit.use_constraints = false;
         assert!(edit.active_constraints(4).is_empty());
-
-        assert!(conflict(&[Constraint::Angle([0, 1, 2], 100.0)]).is_none());
-        assert!(
-            conflict(&[
-                Constraint::Angle([0, 1, 2], 100.0),
-                Constraint::Torsion([0, 1, 2, 3], 10.0)
-            ])
-            .is_some()
-        );
     }
 
     #[test]

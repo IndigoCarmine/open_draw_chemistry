@@ -1,7 +1,7 @@
-//! The drawn structure as an MDL molfile (V2000), the form OpenBabel reads it in.
+//! The drawn structure as an MDL molfile (V2000), the form the 3D builder reads it in.
 //!
-//! Hydrogens are left implicit: OpenBabel fills each atom's valence when it reads the file, and
-//! [`super::generate`] makes them explicit. Abbreviations ("Ph", "OMe", "CO_2Et") are expanded
+//! Hydrogens are left implicit: the reader fills each atom's valence, and [`super::generate`]
+//! makes them explicit. Abbreviations ("Ph", "OMe", "CO_2Et") are expanded
 //! into their atoms first, on a copy, with the editor's own label machinery — an abbreviation
 //! written into the file as an element would be read as a dummy atom and give a wrong model.
 //!
@@ -24,7 +24,7 @@ use chembuider_rs::{BondOrder, BondStereo, ChemStructEditor, Config, Molecule};
 use super::Error;
 
 /// Molfile ångström per editor unit. The editor draws a bond 1.5 units long, so this makes a
-/// drawn bond 1.5 Å — close to a real one, which gives OpenBabel's 2D stereo perception and
+/// drawn bond 1.5 Å — close to a real one, which gives the 2D stereo perception and the
 /// 3D builder sensible distances to start from.
 pub const ANGSTROM_PER_UNIT: f64 = 1.0;
 
@@ -287,12 +287,20 @@ mod tests {
         elements
     }
 
-    /// The formula OpenBabel reads from a molfile, its implicit hydrogens filled in as
+    /// The formula of a molfile, its implicit hydrogens filled in as
     /// [`super::super::generate`] does.
     fn formula(molfile: &str) -> String {
-        let mut ob = openbabel::Molecule::parse(molfile, "mol").unwrap();
-        ob.add_hydrogens();
-        ob.formula()
+        let mut mol = molecule_optimizer_rs::io::read_molfile(molfile).unwrap();
+        molecule_optimizer_rs::perception::hydrogens::add_hydrogens(&mut mol);
+        let atoms: Vec<super::super::Atom3d> = mol
+            .atoms()
+            .iter()
+            .map(|a| super::super::Atom3d {
+                element: a.symbol().to_owned(),
+                pos: [0.0; 3],
+            })
+            .collect();
+        super::super::engine::formula(&atoms)
     }
 
     #[test]

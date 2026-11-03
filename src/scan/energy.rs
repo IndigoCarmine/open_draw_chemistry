@@ -1,35 +1,26 @@
-//! Single-point MM energies for a scan: the structure is handed to OpenBabel once, and every
-//! grid point only replaces its coordinates ([`openbabel::Molecule::set_coordinates`]) before
-//! asking for the energy. OpenBabel keeps the force field set up for a molecule of the same
-//! atoms and bonds, so the atom typing and parameter lookup are paid at the first point only.
-//! A relaxed scan minimises each point on that same molecule ([`Evaluator::relax`]).
+//! Single-point MM energies for a scan: the force field is set up for the structure once (atom
+//! typing and parameter lookup), and every grid point only evaluates it at its coordinates.
+//! A relaxed scan minimises each point under the same force field ([`Evaluator::relax`]).
 
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use openbabel::Algorithm;
+use molecule_optimizer_rs::Molecule;
+use molecule_optimizer_rs::ff::ForceField as Field;
 
 use crate::three_d::geom::Vec3;
-use crate::three_d::{self, Atom3d, Bond3d, Constraint, ForceField, Relaxed, Watch};
+use crate::three_d::{self, Atom3d, Bond3d, Constraint, ForceField, Relaxed};
 
 /// A V2000 count field is three digits wide; beyond it the molfile is written as V3000.
 const V2000_MAX: usize = 999;
 
-/// The energy unit of `force_field` as OpenBabel reports it (MMFF94: kcal/mol, UFF and GAFF:
-/// kJ/mol). Should OpenBabel not report one, the same answer from the table.
-pub fn unit(force_field: ForceField) -> String {
-    if let Some(unit) = openbabel::forcefield_energy_unit(force_field.id()) {
-        return unit;
-    }
-    match force_field {
-        ForceField::Mmff94 | ForceField::Mmff94s => "kcal/mol",
-        ForceField::Uff | ForceField::Gaff => "kJ/mol",
-    }
-    .to_owned()
+/// The energy unit of `force_field`: kcal/mol for every one offered.
+pub fn unit(_force_field: ForceField) -> String {
+    three_d::ENERGY_UNIT.to_owned()
 }
 
 /// `atoms` and `bonds` as a 3D MDL molfile: V2000 when the counts fit, V3000 otherwise.
-/// Bond order 5 (OpenBabel's aromatic) is written as the molfile's aromatic type 4.
+/// Bond order 5 (aromatic) is written as the molfile's aromatic type 4.
 pub fn molfile(atoms: &[Atom3d], bonds: &[Bond3d]) -> String {
     let order = |o: u8| if o == 5 { 4 } else { o.clamp(1, 4) };
     let mut out = String::with_capacity(80 * (atoms.len() + bonds.len()) + 200);
@@ -88,60 +79,36 @@ pub fn molfile(atoms: &[Atom3d], bonds: &[Bond3d]) -> String {
     out
 }
 
-/// Methane, to clear OpenBabel's cached force-field setup (see [`Evaluator::new`]).
-const METHANE: &str = "methane
-  OpenDraw          3D
-
-  5  4  0  0  0  0  0  0  0  0999 V2000
-    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6291    0.6291    0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.6291   -0.6291    0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.6291    0.6291   -0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6291   -0.6291   -0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
-  1  2  1  0  0  0  0
-  1  3  1  0  0  0  0
-  1  4  1  0  0  0  0
-  1  5  1  0  0  0  0
-M  END
-";
-
-/// A structure held by OpenBabel for repeated single points.
+/// A structure with its force field set up, for repeated single points.
 pub struct Evaluator {
-    mol: openbabel::Molecule,
+    mol: Molecule,
+    field: Box<dyn Field>,
     force_field: ForceField,
-    atoms: usize,
+    /// Where the structure's atoms are now (flat): the last energy's coordinates, or where a
+    /// segment of [`Evaluator::relax_held`] left them.
+    at: Vec<f64>,
 }
 
 impl Evaluator {
     /// Read `molfile` once. Fails on an unreadable file, or when the force
     /// field cannot be set up for the structure (an atom it has no type for).
     pub fn new(molfile: &str, force_field: ForceField) -> Result<Self, String> {
-        let mol = openbabel::Molecule::parse(molfile, "mol")
-            .map_err(|_| crate::three_d::Error::Unreadable.to_string())?;
-        let atoms = mol.num_atoms() as usize;
-        let evaluator = Self {
-            mol,
-            force_field,
-            atoms,
-        };
-        // OpenBabel keeps one setup per force field and reuses it for any molecule with the
-        // same elements, degrees and bond orders — even one typed differently (say the
-        // builder's copy this model came from). Setting the force field up for a methane
-        // first makes the next setup a full one, of this molecule.
-        if let Ok(methane) = openbabel::Molecule::parse(METHANE, "mol") {
-            let _ = methane.energy(force_field.id());
+        let mol = three_d::read_molfile(molfile).map_err(|e| e.to_string())?;
+        let field = three_d::field(&mol, force_field, &[]).map_err(|e| e.to_string())?;
+        let at = mol.flat_coords();
+        if !field.energy(&at).is_finite() {
+            return Err(three_d::Error::ForceField(force_field).to_string());
         }
-        // Sets the force field up for this molecule; the points then reuse it.
-        evaluator
-            .mol
-            .energy(force_field.id())
-            .filter(|e| e.is_finite())
-            .ok_or_else(|| crate::three_d::Error::ForceField(force_field).to_string())?;
-        Ok(evaluator)
+        Ok(Self {
+            mol,
+            field,
+            force_field,
+            at,
+        })
     }
 
     pub fn atoms(&self) -> usize {
-        self.atoms
+        self.mol.num_atoms()
     }
 
     pub fn force_field(&self) -> ForceField {
@@ -150,27 +117,25 @@ impl Evaluator {
 
     /// The energy with the atoms at `coords` (NaN when it cannot be had).
     pub fn energy(&mut self, coords: &[Vec3]) -> f64 {
-        if coords.len() != self.atoms {
+        if coords.len() != self.atoms() {
             return f64::NAN;
         }
         let flat: Vec<f64> = coords.iter().flatten().copied().collect();
-        if !flat.iter().all(|c| c.is_finite()) || !self.mol.set_coordinates(&flat) {
+        if !flat.iter().all(|c| c.is_finite()) {
             return f64::NAN;
         }
-        self.mol
-            .energy(self.force_field.id())
-            .filter(|e| e.is_finite())
-            .unwrap_or(f64::NAN)
+        let energy = self.field.energy(&flat);
+        self.at = flat;
+        if energy.is_finite() { energy } else { f64::NAN }
     }
 }
 
-/// The most minimiser steps run in one segment of a point's relaxation, between two looks at
-/// the cancel flag: a few milliseconds for a small molecule, so cancelling takes effect within
-/// one point.
+/// The most minimiser iterations run in one segment of a held relaxation (see
+/// [`Evaluator::relax_held`]), between two looks at the cancel flag.
 const RELAX_CHUNK_STEPS: u32 = 50;
 
-/// The fewest minimiser steps a segment of [`Evaluator::relax_held`] is cut down to (of
-/// steepest descent): a relaxation held is converged only once a segment this short, looked
+/// The fewest minimiser steps a segment of [`Evaluator::relax_held`] is cut down to (one line
+/// search along the forces): a relaxation held is converged only once a segment this short, looked
 /// along closer, no longer lowers its energy.
 const SHORTEST_HELD_SEGMENT: u32 = 1;
 
@@ -200,11 +165,9 @@ pub enum Relaxation {
 
 impl Evaluator {
     /// Minimise the structure from `coords` holding `constraints` (scanned parameters, fixed
-    /// atoms…) as Optimize does ([`three_d::optimize_with`]: the force field's own algorithms,
-    /// restarted wherever OpenBabel stops early, under soft restraints and then the full ones),
-    /// in at most `steps` minimiser steps, looking at `cancel` every [`RELAX_CHUNK_STEPS`] at
-    /// most. Converged when it ended at the restrained minimum rather than out of steps (see
-    /// [`Relaxed`]).
+    /// atoms…) as Optimize does ([`three_d::optimize_with`]), in at most `steps` minimiser
+    /// iterations, looking at `cancel` after every one. Converged when it ended at the
+    /// restrained minimum rather than out of steps (see [`Relaxed`]).
     pub fn relax(
         &mut self,
         coords: &[Vec3],
@@ -212,31 +175,24 @@ impl Evaluator {
         steps: u32,
         cancel: &AtomicBool,
     ) -> Relaxation {
-        let flat: Vec<f64> = coords.iter().flatten().copied().collect();
-        if coords.len() != self.atoms
-            || !flat.iter().all(|c| c.is_finite())
-            || !self.mol.set_coordinates(&flat)
-        {
+        if coords.len() != self.atoms() || !coords.iter().flatten().all(|c| c.is_finite()) {
             return Relaxation::Failed;
         }
-        let watch = Watch {
-            cancel,
-            segment: RELAX_CHUNK_STEPS,
-        };
-        let mut left = steps;
-        let relaxed = three_d::relax_watched(
-            &mut self.mol,
+        let relaxed = three_d::relax(
+            &self.mol,
+            coords,
             self.force_field,
-            &mut left,
             constraints,
-            &watch,
+            steps,
+            Some(cancel),
         );
-        let converged = match relaxed {
-            Ok(Relaxed::Done { converged, .. }) => converged,
+        let (coords, converged) = match relaxed {
+            Ok(Relaxed::Done {
+                coords, converged, ..
+            }) => (coords, converged),
             Ok(Relaxed::Cancelled) => return Relaxation::Cancelled,
             Err(_) => return Relaxation::Failed,
         };
-        let coords = self.coords();
         let energy = self.energy(&coords);
         if energy.is_nan() {
             return Relaxation::Failed;
@@ -259,14 +215,13 @@ impl Evaluator {
     /// the start's. The minimiser does not know of `hold`: where the forces between the
     /// molecules mostly push them about rigidly (close contacts, strong torques), a long
     /// segment spends its steps on moves `hold` undoes and ends, held, no lower or even higher,
-    /// far above the held minimum. So a segment (of conjugate gradients) that does not lower
-    /// the held energy by more than [`SETTLED_ENERGY`] is run again from the lowest structure
-    /// with half the steps, down to [`SHORTEST_HELD_SEGMENT`]; segments that short are of
-    /// steepest descent — the step along the forces, whose part `hold` keeps lowers the held
-    /// energy when short enough — and one that does not lower the energy is looked along
-    /// closer, [`HELD_STEP_HALVINGS`] times. Converged only once that finds nothing lower
-    /// either — not by OpenBabel's own test, which the minimiser never meets while `hold`
-    /// keeps undoing the molecules' rigid moves.
+    /// far above the held minimum. So a segment that does not lower the held energy by more
+    /// than [`SETTLED_ENERGY`] is run again from the lowest structure with half the steps, down
+    /// to [`SHORTEST_HELD_SEGMENT`]; a segment that short is one line search along the forces
+    /// (steepest descent), whose part `hold` keeps lowers the held energy when short enough,
+    /// and one that does not lower the energy is looked along closer, [`HELD_STEP_HALVINGS`]
+    /// times. Converged only once that finds nothing lower either — not by the minimiser's own
+    /// test, which it never meets while `hold` keeps undoing the molecules' rigid moves.
     pub fn relax_held(
         &mut self,
         coords: &[Vec3],
@@ -307,20 +262,10 @@ impl Evaluator {
                 };
             }
             let shortest = segment <= SHORTEST_HELD_SEGMENT;
-            let algorithm = if shortest {
-                Algorithm::SteepestDescent
-            } else {
-                Algorithm::ConjugateGradients
-            };
             let most = segment.min(steps - taken);
-            let Some(run) =
-                three_d::minimise_run(&mut self.mol, self.force_field, algorithm, most, None)
-            else {
-                return Relaxation::Failed;
-            };
-            // Too few steps left for a run of conjugate gradients (their setup takes one): the
-            // budget is spent.
-            taken += if run == 0 { most } else { run };
+            // From where the atoms are: a segment of the library's BFGS, whose first iteration
+            // is a line search along the forces (a step of steepest descent).
+            taken += three_d::descend(self.field.as_ref(), &mut self.at, most);
             let free = self.coords();
             let mut coords = free.clone();
             hold(&mut coords);
@@ -381,13 +326,7 @@ impl Evaluator {
 
     /// The molecule's coordinates now.
     fn coords(&self) -> Vec<Vec3> {
-        self.mol
-            .atoms()
-            .map(|a| {
-                let (x, y, z) = a.coords();
-                [x, y, z]
-            })
-            .collect()
+        self.at.as_chunks::<3>().0.to_vec()
     }
 }
 
@@ -457,15 +396,16 @@ mod tests {
         assert!(text.contains("V3000"));
         assert!(text.contains("M  V30 COUNTS 1200 800 0 0 0"));
         assert!(text.contains("M  V30 1200 H "));
-        // The 3D editor's coordinate rewriter understands it, as it does OpenBabel's own.
+        // The 3D editor's coordinate rewriter understands it, as it does the force field's own.
         let moved: Vec<Vec3> = big_atoms.iter().map(|a| [a.pos[0], 1.0, 2.0]).collect();
         assert!(crate::three_d::edit::molfile_with_coords(&text, &moved).is_some());
     }
 
     #[test]
-    fn units_follow_the_force_field() {
-        assert_eq!(unit(ForceField::Mmff94), "kcal/mol");
-        assert_eq!(unit(ForceField::Uff), "kJ/mol");
+    fn every_force_field_reports_kcal_per_mol() {
+        for force_field in ForceField::ALL {
+            assert_eq!(unit(force_field), "kcal/mol");
+        }
     }
 
     /// Replacing the coordinates gives the same energy as reading the moved structure afresh,

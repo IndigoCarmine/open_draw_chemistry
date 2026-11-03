@@ -10,13 +10,12 @@
 //!   [`Scan::section`], a curve or map of some of them, the rest sliced or minimised over;
 //! - [`source`]: the structure at a grid point (the design rebuilt, or the model's
 //!   coordinates edited from where they were when the scan started);
-//! - [`energy`]: the OpenBabel side — the structure parsed once, then only its coordinates
-//!   replaced at every point (no re-parse, and OpenBabel keeps the force field's atom typing
-//!   between points of the same topology);
+//! - [`energy`]: the force-field side — the structure read and its force field set up (atom
+//!   typing, parameters) once, then only evaluated at every point's coordinates;
 //! - [`run`]: the scan on a background thread, its points streamed back, cancellable;
 //! - [`Scan`]: a finished or partial scan's grid and energies, and its CSV.
 //!
-//! OpenBabel's force fields are not periodic: the energy of a crystal is that of the finite
+//! The force fields are not periodic: the energy of a crystal is that of the finite
 //! supercell that was built (its repeats), with no images across the cell's faces.
 
 use std::fmt::Write as _;
@@ -42,7 +41,7 @@ pub const MAX_POINTS: usize = 200;
 /// The most points of a scan, all axes together: the largest 2D map the axes allow (200 ×
 /// 200), so no one- or two-parameter scan is refused, and three or more parameters at up to
 /// 34 points each (37 × 37 × 29 for two dihedrals at 10° and a third parameter). A rigid point
-/// of butane takes ~1 ms (UFF) to ~4 ms (MMFF94; debug build, the drift check included), so
+/// of butane takes ~1 ms (UFF) to ~4 ms (MMFF94; debug build), so
 /// this many take ~1–3 min; a large structure takes longer per point, as a 2D map of it always
 /// did, with the time left shown and Cancel keeping the points done. Each point keeps only its
 /// energy (a relaxed scan, which keeps each point's structure too, is held to
@@ -116,12 +115,10 @@ pub enum Reduce {
 
 /// The most atoms a relaxed scan accepts: every point is two whole constrained minimisations
 /// (see [`run::Run::start_relaxed`]) of up to [`crate::three_d::RESTRAINED_OPTIMIZE_STEPS`]
-/// steps each over all atom pairs. Measured per point (release build, an alkane's dihedral,
-/// the `relaxed_point_timing` report): ~1 s at 100 atoms and ~45 s at 300 under MMFF94, ~2 min
-/// at 500; UFF, whose restrained minimisation is steepest descent alone and spends its whole
-/// budget, ~35 s at 100 atoms and ~4.5 min at 300 (at 500 not measured: some 12–20 min, so a
-/// 37-point dihedral scan of the most atoms takes about an hour under MMFF94 and most of a day
-/// under UFF).
+/// iterations each over all atom pairs. Measured per point (optimised force fields, an
+/// alkane's dihedral, the `relaxed_point_timing` report): ~0.3 s at 100 atoms, ~1.3 s at 300
+/// and ~3.5 s at 500, under MMFF94 and UFF alike — so a 37-point dihedral scan of the most
+/// atoms takes a few minutes.
 pub const MAX_RELAX_ATOMS: usize = 500;
 
 /// The most points (all axes together) of a relaxed scan: a 10° × 10° map of two dihedrals
@@ -133,22 +130,21 @@ pub const MAX_RELAX_POINTS: usize = 1_500;
 // A relaxed scan is a scan: its cap on points is within that of any scan.
 const _: () = assert!(MAX_RELAX_POINTS <= MAX_SCAN_POINTS);
 
-/// Seconds a relaxed point takes per atom squared, on the fastest and the slowest force field
-/// (MMFF94 and UFF; release build, an alkane's dihedral — see [`MAX_RELAX_ATOMS`] and the
-/// `relaxed_point_timing` report): a point minimises over all atom pairs. MMFF94 measured
-/// 1.0e-4 at 100 atoms and up to 4.8e-4 at 300–500; UFF 2.9e-3 to 3.4e-3.
-pub const RELAX_SECONDS_PER_ATOM2: [f64; 2] = [1.0e-4, 3.4e-3];
+/// Seconds a relaxed point takes per atom squared, at the fastest and the slowest measured
+/// (optimised force fields, an alkane's dihedral — see [`MAX_RELAX_ATOMS`] and the
+/// `relaxed_point_timing` report): a point minimises over all atom pairs. MMFF94 and UFF both
+/// measured 1.2e-5 to 1.5e-5 at 300–500 atoms and up to 2.9e-5 at 100.
+pub const RELAX_SECONDS_PER_ATOM2: [f64; 2] = [1.2e-5, 3.0e-5];
 
 /// Seconds one minimiser segment (the steps between two looks at the cancel flag) takes per
 /// atom squared at worst: how long Cancel can take to stop a relaxed scan.
-pub const RELAX_SEGMENT_SECONDS_PER_ATOM2: f64 = 2.0e-5;
+pub const RELAX_SEGMENT_SECONDS_PER_ATOM2: f64 = 1.0e-6;
 
-/// The most work a relaxed scan accepts, in atoms² × points: ~3 h at MMFF94's rate for a large
-/// molecule, but ~19 h at UFF's, the slowest rate of [`RELAX_SECONDS_PER_ATOM2`] (the caps on
-/// atoms and points alone would let through 500 atoms × 1500 points). Not lowered to UFF's
-/// rate: that would refuse MMFF94 scans that run in a reasonable time, and the window shows
-/// the estimate — warning of a long one — before a scan starts, which can be cancelled. A
-/// 37 × 37 map fits up to ~120 atoms, a 37-point dihedral up to the most atoms.
+/// The most work a relaxed scan accepts, in atoms² × points: ~10 min at the slowest rate of
+/// [`RELAX_SECONDS_PER_ATOM2`] (the caps on atoms and points alone would let through 500 atoms
+/// × 1500 points). The window shows the estimate — warning of a long one — before a scan
+/// starts, which can be cancelled. A 37 × 37 map fits up to ~120 atoms, a 37-point dihedral up
+/// to the most atoms.
 pub const MAX_RELAX_WORK: f64 = 2.0e7;
 
 /// From this estimated time (at the slowest rate) on, the window warns before a relaxed scan
@@ -266,7 +262,7 @@ pub struct Scan {
     /// One per grid point, in [`grid`] order: `None` not computed (yet), `Some(NaN)` failed.
     pub energies: Vec<Option<f64>>,
     pub force_field: ForceField,
-    /// The energy unit (MMFF94: kcal/mol, UFF and GAFF: kJ/mol).
+    /// The energy unit (kcal/mol).
     pub unit: String,
     /// Whether the parameters are the assembly's (else the 3D model's).
     pub assembly: bool,
@@ -928,7 +924,7 @@ mod tests {
 
     /// Seconds a relaxed point takes per atom squared under MMFF94 for a large molecule (300–500
     /// atoms), as measured for [`RELAX_SECONDS_PER_ATOM2`].
-    const MMFF94_LARGE_SECONDS_PER_ATOM2: f64 = 4.8e-4;
+    const MMFF94_LARGE_SECONDS_PER_ATOM2: f64 = 1.5e-5;
 
     /// The work guard: the caps on atoms and points alone, then their product, which the
     /// largest atoms × the most points exceed many times over.
@@ -951,27 +947,26 @@ mod tests {
             too_many_points.contains("Too many points"),
             "{too_many_points}"
         );
-        // Each alone allowed, together ~2 days.
+        // Each alone allowed, together over 3 h.
         let why = relax_refusal(MAX_RELAX_ATOMS, MAX_RELAX_POINTS).unwrap();
         assert!(why.contains("1500 points"), "{why}");
         assert!(why.contains("at most 80 points"), "{why}");
         let [low, high] = relax_estimate(MAX_RELAX_ATOMS, MAX_RELAX_POINTS);
         assert!(low < high);
-        assert!(high > Duration::from_secs(24 * 3600), "{high:?}");
+        assert!(high > Duration::from_secs(3 * 3600), "{high:?}");
         // Right at the budget is allowed; one point more is not.
         let atoms = 200;
         let most = (MAX_RELAX_WORK / (atoms * atoms) as f64) as usize;
         assert_eq!(relax_refusal(atoms, most), None);
         assert!(relax_refusal(atoms, most + 1).is_some());
-        // Whatever is allowed ends within ~3 h at MMFF94's rate for a large molecule; at the
-        // slowest (UFF's) it may take most of a day, and the window warns of it.
+        // Whatever is allowed ends within ~5 min at MMFF94's rate for a large molecule, and
+        // within ~10 min at the slowest.
         assert!(
             Duration::from_secs_f64(MAX_RELAX_WORK * MMFF94_LARGE_SECONDS_PER_ATOM2)
-                <= Duration::from_secs(3 * 3600)
+                <= Duration::from_secs(6 * 60)
         );
         let [_, slowest] = relax_estimate(atoms, most);
-        assert!(slowest <= Duration::from_secs(24 * 3600), "{slowest:?}");
-        assert!(slowest >= LONG_RELAX);
+        assert!(slowest <= Duration::from_secs(11 * 60), "{slowest:?}");
     }
 
     /// The estimate warns of a long run (and how long Cancel takes) before it starts.
@@ -988,7 +983,7 @@ mod tests {
             "butane-sized: short"
         );
         assert!(
-            relax_estimate(MAX_RELAX_ATOMS, 37)[1] > LONG_RELAX,
+            relax_estimate(MAX_RELAX_ATOMS, 100)[1] > LONG_RELAX,
             "warned"
         );
         assert!(relax_cancel_latency(MAX_RELAX_ATOMS) < Duration::from_secs(30));

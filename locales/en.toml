@@ -770,7 +770,6 @@ constraint_fix = "Fixed"
 constraint_distance = "Distance"
 constraint_angle = "Angle"
 constraint_torsion = "Dihedral"
-constraint_conflict = "With both angle and dihedral constraints, OpenBabel ignores the dihedral constraints"
 # Names of edit steps in the undo history.
 undo_bond_length = "Change bond length"
 undo_distance = "Change distance"
@@ -821,7 +820,7 @@ list_separator = ", "
 quadruple_bond = "Quadruple bonds aren't supported in 3D generation"
 multiple_group = "Multiple-group brackets that can't be written out (a repeat count that isn't a number, three or more bonds crossing the bracket, …) can't be made 3D. Set the label to a repeat count (2, 3, …) or remove the brackets"
 too_large = "The structure is too large (up to 999 atoms and 999 bonds)"
-unreadable = "OpenBabel couldn't read the structure"
+unreadable = "Couldn't read the structure"
 generation_failed = "Couldn't generate 3D coordinates"
 # {force_field} is a force field name such as MMFF94.
 force_field = "Couldn't apply the {force_field} force field to this structure"
@@ -1314,7 +1313,6 @@ summary_relaxed = "Points: {total} · atoms: {atoms} · optimized at each point 
 relax_too_many_atoms = "Too many atoms to relax ({atoms}). A relaxed scan takes at most {max} atoms"
 # {points}: grid points asked for; {max}: the most a relaxed scan accepts.
 relax_too_many_points = "Too many points to relax ({points}). A relaxed scan takes at most {max} points"
-relax_conflict = "OpenBabel cannot hold a bond angle and a dihedral together while optimizing (the dihedral would not be held). Scan or restrain only one of them"
 # Shown when some relaxed points ran out of optimization steps before converging.
 unconverged_points = { one = "{n} point did not converge within the optimization steps (ringed in the plot)", other = "{n} points did not converge within the optimization steps (ringed in the plot)" }
 # Tooltip line of a point whose optimization did not converge.
@@ -1337,7 +1335,6 @@ remaining = " · about {remaining} left ({per_point} per point)"
 cancelled = " · Cancelled"
 # Appended to the progress text (keep the leading " · ").
 done = " · Done"
-drift = "While scanning, OpenBabel's force field was used for another molecule (such as an optimization in another document), so the energy reference may differ between points. Scan again once the other calculations have finished"
 failed_points = { one = "{n} point could not be computed (left blank in the plot)", other = "{n} points could not be computed (left blank in the plot)" }
 
 [scan.export]
