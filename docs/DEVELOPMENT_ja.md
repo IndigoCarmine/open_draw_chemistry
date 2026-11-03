@@ -18,7 +18,7 @@ ChemDraw がある PC では ChemDraw の設定は一切変更しません。後
 
 ## ソースからビルドする
 
-このアプリには [OpenBabel](https://openbabel.org) が必須です（3D 生成・SMILES・3D ファイルの読み込み）。
+このアプリには [OpenBabel](https://openbabel.org) が必須です（3D 生成・3D ファイルの読み込み）。
 [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs) を通してリンクします。最初に一度（openbabel_rs を更新したときも）
 ビルド済みの OpenBabel を取得してください（`bash` と、`gh` または `curl` が必要です）。
 

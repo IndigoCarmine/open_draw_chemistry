@@ -1,5 +1,4 @@
-//! The drawn structure as an MDL molfile (V2000), the form the 3D builder (and OpenBabel, for
-//! SMILES) reads it in.
+//! The drawn structure as an MDL molfile (V2000), the form the 3D builder reads it in.
 //!
 //! Hydrogens are left implicit: the reader fills each atom's valence, and [`super::generate`]
 //! makes them explicit. Abbreviations ("Ph", "OMe", "CO_2Et") are expanded

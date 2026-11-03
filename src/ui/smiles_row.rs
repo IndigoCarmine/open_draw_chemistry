@@ -2,7 +2,7 @@
 //! button, styled like the library panel's rows.
 //!
 //! The SMILES is computed only when the analysed structures change, on a background thread
-//! (OpenBabel can take a moment on a big drawing). The state lives in egui's memory, so the
+//! (the canonical search can take a moment on a big drawing). The state lives in egui's memory, so the
 //! caller only passes what it draws anyway.
 
 use std::collections::HashSet;

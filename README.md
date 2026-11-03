@@ -94,7 +94,7 @@ so ChemDraw and Word can still open it.
 - [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs): the structure editor widget, the IUPAC namer and the analysis panel
 - [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs): ChemDraw file codecs
 - [molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs): pure-Rust molecular mechanics (UFF, MMFF94 and ETKDG ported from RDKit), used for 3D generation, optimisation and scans
-- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs): Rust bindings to [OpenBabel](https://openbabel.org), used for SMILES and reading 3D files
+- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs): Rust bindings to [OpenBabel](https://openbabel.org), used for 3D generation and reading 3D files
 - [egui](https://github.com/emilk/egui): the UI
 
 ## 📄 License

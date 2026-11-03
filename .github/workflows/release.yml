@@ -62,7 +62,7 @@ jobs:
         run: bash scripts/stage-windows.sh target/stage/windows
 
       # The staged app must find its own OpenBabel, not the build tree's: hide the latter and
-      # ask the app to read a file, generate 3D models, write a SMILES and export.
+      # ask the app to read a file, generate 3D models and export.
       - name: Check the staged app's OpenBabel
         shell: bash
         run: |
@@ -176,7 +176,7 @@ jobs:
             "$RUNNER_TEMP/openbabel-x86_64" "$RUNNER_TEMP/openbabel-aarch64"
 
       # The bundled app must find its own OpenBabel, not the build machine's: hide the latter
-      # and ask each slice to read a file, generate 3D models, write a SMILES and export.
+      # and ask each slice to read a file, generate 3D models and export.
       - name: Check the bundle's OpenBabel
         run: |
           APP="target/aarch64-apple-darwin/release/bundle/osx/Open DrawChemistry.app"
@@ -288,7 +288,7 @@ jobs:
           bash scripts/stage-linux.sh AppDir
 
       # The staged app must find its own OpenBabel, not the build tree's: hide the latter and
-      # ask the app to read a file, generate 3D models, write a SMILES and export (it exits
+      # ask the app to read a file, generate 3D models and export (it exits
       # before opening a window).
       - name: Check the staged app's OpenBabel
         run: |

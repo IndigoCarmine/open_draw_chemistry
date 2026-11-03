@@ -77,7 +77,8 @@ pub fn init() {
 
 /// Exercise the installed OpenBabel the way the app uses it — read a 3D file (a format
 /// plugin), generate and relax a model under each force field (the force-field plugin and its
-/// data), write a SMILES and export the model — and describe what came out. For
+/// data) and export the model (format plugins again) — and describe what came out. (The
+/// analysis panel's SMILES is chembuider-rs's own writer, so it is not checked here.) For
 /// `open_draw_chemistry --check-openbabel`, which the release workflow runs on each package to
 /// prove that the shipped app finds its OpenBabel. Call [`init`] first.
 ///
@@ -168,13 +169,6 @@ pub fn self_check(installed: bool) -> Result<String, String> {
             report += "export: mol, sdf, xyz, pdb, mol2\n";
         }
     }
-
-    let smiles =
-        crate::smiles::compute(&ethanol, &config).map_err(|e| fail(&report, "SMILES", e))?;
-    if smiles != "CCO" {
-        return Err(fail(&report, "SMILES", format!("{smiles} instead of CCO")));
-    }
-    report += "SMILES: CCO\n";
     Ok(report)
 }
 
@@ -222,7 +216,10 @@ mod tests {
     fn the_self_check_passes_against_the_build_machines_openbabel() {
         init();
         let report = self_check(false).unwrap_or_else(|e| panic!("{e}"));
-        assert!(report.contains("SMILES: CCO"), "{report}");
+        assert!(
+            report.contains("export: mol, sdf, xyz, pdb, mol2"),
+            "{report}"
+        );
     }
 
     /// A cargo target directory (tests, `cargo run`) keeps the build machine's OpenBabel.

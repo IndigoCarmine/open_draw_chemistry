@@ -88,7 +88,7 @@ AcaudaOffice は [acauda-embed](https://github.com/IndigoCarmine/acauda-embed) �
 - [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)：構造式エディタのウィジェット、IUPAC 命名、解析パネル
 - [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs)：ChemDraw ファイルの読み書き
 - [molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs)：純 Rust の分子力学（RDKit から移植した UFF・MMFF94・ETKDG。3D 生成、最適化、スキャン）
-- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs)：[OpenBabel](https://openbabel.org) の Rust バインディング（SMILES、3D ファイルの読み込み）
+- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs)：[OpenBabel](https://openbabel.org) の Rust バインディング（3D 生成、3D ファイルの読み込み）
 - [egui](https://github.com/emilk/egui)：UI
 
 ## 📄 ライセンス

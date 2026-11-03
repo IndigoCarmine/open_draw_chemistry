@@ -18,7 +18,7 @@ For diagnosis, the server logs what the container asks for when its `LocalServer
 
 ## Building from source
 
-The app requires [OpenBabel](https://openbabel.org) (3D generation, SMILES, reading 3D files),
+The app requires [OpenBabel](https://openbabel.org) (3D generation, reading 3D files),
 linked through [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs). Fetch its prebuilt
 OpenBabel once (and again after bumping openbabel_rs); the script needs `bash` and `gh` or
 `curl`:
