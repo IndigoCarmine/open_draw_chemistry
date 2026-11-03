@@ -6,8 +6,7 @@ edition = "2024"
 rust-version = "1.95"
 description = "A chemical structure and reaction drawing application (ChemDraw-compatible CDX/CDXML)"
 authors = ["IndigoCarmine"]
-# GPL because the 3D builder links OpenBabel (GPL-2.0).
-license = "GPL-2.0-or-later"
+license = "AGPL-3.0-or-later"
 repository = "https://github.com/IndigoCarmine/open_draw_chemistry"
 readme = "README.md"
 
@@ -58,8 +57,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # The startup update check and automatic install (see `src/update/`): the ed25519 and SHA-256
 # that verify a download, and the rest for comparing versions, vetting URLs, the download's
-# temporary directory and the Release page. Mind the licences of anything added here:
-# OpenBabel is GPL-2.0-only, which rules out what is only Apache-2.0, such as ring and openssl.
+# temporary directory and the Release page.
 ed25519-dalek = { version = "3.0.0", default-features = false }
 sha2 = { version = "0.11.1", default-features = false }
 semver = "1.0.28"

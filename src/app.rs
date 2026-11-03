@@ -1112,7 +1112,7 @@ impl OpenDrawApp {
                 ui.label(format!("Version {}", crate::APP_VERSION));
                 ui.separator();
                 ui.label(env!("CARGO_PKG_DESCRIPTION"));
-                ui.label("License: GPL-2.0-or-later");
+                ui.label("License: AGPL-3.0-or-later");
                 ui.hyperlink(env!("CARGO_PKG_REPOSITORY"));
             });
         self.show_about = open;

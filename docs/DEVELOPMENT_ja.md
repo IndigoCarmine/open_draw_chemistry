@@ -94,11 +94,10 @@ open-draw-chemistry-update-v1
 
 `cargo test real_ -- --ignored` は実際の API とダウンロードの経路をネットワーク越しに確認します。
 
-### HTTPS とライセンス
+### HTTPS
 
-アプリがリンクする OpenBabel は **GPL-2.0-only** なので、Apache-2.0 だけのものはリンクできません
-（`MIT OR Apache-2.0` は MIT として使うので問題ありません）。このため `ring`（と、それを使う rustls）も
-`openssl` クレートも使えず、HTTPS は OS のものを使います:
+アプリのライセンスは **AGPL-3.0-or-later** で、Apache-2.0・MIT・BSD などのコードを組み込めます。
+HTTPS は OS のものを使うので、TLS ライブラリはリンクも同梱もしません:
 
 | プラットフォーム | HTTPS |
 | --- | --- |
@@ -108,8 +107,7 @@ open-draw-chemistry-update-v1
 Linux に `curl` がないと、更新の確認はオフラインのときと同じく黙って失敗し、更新は案内されません。
 `.deb` は `curl` パッケージを recommends にしています。
 
-CI が実行する `scripts/check-linked-crates.sh` は、`ring`・`rustls`・`openssl` が 3 つのプラットフォームの
-どれかのビルドに入ると失敗します。`openssl` は `Cargo.lock` と、`cfg` を無視する
+`openssl` は `Cargo.lock` と、`cfg` を無視する
 `cargo tree --target all` の出力には残ります。`native-tls` が Linux 向けに宣言しているためですが、
 このアプリは Linux で `native-tls` を使わないので、ビルドされることはありません。
 

@@ -32,7 +32,6 @@ jobs:
 
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: bash scripts/check-linked-crates.sh
       - run: bash scripts/test-update-key-scripts.sh
 
   test:
