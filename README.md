@@ -78,6 +78,17 @@ open_draw_chemistry.exe --register-ole     # register
 open_draw_chemistry.exe --unregister-ole   # remove exactly what was registered
 ```
 
+## 📎 ChemDraw objects in AcaudaOffice (Windows, macOS, Linux)
+
+AcaudaOffice can use this app as its editor for ChemDraw objects, through
+[acauda-embed](https://github.com/IndigoCarmine/acauda-embed), with no COM and no registry. Copy
+[`installer/acauda/open-draw-chemistry.toml`](installer/acauda/open-draw-chemistry.toml) into
+AcaudaOffice's handler folder (設定 > 外部エディター > フォルダーを開く) and set its `command` to the
+installed program. Then Insert > Object makes a new structure, `.cdx` and `.cdxml` files can be
+inserted, and double-clicking an object opens it here in its own tab. Edits appear in the document
+as you make them, and every object opens in the same window. The object stays a ChemDraw object,
+so ChemDraw and Word can still open it.
+
 ## 🧱 Built on
 
 - [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs): the structure editor widget, the IUPAC namer and the analysis panel

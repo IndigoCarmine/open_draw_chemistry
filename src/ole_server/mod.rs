@@ -25,6 +25,7 @@ pub mod script;
 use std::io::Write as _;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// The server's log file (`--ole-log <file>`): a COM-launched process has no console, so this
 /// is where to see what a container asked for.
@@ -194,8 +195,14 @@ pub struct AppBridge {
     rx: Receiver<ToApp>,
     notify: Notifier,
     repaint: Arc<Mutex<Option<egui::Context>>>,
-    /// The process was started by COM (`-Embedding`): it ends once no embedded object is left.
+    /// The process was started by COM (`-Embedding`) or by AcaudaOffice ([`crate::acauda`]): it
+    /// ends once no embedded object is left.
     pub launched_by_com: bool,
+    /// Send edits to the container without waiting for a save, this long after the first one
+    /// (AcaudaOffice shows them at once). `None` under COM: saving is what writes there.
+    pub live_updates: Option<Duration>,
+    /// When the edit [`live_updates`](Self::live_updates) is waiting to send was noticed.
+    pub edited_at: Option<Instant>,
     /// A scripted edit to apply to the first embedded document (testing; see [`script`]).
     pub script: Option<script::Script>,
     /// An embedded document has been opened in this session.
@@ -258,6 +265,8 @@ pub fn channel(
             },
             repaint: Arc::clone(&repaint),
             launched_by_com,
+            live_updates: None,
+            edited_at: None,
             script: None,
             seen_object: false,
             idle: false,

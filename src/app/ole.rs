@@ -2,6 +2,8 @@
 //! tabs; saving such a tab writes into the container's document, closing it ends the editing
 //! session, and a COM-launched process quits once no embedded object is left.
 
+use std::time::Instant;
+
 use super::OpenDrawApp;
 use crate::document::{Document, Embedded};
 use crate::io::{self, Format};
@@ -58,7 +60,34 @@ impl OpenDrawApp {
             }
         }
         self.run_ole_script();
+        self.send_live_updates(ctx);
         self.quit_when_served(ctx);
+    }
+
+    /// Where the container shows edits at once (see [`AppBridge::live_updates`]), write them
+    /// back a moment after they are made, between gestures, as if they were saved.
+    fn send_live_updates(&mut self, ctx: &egui::Context) {
+        let Some(bridge) = &mut self.ole else { return };
+        let Some(delay) = bridge.live_updates else {
+            return;
+        };
+        let edited: Vec<usize> = (0..self.docs.len())
+            .filter(|&i| self.docs[i].embedded.is_some() && self.docs[i].is_dirty())
+            .collect();
+        if edited.is_empty() {
+            bridge.edited_at = None;
+            return;
+        }
+        let waited = bridge.edited_at.get_or_insert_with(Instant::now).elapsed();
+        let wait = delay.saturating_sub(waited);
+        if !wait.is_zero() || ctx.input(|i| i.pointer.any_down()) {
+            ctx.request_repaint_after(wait.max(delay / 4));
+            return;
+        }
+        bridge.edited_at = None;
+        for i in edited {
+            self.save_embedded(i);
+        }
     }
 
     fn open_embedded(
@@ -311,6 +340,53 @@ mod tests {
             app.quit_confirmed,
             "a COM-launched server quits with its last object"
         );
+    }
+
+    #[test]
+    fn live_updates_write_edits_back_without_a_save() {
+        let (mut app, side) = served_app();
+        app.ole.as_mut().unwrap().live_updates = Some(std::time::Duration::ZERO);
+        side.send(ToApp::Open {
+            id: 4,
+            cdx: Some(water_cdx()),
+            host: word(),
+        });
+        let ctx = egui::Context::default();
+        app.poll_ole(&ctx);
+        assert!(side.rx.try_recv().is_err(), "nothing was edited");
+        app.docs[0]
+            .editor
+            .molecule
+            .add_atom("N".to_owned(), [2.0, 0.0], 0);
+        app.poll_ole(&ctx);
+        let Ok(ToServer::Update { id: 4, .. }) = side.rx.try_recv() else {
+            panic!("no update")
+        };
+        assert!(!app.docs[0].is_dirty());
+        app.poll_ole(&ctx);
+        assert!(side.rx.try_recv().is_err(), "sent once");
+    }
+
+    #[test]
+    fn live_updates_wait_a_moment_and_are_off_under_com() {
+        let (mut app, side) = served_app();
+        side.send(ToApp::Open {
+            id: 5,
+            cdx: Some(water_cdx()),
+            host: word(),
+        });
+        let ctx = egui::Context::default();
+        app.poll_ole(&ctx);
+        app.docs[0]
+            .editor
+            .molecule
+            .add_atom("N".to_owned(), [2.0, 0.0], 0);
+        app.poll_ole(&ctx);
+        assert!(side.rx.try_recv().is_err(), "COM writes on a save");
+        app.ole.as_mut().unwrap().live_updates = Some(std::time::Duration::from_secs(60));
+        app.poll_ole(&ctx);
+        assert!(side.rx.try_recv().is_err(), "too soon");
+        assert!(app.docs[0].is_dirty());
     }
 
     #[test]
