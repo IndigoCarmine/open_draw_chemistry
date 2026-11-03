@@ -896,13 +896,6 @@ fn progress_row(ui: &mut egui::Ui, run: &Run) {
         .iter()
         .filter(|e| e.is_some_and(f64::is_nan))
         .count();
-    if run.drifted() {
-        ui.label(
-            RichText::new(t!("scan.progress.drift"))
-                .size(11.0)
-                .color(warn_color(ui)),
-        );
-    }
     if failed > 0 {
         ui.label(muted(ui, tn!("scan.progress.failed_points", failed)));
     }

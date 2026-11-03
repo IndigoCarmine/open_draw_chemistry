@@ -276,7 +276,7 @@ mod engine {
     use openbabel::Molecule as ObMol;
 
     use super::{Error, Format3d, MAX_ATOMS, Opened3d};
-    use crate::three_d::{Atom3d, Bond3d, ForceField, Model3d};
+    use crate::three_d::{self, Atom3d, Bond3d, ForceField, Model3d};
 
     pub fn read(format: Format3d, text: &str, records: usize) -> Result<Opened3d, Error> {
         let mut mol =
@@ -339,11 +339,14 @@ mod engine {
                 order: u8::try_from(b.order()).unwrap_or(1),
             })
             .collect();
+        let molfile = mol
+            .write("mol")
+            .map_err(|_| Error::Unreadable(Format3d::Mol))?;
         let (force_field, energy) = [ForceField::default(), ForceField::Uff]
             .into_iter()
             .find_map(|ff| {
-                mol.energy(ff.id())
-                    .filter(|e| e.is_finite())
+                three_d::energy_of_molfile(&molfile, ff)
+                    .ok()
                     .map(|e| (ff, e))
             })
             .unwrap_or((ForceField::default(), f64::NAN));
@@ -352,12 +355,9 @@ mod engine {
             bonds,
             force_field,
             energy,
-            energy_unit: openbabel::forcefield_energy_unit(force_field.id())
-                .unwrap_or_else(|| "kcal/mol".to_owned()),
+            energy_unit: three_d::ENERGY_UNIT.to_owned(),
             formula: mol.formula(),
-            molfile: mol
-                .write("mol")
-                .map_err(|_| Error::Unreadable(Format3d::Mol))?,
+            molfile,
         })
     }
 

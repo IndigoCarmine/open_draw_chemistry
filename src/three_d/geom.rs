@@ -1,11 +1,11 @@
 //! Pure geometry for editing a 3D model: vectors, measurements, the bond graph, and the edits
 //! (bond length, bond angle, dihedral, distance solving) that move one side of a bond.
 //!
-//! Nothing here knows about OpenBabel or the UI: coordinates are plain `[f64; 3]` in ångström
+//! Nothing here knows about the force fields or the UI: coordinates are plain `[f64; 3]` in ångström
 //! and connectivity is a list of atom-index pairs, so every edit can be tested on hand-built
 //! structures. The reference design is chem_3d_builder_rs's `geom3d.rs` / `dihedral.rs` /
 //! `ik.rs`; the differences are that the graph comes from the model's bond list rather than
-//! from OpenBabel, that bond lengths and angles can be set as well as torsions, and that the
+//! from the molecule library, that bond lengths and angles can be set as well as torsions, and that the
 //! side that moves is the smaller one unless the caller pins an atom.
 
 use std::collections::VecDeque;
@@ -86,8 +86,8 @@ pub fn angle(a: Vec3, b: Vec3, c: Vec3) -> f64 {
     (dot(u, v) / (nu * nv)).clamp(-1.0, 1.0).acos().to_degrees()
 }
 
-/// The dihedral a–b–c–d in degrees, in `(-180, 180]`, with the IUPAC sign (the same one
-/// OpenBabel's `torsion` reports): turning the c side by +θ about the b→c axis
+/// The dihedral a–b–c–d in degrees, in `(-180, 180]`, with the IUPAC sign (the same one the
+/// force field's dihedral restraint takes): turning the c side by +θ about the b→c axis
 /// ([`rotate_about_axis`]) adds θ.
 pub fn dihedral(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> f64 {
     let b1 = sub(b, a);

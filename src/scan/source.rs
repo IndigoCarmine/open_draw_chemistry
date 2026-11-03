@@ -48,7 +48,7 @@ pub enum Point {
     },
 }
 
-/// The structure the scan starts from, as OpenBabel reads it.
+/// The structure the scan starts from, as the force field reads it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reference {
     pub molfile: String,
@@ -285,7 +285,7 @@ impl Source {
 
 /// An assembly point as a relaxed scan minimises it. Each molecule keeps the place and the
 /// orientation the design gives it — what the scanned parameters (a step's number, a cell
-/// constant, a hand-placed molecule's pose) decide — while its shape relaxes freely. OpenBabel
+/// constant, a hand-placed molecule's pose) decide — while its shape relaxes freely. The minimiser
 /// can fix atoms but not a centroid or an orientation, so the minimiser moves every atom and
 /// [`Placed::hold`] then puts each molecule back rigidly: its centroid where the rigid
 /// structure has it, turned to fit the rigid molecule best (see [`math::fit_rotation`]).

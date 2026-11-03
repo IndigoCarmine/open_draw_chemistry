@@ -25,8 +25,7 @@ pub struct MenuState<'a> {
     pub check_updates: bool,
     pub view: ViewMode,
     pub recent: &'a [PathBuf],
-    /// A 3D model can be generated now: there is a document, OpenBabel is built in and no 3D
-    /// work is running.
+    /// A 3D model can be generated now: there is a document and no 3D work is running.
     pub can_generate_3d: bool,
     /// There is a 3D model to optimise or export (optimising also needs no work running).
     pub can_optimize_3d: bool,

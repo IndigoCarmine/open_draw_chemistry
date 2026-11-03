@@ -42,7 +42,8 @@ moleucle_3dview_rs = { git = "https://github.com/IndigoCarmine/moleucle_3dview_r
 # The viewer's vector types, needed to drive its camera and renderer directly.
 lin_alg = { version = "1.4.3", features = ["computer_graphics"] }
 
-# 2D → 3D generation, force-field optimisation, SMILES and 3D file reading (see `src/three_d/`).
+# SMILES, 3D file reading and the 2D depiction of a read structure (see `src/smiles.rs` and
+# `src/three_d/read.rs`); the force fields are molecule_optimizer_rs's (below).
 # Required: openbabel-sys links the prebuilt OpenBabel that `scripts/fetch-openbabel.sh`
 # downloads (or builds OpenBabel from source with CMake). Every release ships its libraries,
 # plugins and data beside the executable (see .github/workflows/release.yml).
@@ -52,6 +53,11 @@ openbabel = { git = "https://github.com/IndigoCarmine/openbabel_rs", tag = "v0.4
 # to a rev because it is not on crates.io; `default-features = false` because only hosts read
 # manifests.
 acauda-embed = { git = "https://github.com/IndigoCarmine/acauda-embed", rev = "9b78881a2d703fe97483f64f0c99cb851226df80", default-features = false }
+
+# Molecular mechanics (see `src/three_d/engine.rs` and `src/scan/energy.rs`): UFF and
+# MMFF94/94s energies and minimisation, and the ETKDG embedding that builds 3D models from the
+# drawing. Pure Rust (ports of RDKit's, BSD-3-Clause). Pinned to a rev: not on crates.io.
+molecule_optimizer_rs = { git = "https://github.com/IndigoCarmine/molecule_optimizer_rs", rev = "0272c48ad0365fc6c3772604a39a624aa943bc51" }
 
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -128,6 +134,11 @@ CDX/CDXML files.
 """
 
 # Release binaries: smaller and faster, at the cost of longer link times.
+# The force fields and the embedder are numeric loops that run tens of times slower unoptimised;
+# optimise them in debug builds and tests too, so Generate, Optimize and scans keep their speed.
+[profile.dev.package.molecule_optimizer_rs]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "thin"

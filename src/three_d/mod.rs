@@ -1,11 +1,11 @@
-//! 2D → 3D: turning the drawn structure into a 3D model with OpenBabel.
+//! 2D → 3D: turning the drawn structure into a 3D model with molecule_optimizer_rs.
 //!
 //! The pipeline is
 //!
 //! 1. [`molfile::to_molfile`] — the editor's [`Molecule`] (abbreviations expanded) as an MDL
-//!    molfile, with wedges kept so OpenBabel sees the drawn stereochemistry;
-//! 2. [`generate`] — OpenBabel adds the hydrogens, builds 3D coordinates and relaxes them under
-//!    the chosen [`ForceField`], giving a [`Model3d`];
+//!    molfile, with wedges kept so the embedder sees the drawn stereochemistry;
+//! 2. [`generate`] — the hydrogens are added, ETKDG embeds the structure in 3D and it is
+//!    relaxed under the chosen [`ForceField`], giving a [`Model3d`];
 //! 3. [`optimize`] / [`export`] — further minimisation, and writing the model out.
 //!
 //! [`job`] runs the slow part on a background thread.
@@ -27,36 +27,32 @@ pub mod runtime;
 pub use edit::{Constraint, Edit3d};
 pub use job::{Job, JobState, Task};
 
-/// Conjugate-gradient steps spent relaxing a freshly generated model.
+/// Minimiser iterations (BFGS) spent relaxing a freshly generated model, times the engine's
+/// generate budget.
 const GENERATE_STEPS: u32 = 500;
-/// Steps spent by an explicit "optimise" on an existing model.
+/// Minimiser iterations spent by an explicit "optimise" on an existing model.
 pub const OPTIMIZE_STEPS: u32 = 2500;
 
-/// The force fields offered for relaxing a model, as OpenBabel names them.
+/// The force fields offered for relaxing a model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ForceField {
+    /// Also what a setting saved while GAFF was offered comes back as.
     #[default]
+    #[serde(alias = "Gaff")]
     Mmff94,
     Mmff94s,
     Uff,
-    Gaff,
 }
 
 impl ForceField {
-    pub const ALL: [ForceField; 4] = [
-        ForceField::Mmff94,
-        ForceField::Mmff94s,
-        ForceField::Uff,
-        ForceField::Gaff,
-    ];
+    pub const ALL: [ForceField; 3] = [ForceField::Mmff94, ForceField::Mmff94s, ForceField::Uff];
 
-    /// OpenBabel's id for the force field, which is also how it is shown.
+    /// The force field's name, which is also how it is shown.
     pub fn id(self) -> &'static str {
         match self {
             ForceField::Mmff94 => "MMFF94",
             ForceField::Mmff94s => "MMFF94s",
             ForceField::Uff => "UFF",
-            ForceField::Gaff => "GAFF",
         }
     }
 }
@@ -134,7 +130,7 @@ pub struct Model3d {
     /// The force field the geometry was relaxed with, and its final energy.
     pub force_field: ForceField,
     pub energy: f64,
-    /// The force field's energy unit: MMFF94 reports kcal/mol, UFF and GAFF kJ/mol.
+    /// The energy's unit (kcal/mol).
     pub energy_unit: String,
     /// The molecular formula, hydrogens included (Hill order).
     pub formula: String,
@@ -167,13 +163,13 @@ pub enum Error {
     MultipleGroup,
     /// More atoms or bonds than a V2000 molfile holds.
     TooLarge,
-    /// OpenBabel could not read the structure handed to it.
+    /// The structure handed to the force field could not be read.
     Unreadable,
     /// No usable 3D geometry came out, even after retrying.
     GenerationFailed,
     /// The force field cannot be set up for this structure (an atom it has no type for).
     ForceField(ForceField),
-    /// OpenBabel could not write the model in this format.
+    /// The model could not be written in this format.
     ExportFailed(Export3d),
 }
 
@@ -203,8 +199,8 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// Generate a 3D model of `mol` relaxed under `force_field`. Slow (OpenBabel builds and
-/// minimises the structure): call it off the UI thread, as [`Job`] does.
+/// Generate a 3D model of `mol` relaxed under `force_field`. Slow on a large structure (it is
+/// embedded and minimised): call it off the UI thread, as [`Job`] does.
 pub fn generate(
     mol: &Molecule,
     config: &Config,
@@ -233,18 +229,19 @@ pub fn optimize_with(
     engine::optimize(&model.molfile, force_field, OPTIMIZE_STEPS, constraints)
 }
 
-/// The minimiser behind [`optimize_with`], for a molecule already held by OpenBabel: a relaxed
-/// scan minimises each point with it (see `scan::energy`).
-pub(crate) use engine::{Relaxed, Watch, relax_watched, run as minimise_run};
+/// The minimiser behind [`optimize_with`]: a relaxed scan minimises each point with it (see
+/// `scan::energy`).
+pub(crate) use engine::{
+    ENERGY_UNIT, Relaxed, descend, energy as energy_of_molfile, field, read as read_molfile, relax,
+};
 
 #[cfg(test)]
 pub(crate) use engine::tests::model_from_molfile;
 
-/// The most minimiser steps a restrained [`optimize_with`] takes.
+/// The most minimiser iterations a restrained [`optimize_with`] takes.
 pub const RESTRAINED_OPTIMIZE_STEPS: u32 = OPTIMIZE_STEPS * engine::RESTRAINED_BUDGET;
 
-/// The single-point energy of `model`'s current geometry under `force_field`, in the force
-/// field's unit. For the energy after a hand edit; slow-ish, so off the UI thread.
+/// The single-point energy of `model`'s current geometry under `force_field` (kcal/mol). For the energy after a hand edit; slow-ish, so off the UI thread.
 pub fn energy(model: &Model3d, force_field: ForceField) -> Result<f64, Error> {
     engine::energy(&model.molfile, force_field)
 }
