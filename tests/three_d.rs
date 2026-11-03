@@ -132,14 +132,12 @@ fn exports_read_back_with_every_atom() {
     let model = three_d::generate(&ethanol(), &Config::default(), ForceField::Mmff94).unwrap();
     for format in Export3d::ALL {
         let text = three_d::export(&model, format).unwrap_or_else(|e| panic!("{format:?}: {e}"));
-        let back = openbabel::Molecule::parse(&text, format.extension())
-            .unwrap_or_else(|e| panic!("{format:?} back: {e}"));
-        assert_eq!(
-            back.num_atoms() as usize,
-            model.atoms.len(),
-            "{format:?} atoms"
+        let back = read_back(&text, format);
+        assert_eq!(back.num_atoms(), model.atoms.len(), "{format:?} atoms");
+        assert!(
+            molecule_optimizer_rs::perception::has_3d_coords(&back),
+            "{format:?} keeps the 3D coordinates"
         );
-        assert!(back.has_3d(), "{format:?} keeps the 3D coordinates");
     }
 }
 
@@ -163,4 +161,19 @@ fn mol2_export_reads_back_with_the_same_coordinates() {
             }
         }
     }
+}
+
+/// An exported file read back by molecule_optimizer_rs's readers.
+fn read_back(text: &str, format: Export3d) -> molecule_optimizer_rs::Molecule {
+    use molecule_optimizer_rs::io::{Format, read_str};
+    let format_ = match format {
+        Export3d::Mol => Format::Mol,
+        Export3d::Sdf => Format::Sdf,
+        Export3d::Xyz => Format::Xyz,
+        Export3d::Pdb => Format::Pdb,
+        Export3d::Mol2 => Format::Mol2,
+    };
+    read_str(text, format_)
+        .unwrap_or_else(|e| panic!("{format:?} back: {e}"))
+        .remove(0)
 }

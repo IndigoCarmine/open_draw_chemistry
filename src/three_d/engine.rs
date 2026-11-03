@@ -406,35 +406,54 @@ pub(super) mod tests {
         model(&mol, &mol.coords, force_field, energy).expect("model")
     }
 
-    /// The 2D molfile the app hands [`generate`] for `smiles` (OpenBabel's layout of it).
-    fn drawing(smiles: &str) -> String {
-        let mut mol = openbabel::Molecule::parse(smiles, "smi").expect("smiles");
-        assert!(mol.generate_2d());
-        mol.write("mol").expect("molfile")
+    /// A 2D molfile as a structure editor writes it (laid out by RDKit once), from
+    /// `tests/data/drawn/`.
+    fn drawing(name: &str) -> &'static str {
+        macro_rules! drawn {
+            ($($name:literal),*) => {
+                match name {
+                    $($name => include_str!(concat!("../../tests/data/drawn/", $name, ".mol")),)*
+                    _ => panic!("no drawing of {name}"),
+                }
+            };
+        }
+        drawn!(
+            "butane",
+            "benzene",
+            "acetic_acid",
+            "acetamide",
+            "acetate",
+            "methylammonium",
+            "ammonium_acetate",
+            "nitromethane",
+            "pyridinium",
+            "pentane",
+            "ethanol"
+        )
     }
 
-    fn built(smiles: &str, force_field: ForceField) -> Model3d {
-        generate(&drawing(smiles), force_field, GENERATE_STEPS)
-            .unwrap_or_else(|e| panic!("{smiles} under {force_field}: {e:?}"))
+    fn built(name: &str, force_field: ForceField) -> Model3d {
+        generate(drawing(name), force_field, GENERATE_STEPS)
+            .unwrap_or_else(|e| panic!("{name} under {force_field}: {e:?}"))
     }
 
     fn pentane() -> Model3d {
-        built("CCCCC", ForceField::Uff)
+        built("pentane", ForceField::Uff)
     }
 
     /// Structures with the groups a force field types specially: alkane, aromatic ring,
     /// carboxylic acid, amide, carboxylate, ammonium, a salt (two ions), a nitro group, an
     /// aromatic cation.
-    const TYPED: [(&str, &str, &str); 9] = [
-        ("butane", "CCCC", "C4H10"),
-        ("benzene", "c1ccccc1", "C6H6"),
-        ("acetic acid", "CC(=O)O", "C2H4O2"),
-        ("acetamide", "CC(=O)N", "C2H5NO"),
-        ("acetate", "CC(=O)[O-]", "C2H3O2"),
-        ("methylammonium", "C[NH3+]", "CH6N"),
-        ("ammonium acetate", "[NH4+].CC(=O)[O-]", "C2H7NO2"),
-        ("nitromethane", "C[N+](=O)[O-]", "CH3NO2"),
-        ("pyridinium", "c1cc[nH+]cc1", "C5H6N"),
+    const TYPED: [(&str, &str); 9] = [
+        ("butane", "C4H10"),
+        ("benzene", "C6H6"),
+        ("acetic_acid", "C2H4O2"),
+        ("acetamide", "C2H5NO"),
+        ("acetate", "C2H3O2"),
+        ("methylammonium", "CH6N"),
+        ("ammonium_acetate", "C2H7NO2"),
+        ("nitromethane", "CH3NO2"),
+        ("pyridinium", "C5H6N"),
     ];
 
     /// Every force field sets up on every typed structure, adds the hydrogens it should, and
@@ -442,9 +461,9 @@ pub(super) mod tests {
     /// same energy at the same geometry.
     #[test]
     fn every_force_field_types_the_model_molfile_as_generated() {
-        for (name, smiles, formula) in TYPED {
+        for (name, formula) in TYPED {
             for force_field in ForceField::ALL {
-                let model = built(smiles, force_field);
+                let model = built(name, force_field);
                 assert_eq!(model.formula, formula, "{name} under {force_field}");
                 assert_eq!(model.energy_unit, "kcal/mol");
                 let again = energy(&model.molfile, force_field)
@@ -667,7 +686,7 @@ pub(super) mod tests {
 
     #[test]
     fn exports_every_format() {
-        let m = built("CCO", ForceField::Mmff94);
+        let m = built("ethanol", ForceField::Mmff94);
         for format in Export3d::ALL {
             let text = export(&m.molfile, format).expect("export");
             assert!(!text.is_empty(), "{format:?}");

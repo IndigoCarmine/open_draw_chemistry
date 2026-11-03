@@ -287,12 +287,20 @@ mod tests {
         elements
     }
 
-    /// The formula OpenBabel reads from a molfile, its implicit hydrogens filled in as
+    /// The formula of a molfile, its implicit hydrogens filled in as
     /// [`super::super::generate`] does.
     fn formula(molfile: &str) -> String {
-        let mut ob = openbabel::Molecule::parse(molfile, "mol").unwrap();
-        ob.add_hydrogens();
-        ob.formula()
+        let mut mol = molecule_optimizer_rs::io::read_molfile(molfile).unwrap();
+        molecule_optimizer_rs::perception::hydrogens::add_hydrogens(&mut mol);
+        let atoms: Vec<super::super::Atom3d> = mol
+            .atoms()
+            .iter()
+            .map(|a| super::super::Atom3d {
+                element: a.symbol().to_owned(),
+                pos: [0.0; 3],
+            })
+            .collect();
+        super::super::engine::formula(&atoms)
     }
 
     #[test]
