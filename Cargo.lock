@@ -672,8 +672,8 @@ dependencies = [
 
 [[package]]
 name = "chembuider-rs"
-version = "0.4.2"
-source = "git+https://github.com/IndigoCarmine/chembuider-rs?rev=e9fa342a5f01c389098e49894f22340098f1b7fe#e9fa342a5f01c389098e49894f22340098f1b7fe"
+version = "0.4.3"
+source = "git+https://github.com/IndigoCarmine/chembuider-rs?rev=b2c2a6c4ef966af98b912473cf0175c9a8be312b#b2c2a6c4ef966af98b912473cf0175c9a8be312b"
 dependencies = [
  "cdx-file-rs",
  "cfb",
