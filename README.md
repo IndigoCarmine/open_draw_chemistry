@@ -49,7 +49,7 @@ Windows, macOS and Linux.
 ## 🚀 Get started
 
 **Download** the installer or portable package for your platform from the
-[website](https://indigocarmine.github.io/open_draw_chemistry-site/en/) or the [latest release](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest). OpenBabel is bundled, so there is nothing else to install.
+[website](https://indigocarmine.github.io/open_draw_chemistry-site/en/) or the [latest release](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest). There is nothing else to install.
 
 > macOS: the app isn't notarised yet, so the first time, right-click it and choose **Open**.
 > Windows: the installer isn't signed yet, so SmartScreen may warn you.
@@ -57,7 +57,6 @@ Windows, macOS and Linux.
 **Build from source** (Rust 1.95+):
 
 ```bash
-bash scripts/fetch-openbabel.sh   # one-time: fetch the prebuilt OpenBabel
 cargo run -- path/to/file.cdx     # the file is optional
 ```
 
@@ -91,10 +90,9 @@ so ChemDraw and Word can still open it.
 
 ## 🧱 Built on
 
-- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs): the structure editor widget, the IUPAC namer and the analysis panel
+- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs): the structure editor widget, SMILES, the IUPAC namer and the analysis panel
 - [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs): ChemDraw file codecs
-- [molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs): pure-Rust molecular mechanics (UFF, MMFF94 and ETKDG ported from RDKit), used for 3D generation, optimisation and scans
-- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs): Rust bindings to [OpenBabel](https://openbabel.org), used for 3D generation and reading 3D files
+- [molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs): pure-Rust molecular mechanics (UFF, MMFF94 and ETKDG ported from RDKit), used for 3D generation, optimisation and scans, and for reading 3D files
 - [egui](https://github.com/emilk/egui): the UI
 
 ## 📄 License

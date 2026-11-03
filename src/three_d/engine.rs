@@ -303,6 +303,21 @@ pub(crate) fn model(
     force_field: ForceField,
     energy: f64,
 ) -> Result<Model3d, Error> {
+    let model = assemble(mol, coords, force_field, energy);
+    if usable(&model) {
+        Ok(model)
+    } else {
+        Err(Error::GenerationFailed)
+    }
+}
+
+/// The model of `mol` at `coords`, as it is (a file opened keeps its geometry, usable or not).
+pub(crate) fn assemble(
+    mol: &Molecule,
+    coords: &[[f64; 3]],
+    force_field: ForceField,
+    energy: f64,
+) -> Model3d {
     let mut placed = mol.clone();
     placed.coords = coords.to_vec();
     // Bond orders as the molfile has them: Kekulé, not aromatic.
@@ -331,7 +346,7 @@ pub(crate) fn model(
             },
         })
         .collect();
-    let model = Model3d {
+    Model3d {
         formula: formula(&atoms),
         atoms,
         bonds,
@@ -339,11 +354,6 @@ pub(crate) fn model(
         energy,
         energy_unit: ENERGY_UNIT.to_owned(),
         molfile: io::write_molblock(&placed),
-    };
-    if usable(&model) {
-        Ok(model)
-    } else {
-        Err(Error::GenerationFailed)
     }
 }
 

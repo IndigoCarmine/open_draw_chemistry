@@ -1,5 +1,5 @@
 //! The assembly builder end to end: a benzene monomer built into a stack of rosettes, written
-//! out as PDB, XYZ and MOL2, and read back through OpenBabel with every atom.
+//! out as PDB, XYZ and MOL2, and read back with every atom.
 
 use std::time::Instant;
 
@@ -13,7 +13,7 @@ use open_draw_chemistry::three_d::geom::Clash;
 use open_draw_chemistry::three_d::read::{Format3d, read};
 use open_draw_chemistry::three_d::{Atom3d, Bond3d};
 
-/// Benzene, from the test file through OpenBabel.
+/// Benzene, from the test file through the app's 3D reader.
 fn benzene() -> Component {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/benzene.mol2");
     let text = std::fs::read_to_string(path).unwrap();

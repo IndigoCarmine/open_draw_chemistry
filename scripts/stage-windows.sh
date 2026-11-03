@@ -4,18 +4,14 @@
 #
 #   scripts/stage-windows.sh [dest]        # default: target/stage/windows
 #
-# Run after `cargo build --release` and scripts/fetch-openbabel.sh. The folder gets
+# Run after `cargo build --release`. The folder gets
 #
 #   open_draw_chemistry.exe
-#   openbabel-3.dll, inchi.dll          OpenBabel (from the prebuilt)
-#   *.obf                               its format plugins: OpenBabel looks for them beside
-#                                       openbabel-3.dll
-#   data\                               its data: openbabel_rs uses <exe_dir>\data when it exists
 #   msvcp140.dll, vcruntime140.dll,     the Visual C++ runtime, app-local (see below)
 #   vcruntime140_1.dll
 #
-# The Visual C++ runtime: OpenBabel, its plugins and the app itself are built with /MD, so they
-# load MSVCP140/VCRUNTIME140/VCRUNTIME140_1, which a clean Windows does not have. Microsoft
+# The Visual C++ runtime: the app is built with /MD, so it loads VCRUNTIME140 (and, for any
+# C++ code linked in, MSVCP140/VCRUNTIME140_1), which a clean Windows does not have. Microsoft
 # allows these redistributable DLLs to be deployed app-local (copied beside the executable;
 # see "Redistributing Visual C++ Files" in the Visual Studio docs and the redist list,
 # VC\Redist\MSVC\<version>\...), and the executable's own directory comes first in the DLL
@@ -33,10 +29,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="${1:-$root/target/stage/windows}"
 target_dir="${CARGO_TARGET_DIR:-$root/target}"
 exe="$target_dir/release/open_draw_chemistry.exe"
-ob="${OPENBABEL_SYS_PREBUILT_DIR:-$root/third_party/openbabel-prebuilt}/bin"
 
 [ -f "$exe" ] || { echo "error: $exe not found; run cargo build --release first" >&2; exit 1; }
-[ -f "$ob/openbabel-3.dll" ] || { echo "error: no OpenBabel in $ob; run scripts/fetch-openbabel.sh" >&2; exit 1; }
 
 if [ -z "${VCRUNTIME_DIR:-}" ]; then
   vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
@@ -51,8 +45,6 @@ fi
 rm -rf "$dest"
 mkdir -p "$dest"
 cp "$exe" "$dest/"
-cp "$ob"/*.dll "$ob"/*.obf "$dest/"
-cp -r "$ob/data" "$dest/data"
 for dll in msvcp140.dll vcruntime140.dll vcruntime140_1.dll; do
   cp "$VCRUNTIME_DIR/$dll" "$dest/"
 done

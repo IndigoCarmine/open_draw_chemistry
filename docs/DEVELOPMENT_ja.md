@@ -18,46 +18,18 @@ ChemDraw がある PC では ChemDraw の設定は一切変更しません。後
 
 ## ソースからビルドする
 
-このアプリには [OpenBabel](https://openbabel.org) が必須です（3D 生成・3D ファイルの読み込み）。
-[openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs) を通してリンクします。最初に一度（openbabel_rs を更新したときも）
-ビルド済みの OpenBabel を取得してください（`bash` と、`gh` または `curl` が必要です）。
+外部の化学ツールキットは不要です。3D 生成・分子力学・3D ファイルの読み込みは
+[molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs)、SMILES は
+[chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs) が担うので、ビルドに必要なのは
+Rust ツールチェーン（と各プラットフォームのリンカ：Windows では MSVC Build Tools、macOS では Xcode
+コマンドラインツール、Linux では[Linux でのビルドに必要なパッケージ](#linux-でのビルドに必要なパッケージ)のヘッダ）だけです。
 
 ```bash
-bash scripts/fetch-openbabel.sh   # third_party/openbabel-prebuilt/ に展開（コミットしない）
 cargo run -- path/to/file.cdx     # ファイルの指定は省略可
 ```
 
-`.cargo/config.toml` が `OPENBABEL_SYS_PREBUILT_DIR` をこのディレクトリに向けます。
-Windows では openbabel-sys のビルドスクリプトが OpenBabel の DLL とプラグインを実行ファイルの
-隣にコピーし（Linux / macOS は rpath）、`cargo run` も `cargo test` もそのまま動きます。
-バインディングの小さな C++ シムのために C++ コンパイラ（Windows では MSVC Build Tools）は必要です。
-
-ビルド済みの OpenBabel があるのは `x86_64-pc-windows-msvc`、`x86_64-unknown-linux-gnu`、
-`aarch64-apple-darwin`、`x86_64-apple-darwin` です。ホスト以外のターゲット向けにビルドするときは、
-そのターゲットのビルド済み OpenBabel を別ディレクトリに取得し、ビルドをそこへ向けます。
-
-```bash
-bash scripts/fetch-openbabel.sh x86_64-apple-darwin   # -> third_party/openbabel-prebuilt-x86_64-apple-darwin/
-OPENBABEL_SYS_PREBUILT_DIR=$PWD/third_party/openbabel-prebuilt-x86_64-apple-darwin \
-  cargo build --release --target x86_64-apple-darwin
-```
-
-ビルド済みのないターゲットでは、CMake を入れて `OPENBABEL_SYS_PREBUILT_DIR` を空にし、OpenBabel を
-ソースからビルドしてください（初回は 10〜20 分かかります）。OpenBabel なしのビルドはありません。
-
-リリース版はすべて OpenBabel を同梱しています。
-
-| パッケージ | ライブラリ | プラグイン | データ |
-| --- | --- | --- | --- |
-| Windows（インストーラ・zip） | `.exe` の隣の `openbabel-3.dll`・`inchi.dll` | `.exe` の隣の `*.obf` | `.exe` の隣の `data\` |
-| Linux（`.deb`・AppImage） | `usr/lib/open-draw-chemistry/`（rpath `$ORIGIN/../lib/open-draw-chemistry`） | `usr/lib/open-draw-chemistry/openbabel/` | `usr/share/open-draw-chemistry/openbabel/` |
-| macOS（`.app`・ユニバーサル） | `Contents/Frameworks/`（rpath `@executable_path/../Frameworks`） | `Contents/Frameworks/openbabel/` | `Contents/Resources/openbabel/` |
-
-プラグインとデータの場所は、アプリが起動時に OpenBabel に伝えます（`src/three_d/runtime.rs`）。
-Windows 版は Visual C++ ランタイム（`msvcp140.dll`・`vcruntime140.dll`・`vcruntime140_1.dll`）も
+Windows 版は Visual C++ ランタイム（`msvcp140.dll`・`vcruntime140.dll`・`vcruntime140_1.dll`）を
 アプリと同じフォルダに同梱しているので、`vc_redist.x64.exe` を入れていないまっさらな Windows でも動きます。
-`open_draw_chemistry --check-openbabel` はウィンドウを開かずに同梱の OpenBabel を試します。
-リリースのワークフローは各パッケージでこれを実行します。
 
 ## リリースする
 
@@ -150,18 +122,17 @@ Windows のインストーラも未署名なので、ダウンロード時に Sm
 ## ローカルでインストーラをビルドする
 
 ```bash
-bash scripts/fetch-openbabel.sh
 cargo build --release
 
 # Windows（Inno Setup 6 が必要）：アプリのフォルダ（ポータブル zip の中身）を作ってからインストーラ
 bash scripts/stage-windows.sh           # -> target\stage\windows\
 iscc installer\windows.iss              # -> dist\
 
-# Linux .deb（cargo-deb と patchelf が必要）
-bash scripts/stage-linux.sh target/deb-root && mkdir -p target/deb-root/DEBIAN
+# Linux .deb（cargo-deb が必要）
+bash scripts/stage-linux.sh target/deb-root
 cargo install cargo-deb && cargo deb --no-build
 
-# macOS ユニバーサル .app（cargo-bundle と両アーキテクチャの OpenBabel が必要）
+# macOS ユニバーサル .app（cargo-bundle と両アーキテクチャの Rust ターゲットが必要）
 # .github/workflows/release.yml の macos ジョブ（scripts/bundle-macos.sh）を参照してください。
 # さらに .dmg を作る場合は `brew install create-dmg` が必要です
 ```

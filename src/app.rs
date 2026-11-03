@@ -1958,7 +1958,7 @@ mod tests {
         assert!(commands.is_empty());
     }
 
-    /// A hand-built water model, so the assembly tests need no OpenBabel generation.
+    /// A hand-built water model, so the assembly tests need no 3D generation.
     fn water_model() -> three_d::Model3d {
         use three_d::{Atom3d, Bond3d};
         let atom = |element: &str, pos| Atom3d {

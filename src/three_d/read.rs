@@ -1,11 +1,11 @@
 //! Opening 3D structure files (MOL2, PDB, XYZ, MOL, SDF) as documents.
 //!
-//! OpenBabel reads the file. Its coordinates become the document's [`Model3d`] as they are —
-//! nothing is regenerated or relaxed — with every explicit hydrogen kept. The editor gets a 2D
-//! depiction of the same structure: OpenBabel's 2D layout (`gen2D`) of the heavy atoms, scaled
-//! to the editor's 1.5-unit bonds, with the hydrogens on carbon and on heteroatoms left to the
-//! labels as implicit ones. Bond orders come out Kekulé (OpenBabel kekulizes aromatic input),
-//! and formal charges are kept.
+//! molecule_optimizer_rs reads the file. Its coordinates become the document's [`Model3d`] as
+//! they are — nothing is regenerated or relaxed — with every explicit hydrogen kept. The editor
+//! gets a 2D depiction of the same structure: the depictor's 2D layout (a port of RDKit's
+//! `Compute2DCoords`) of the heavy atoms, scaled to the editor's 1.5-unit bonds, with the
+//! hydrogens on carbon and on heteroatoms left to the labels as implicit ones. Bond orders come
+//! out Kekulé, and formal charges are kept.
 //!
 //! A file whose coordinates are flat (a 2D molfile) has no 3D model to show: its own layout is
 //! used for the drawing and the model is left to be generated on demand.
@@ -18,10 +18,10 @@ use chembuider_rs::Molecule;
 use super::Model3d;
 
 /// The most atoms (hydrogens included) a file may hold. The 2D editor is no place for a
-/// protein, and OpenBabel's bond perception and layout grow quickly with size.
+/// protein, and bond perception and layout grow quickly with size.
 pub const MAX_ATOMS: usize = 999;
 
-/// The largest file read at all, before OpenBabel sees it.
+/// The largest file read at all, before it is parsed.
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Average bond length of the editor's drawings, in its units.
@@ -63,17 +63,6 @@ impl Format3d {
         }
     }
 
-    /// OpenBabel's format id.
-    pub fn openbabel_id(self) -> &'static str {
-        match self {
-            Format3d::Mol2 => "mol2",
-            Format3d::Pdb => "pdb",
-            Format3d::Xyz => "xyz",
-            Format3d::Mol => "mol",
-            Format3d::Sdf => "sdf",
-        }
-    }
-
     pub fn description(self) -> &'static str {
         match self {
             Format3d::Mol2 => "Tripos MOL2",
@@ -95,7 +84,7 @@ pub struct Opened3d {
     /// How many structures the file holds; only the first is read.
     pub records: usize,
     /// The depiction is a projection of the 3D coordinates rather than a proper 2D layout
-    /// (OpenBabel's layout failed), so it wants a cleanup.
+    /// (the depictor failed), so it wants a cleanup.
     pub projected: bool,
 }
 
@@ -107,7 +96,7 @@ pub enum Error {
     Empty,
     /// More than [`MAX_ATOMS`] atoms (the count found).
     TooManyAtoms(usize),
-    /// OpenBabel could not read the file in this format.
+    /// The file could not be read in this format.
     Unreadable(Format3d),
 }
 
@@ -139,7 +128,7 @@ pub fn read(format: Format3d, text: &str) -> Result<Opened3d, Error> {
     if text.trim().is_empty() {
         return Err(Error::Empty);
     }
-    // Refuse a protein before OpenBabel spends seconds perceiving its bonds.
+    // Refuse a protein before seconds go into perceiving its bonds.
     if let Some(n) = quick_atom_count(format, text)
         && n > MAX_ATOMS
     {
@@ -273,42 +262,52 @@ fn dominant_axis(m: &[[f64; 3]; 3], start: [f64; 3], exclude: Option<[f64; 3]>) 
 mod engine {
     use chembuider_rs::molecule::normal_valence;
     use chembuider_rs::{BondOrder, Molecule};
-    use openbabel::Molecule as ObMol;
+    use molecule_optimizer_rs::depict::{self, Compute2DCoordsParams};
+    use molecule_optimizer_rs::io::{self, Format};
+    use molecule_optimizer_rs::perception::{self, SanitizeOptions};
+    use molecule_optimizer_rs::{Atom, BondOrder as Order, Molecule as Structure};
 
     use super::{Error, Format3d, MAX_ATOMS, Opened3d};
-    use crate::three_d::{self, Atom3d, Bond3d, ForceField, Model3d};
+    use crate::three_d::{self, ForceField, Model3d};
 
     pub fn read(format: Format3d, text: &str, records: usize) -> Result<Opened3d, Error> {
-        let mut mol =
-            ObMol::parse(text, format.openbabel_id()).map_err(|_| Error::Unreadable(format))?;
-        let atoms = mol.num_atoms() as usize;
+        let unreadable = || Error::Unreadable(format);
+        let first = match format {
+            // A bad record further on must not stop the first from opening.
+            Format3d::Sdf => io::molfile::read_sdf_lenient(text).into_iter().next(),
+            Format3d::Mol => Some(io::read_molfile(text)),
+            Format3d::Mol2 | Format3d::Pdb | Format3d::Xyz => {
+                let reader = match format {
+                    Format3d::Mol2 => Format::Mol2,
+                    Format3d::Pdb => Format::Pdb,
+                    _ => Format::Xyz,
+                };
+                io::read_str(text, reader)
+                    .map(|mols| mols.into_iter().next())
+                    .transpose()
+            }
+        };
+        let mut mol = first.ok_or(Error::Empty)?.map_err(|_| unreadable())?;
+        let atoms = mol.num_atoms();
         if atoms == 0 {
             return Err(Error::Empty);
         }
         if atoms > MAX_ATOMS {
             return Err(Error::TooManyAtoms(atoms));
         }
-        let positions: Vec<[f64; 3]> = mol
-            .atoms()
-            .map(|a| {
-                let (x, y, z) = a.coords();
-                [x, y, z]
-            })
-            .collect();
-        if positions.iter().flatten().any(|c| !c.is_finite()) {
-            return Err(Error::Unreadable(format));
+        if mol.coords.iter().flatten().any(|c| !c.is_finite()) {
+            return Err(unreadable());
         }
-        // Only a molfile can be 2D (its header says so, or every z is zero); a planar
-        // molecule in the other formats is still a 3D structure.
-        let flat = matches!(format, Format3d::Mol | Format3d::Sdf) && !mol.has_3d();
-        // A coordinates-only file (XYZ, a PDB without CONECT) normally has its bonds perceived
-        // by OpenBabel's reader already; make sure of it.
+        // Only a molfile can be 2D (every z zero); a planar molecule in the other formats is
+        // still a 3D structure.
+        let flat =
+            matches!(format, Format3d::Mol | Format3d::Sdf) && !perception::has_3d_coords(&mol);
+        // A coordinates-only file (XYZ, a PDB without CONECT) has its bonds perceived by the
+        // reader already; make sure of it.
         if !flat && mol.num_bonds() == 0 && atoms > 1 {
-            mol.set_dimension(3);
-            mol.connect_the_dots();
-            mol.perceive_bond_orders();
+            perception::perceive_from_coordinates(&mut mol).map_err(|_| unreadable())?;
         }
-        let model = if flat { None } else { Some(model(&mol)?) };
+        let model = (!flat).then(|| model(&mol));
         let (drawing, projected) = depict(&mol, flat);
         Ok(Opened3d {
             model,
@@ -320,131 +319,119 @@ mod engine {
 
     /// The file's structure as a model, at its own coordinates. The energy is a single point
     /// under the default force field (UFF when that cannot type the structure).
-    fn model(mol: &ObMol) -> Result<Model3d, Error> {
-        let atoms = mol
-            .atoms()
-            .map(|a| {
-                let (x, y, z) = a.coords();
-                Atom3d {
-                    element: openbabel::elements::symbol(a.atomic_number()),
-                    pos: [x, y, z],
-                }
-            })
-            .collect();
-        let bonds = mol
-            .bonds()
-            .map(|b| Bond3d {
-                begin: b.begin_atom_index() as usize,
-                end: b.end_atom_index() as usize,
-                order: u8::try_from(b.order()).unwrap_or(1),
-            })
-            .collect();
-        let molfile = mol
-            .write("mol")
-            .map_err(|_| Error::Unreadable(Format3d::Mol))?;
+    fn model(mol: &Structure) -> Model3d {
         let (force_field, energy) = [ForceField::default(), ForceField::Uff]
             .into_iter()
             .find_map(|ff| {
-                three_d::energy_of_molfile(&molfile, ff)
-                    .ok()
-                    .map(|e| (ff, e))
+                let field = three_d::field(mol, ff, &[]).ok()?;
+                let e = field.energy(&mol.flat_coords());
+                e.is_finite().then_some((ff, e))
             })
             .unwrap_or((ForceField::default(), f64::NAN));
-        Ok(Model3d {
-            atoms,
-            bonds,
-            force_field,
-            energy,
-            energy_unit: three_d::ENERGY_UNIT.to_owned(),
-            formula: mol.formula(),
-            molfile,
-        })
+        three_d::assemble(mol, &mol.coords, force_field, energy)
     }
 
-    /// Whether the atom at `index` is a hydrogen the drawing leaves to its neighbour's label:
-    /// one bonded to a single atom that has a standard valence (C, N, O, S, …). A lone H, H₂,
-    /// a bridging or metal-bound hydrogen stays.
-    fn implicit_hydrogen(mol: &ObMol, index: u32) -> bool {
-        let Some(atom) = mol.atom(index) else {
-            return false;
-        };
-        if atom.atomic_number() != 1 || atom.isotope() > 1 {
+    /// Whether atom `i` is a hydrogen the drawing leaves to its neighbour's label: one bonded
+    /// to a single atom that has a standard valence (C, N, O, S, …). A lone H, H₂, a bridging
+    /// or metal-bound hydrogen, deuterium and tritium stay.
+    fn implicit_hydrogen(mol: &Structure, i: usize) -> bool {
+        let atom = mol.atom(i);
+        if atom.atomic_num != 1 || atom.isotope > 1 {
             return false;
         }
-        let neighbours = atom.neighbors();
-        let [heavy] = neighbours.as_slice() else {
+        let neighbours: Vec<usize> = mol.neighbors(i).collect();
+        let [heavy] = neighbours[..] else {
             return false;
         };
-        let number = heavy.atomic_number();
-        number != 1 && normal_valence(&openbabel::elements::symbol(number)).is_some()
+        let heavy = mol.atom(heavy);
+        heavy.atomic_num != 1 && normal_valence(heavy.symbol()).is_some()
     }
 
-    /// The 2D drawing of `mol`: hydrogens folded into labels, laid out by OpenBabel (or, if
+    /// The structure without the hydrogens [`implicit_hydrogen`] folds into labels — each atom
+    /// keeping those it lost as an explicit count — at the file's coordinates, bond orders
+    /// Kekulé.
+    fn heavy_atoms(mol: &Structure) -> Structure {
+        let kekule = perception::kekulized_copy(mol).unwrap_or_else(|_| mol.clone());
+        let mut index = vec![usize::MAX; mol.num_atoms()];
+        let mut heavy = Structure::new();
+        for i in (0..mol.num_atoms()).filter(|&i| !implicit_hydrogen(mol, i)) {
+            let source = kekule.atom(i);
+            let folded = mol
+                .neighbors(i)
+                .filter(|&n| implicit_hydrogen(mol, n))
+                .count();
+            let mut atom = Atom::new(source.atomic_num);
+            atom.formal_charge = source.formal_charge;
+            atom.isotope = source.isotope;
+            atom.num_radical_electrons = source.num_radical_electrons;
+            atom.num_explicit_hs = u8::try_from(folded).unwrap_or(u8::MAX);
+            atom.no_implicit = true;
+            index[i] = heavy.add_atom(atom, mol.coords[i]);
+        }
+        for b in kekule.bonds() {
+            let (a, c) = (index[b.begin], index[b.end]);
+            if a != usize::MAX && c != usize::MAX {
+                let order = match b.order {
+                    Order::Aromatic => Order::Single,
+                    o => o,
+                };
+                heavy.add_bond(a, c, order);
+            }
+        }
+        heavy
+    }
+
+    /// The depictor's 2D layout of `heavy` (see [`heavy_atoms`]), keeping the stereo its 3D
+    /// geometry shows. `None` when it cannot lay it out.
+    fn layout(mut heavy: Structure) -> Option<Vec<[f64; 2]>> {
+        let options = SanitizeOptions {
+            aromaticity: false,
+            stereo_from_3d: true,
+        };
+        perception::sanitize_with(&mut heavy, &options).ok()?;
+        let coords = depict::compute_2d_coords(&heavy, &Compute2DCoordsParams::default()).ok()?;
+        let points: Vec<[f64; 2]> = coords.iter().map(|p| [p[0], p[1]]).collect();
+        points
+            .iter()
+            .flatten()
+            .all(|c| c.is_finite())
+            .then_some(points)
+    }
+
+    /// The 2D drawing of `mol`: hydrogens folded into labels, laid out by the depictor (or, if
     /// that fails, projected onto the best-fit plane — reported by the `bool`). A `flat` file
     /// keeps its own layout.
-    fn depict(mol: &ObMol, flat: bool) -> (Molecule, bool) {
-        let mut heavy = mol.clone();
-        let drop: Vec<u32> = (0..mol.num_atoms())
-            .filter(|&i| implicit_hydrogen(mol, i))
-            .collect();
-        heavy.begin_modify();
-        for &i in drop.iter().rev() {
-            heavy.delete_atom(i);
-        }
-        heavy.end_modify();
-
-        let original: Vec<[f64; 3]> = heavy
-            .atoms()
-            .map(|a| {
-                let (x, y, z) = a.coords();
-                [x, y, z]
-            })
-            .collect();
+    fn depict(mol: &Structure, flat: bool) -> (Molecule, bool) {
+        let heavy = heavy_atoms(mol);
         let mut projected = false;
         let points: Vec<[f64; 2]> = if flat {
-            original.iter().map(|p| [p[0], p[1]]).collect()
-        } else if heavy.num_atoms() > 1 && heavy.generate_2d() {
-            heavy
-                .atoms()
-                .map(|a| {
-                    let (x, y, _) = a.coords();
-                    [x, y]
-                })
-                .collect()
+            heavy.coords.iter().map(|p| [p[0], p[1]]).collect()
+        } else if let Some(points) = (heavy.num_atoms() > 1)
+            .then(|| layout(heavy.clone()))
+            .flatten()
+        {
+            points
         } else {
             projected = heavy.num_atoms() > 1;
-            super::project_to_plane(&original)
+            super::project_to_plane(&heavy.coords)
         };
-        let bonds: Vec<(usize, usize, u32)> = heavy
-            .bonds()
-            .map(|b| {
-                (
-                    b.begin_atom_index() as usize,
-                    b.end_atom_index() as usize,
-                    b.order(),
-                )
-            })
-            .collect();
-        let pairs: Vec<(usize, usize)> = bonds.iter().map(|&(a, b, _)| (a, b)).collect();
+        let pairs: Vec<(usize, usize)> = heavy.bonds().iter().map(|b| (b.begin, b.end)).collect();
         let positions = super::editor_positions(&points, &pairs);
 
         let mut drawing = Molecule::default();
         let ids: Vec<u32> = heavy
             .atoms()
+            .iter()
             .zip(positions)
-            .map(|(a, pos)| {
-                let charge = i8::try_from(a.formal_charge()).unwrap_or(0);
-                drawing.add_atom(openbabel::elements::symbol(a.atomic_number()), pos, charge)
-            })
+            .map(|(a, pos)| drawing.add_atom(a.symbol().to_owned(), pos, a.formal_charge))
             .collect();
-        for (a, b, order) in bonds {
-            let order = match order {
-                2 => BondOrder::Double,
-                3 => BondOrder::Triple,
-                4 => BondOrder::Quadruple,
+        for b in heavy.bonds() {
+            let order = match b.order {
+                Order::Double => BondOrder::Double,
+                Order::Triple => BondOrder::Triple,
                 _ => BondOrder::Single,
             };
-            drawing.add_bond(ids[a], ids[b], order);
+            drawing.add_bond(ids[b.begin], ids[b.end], order);
         }
         (drawing, projected)
     }

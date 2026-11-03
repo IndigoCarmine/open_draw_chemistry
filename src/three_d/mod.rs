@@ -22,7 +22,6 @@ pub mod job;
 pub mod molfile;
 pub mod part;
 pub mod read;
-pub mod runtime;
 
 pub use edit::{Constraint, Edit3d};
 pub use job::{Job, JobState, Task};
@@ -82,7 +81,7 @@ impl Export3d {
         Export3d::Mol2,
     ];
 
-    /// OpenBabel's format id, which is also the file extension.
+    /// The file extension.
     pub fn extension(self) -> &'static str {
         match self {
             Export3d::Mol => "mol",
@@ -118,7 +117,7 @@ pub struct Atom3d {
 pub struct Bond3d {
     pub begin: usize,
     pub end: usize,
-    /// 1–3; OpenBabel's 5 marks an aromatic bond.
+    /// 1–3; 5 marks an aromatic bond.
     pub order: u8,
 }
 
@@ -232,7 +231,7 @@ pub fn optimize_with(
 /// The minimiser behind [`optimize_with`]: a relaxed scan minimises each point with it (see
 /// `scan::energy`).
 pub(crate) use engine::{
-    ENERGY_UNIT, Relaxed, descend, energy as energy_of_molfile, field, read as read_molfile, relax,
+    ENERGY_UNIT, Relaxed, assemble, descend, field, read as read_molfile, relax,
 };
 
 #[cfg(test)]

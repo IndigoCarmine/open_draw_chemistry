@@ -193,9 +193,9 @@ ethanol 2D
   handmade10282612002D
 
   3  2  0  0  0  0  0  0  0  0999 V2000
-0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-0.8660    0.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-1.7320    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8660    0.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.7320    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
   2  3  1  0  0  0  0
 M  END
@@ -268,7 +268,7 @@ fn an_opened_3d_file_is_a_document_with_a_current_model_saved_elsewhere() {
     );
 }
 
-/// The fixture for the 3D view's contact display: OpenBabel's perceived (Kekulé) bonds are
+/// The fixture for the 3D view's contact display: the reader's perceived (Kekulé) bonds are
 /// enough to find the formic acid dimer's two hydrogen bonds and both benzene stacks.
 #[test]
 fn an_opened_dimer_file_shows_hydrogen_bonds_and_pi_stacks() {

@@ -6,9 +6,9 @@
 ;   iscc /DMyAppVersion=1.2.3 installer\windows.iss
 ;
 ; Installs the folder scripts/stage-windows.sh lays out (target\stage\windows: the
-; executable, OpenBabel's DLLs, plugins and data, and the app-local Visual C++ runtime), so run
-; `cargo build --release`, `bash scripts/fetch-openbabel.sh` and `bash scripts/stage-windows.sh`
-; first. Override the folder with /DStageDir=... Output lands in dist\.
+; executable and the app-local Visual C++ runtime), so run `cargo build --release` and
+; `bash scripts/stage-windows.sh` first. Override the folder with /DStageDir=... Output lands
+; in dist\.
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
@@ -66,15 +66,20 @@ Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; The staged app (scripts/stage-windows.sh), the same files as the portable zip: the executable;
-; OpenBabel (3D generation, SMILES, 3D files) -- its DLLs and .obf plugins beside the executable,
-; since OpenBabel finds the plugins beside openbabel-3.dll, and its data at {app}\data, which is
-; where openbabel_rs looks in an installed application; and msvcp140, vcruntime140 and
-; vcruntime140_1.dll, the Visual C++ runtime deployed app-local, so that neither a clean machine
-; nor a per-user (non-admin) install needs vc_redist.x64.exe.
+; The staged app (scripts/stage-windows.sh), the same files as the portable zip: the executable
+; and msvcp140, vcruntime140 and vcruntime140_1.dll, the Visual C++ runtime deployed app-local,
+; so that neither a clean machine nor a per-user (non-admin) install needs vc_redist.x64.exe.
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\resources\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+; Versions up to the OpenBabel removal installed OpenBabel's DLLs, .obf plugins and data
+; directory beside the executable; an upgrade over such an install removes them.
+Type: files; Name: "{app}\openbabel-3.dll"
+Type: files; Name: "{app}\inchi.dll"
+Type: files; Name: "{app}\*.obf"
+Type: filesandordirs; Name: "{app}\data"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"

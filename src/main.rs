@@ -43,21 +43,7 @@ fn native_options() -> eframe::NativeOptions {
 }
 
 fn main() -> eframe::Result<()> {
-    // First, while the process is single-threaded: where the installed OpenBabel is.
-    open_draw_chemistry::three_d::runtime::init();
-
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-
-    // `--check-openbabel`: prove that this installation finds its OpenBabel (the release
-    // workflow runs it on every package), then exit without opening a window.
-    if args.first().is_some_and(|a| a == "--check-openbabel") {
-        let result = open_draw_chemistry::three_d::runtime::self_check(true);
-        match &result {
-            Ok(report) => print!("{report}"),
-            Err(report) => eprintln!("{report}"),
-        }
-        std::process::exit(if result.is_ok() { 0 } else { 1 });
-    }
 
     // Registration writes translated verbs to the registry: use the OS language for them (the
     // app sets the user's saved choice itself once its window opens).

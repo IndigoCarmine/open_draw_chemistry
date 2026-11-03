@@ -50,7 +50,7 @@ Rust と [egui](https://github.com/emilk/egui) で作られており、Windows�
 
 ## 🚀 はじめる
 
-**ダウンロード**：[ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)または[最新リリース](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)から、お使いの OS 用のインストーラかポータブル版を入手してください。OpenBabel を同梱しているので、ほかに入れるものはありません。
+**ダウンロード**：[ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)または[最新リリース](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest)から、お使いの OS 用のインストーラかポータブル版を入手してください。ほかに入れるものはありません。
 
 > macOS：まだ公証を受けていないので、初回は右クリック →「開く」で起動してください。
 > Windows：インストーラがまだ署名されていないので、SmartScreen の警告が出ることがあります。
@@ -58,7 +58,6 @@ Rust と [egui](https://github.com/emilk/egui) で作られており、Windows�
 **ソースからビルド**（Rust 1.95 以上）：
 
 ```bash
-bash scripts/fetch-openbabel.sh   # 最初に一度：ビルド済みの OpenBabel を取得
 cargo run -- path/to/file.cdx     # ファイルの指定は省略可
 ```
 
@@ -85,10 +84,9 @@ AcaudaOffice は [acauda-embed](https://github.com/IndigoCarmine/acauda-embed) �
 
 ## 🧱 使っているもの
 
-- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)：構造式エディタのウィジェット、IUPAC 命名、解析パネル
+- [chembuider-rs](https://github.com/IndigoCarmine/chembuider-rs)：構造式エディタのウィジェット、SMILES、IUPAC 命名、解析パネル
 - [cdx_file_rs](https://github.com/IndigoCarmine/cdx_file_rs)：ChemDraw ファイルの読み書き
-- [molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs)：純 Rust の分子力学（RDKit から移植した UFF・MMFF94・ETKDG。3D 生成、最適化、スキャン）
-- [openbabel_rs](https://github.com/IndigoCarmine/openbabel_rs)：[OpenBabel](https://openbabel.org) の Rust バインディング（3D 生成、3D ファイルの読み込み）
+- [molecule_optimizer_rs](https://github.com/IndigoCarmine/molecule_optimizer_rs)：純 Rust の分子力学（RDKit から移植した UFF・MMFF94・ETKDG。3D 生成、最適化、スキャン、3D ファイルの読み込み）
 - [egui](https://github.com/emilk/egui)：UI
 
 ## 📄 ライセンス
