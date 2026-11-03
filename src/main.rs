@@ -5,7 +5,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use open_draw_chemistry::{APP_NAME, OpenDrawApp};
+use open_draw_chemistry::ole_server::{self, script::Script};
+use open_draw_chemistry::{APP_NAME, OpenDrawApp, acauda};
 
 /// The window/taskbar icon, embedded at compile time — the source tree is not
 /// present on an end user's machine, so it cannot be loaded from disk.
@@ -67,6 +68,34 @@ fn main() -> eframe::Result<()> {
         return result;
     }
 
+    // Started by AcaudaOffice for an embedded object (no COM: on every platform).
+    match acauda::start(&args) {
+        Ok(acauda::Launch::NotStarted) => {}
+        Ok(acauda::Launch::Done) => return Ok(()),
+        Ok(acauda::Launch::Serve(server, mut bridge)) => {
+            if let Some(path) = value(&args, "--ole-log") {
+                ole_server::open_log(std::path::Path::new(path));
+            }
+            bridge.script = test_script(&args);
+            let result = eframe::run_native(
+                APP_NAME,
+                native_options(),
+                Box::new(move |cc| {
+                    let ctx = cc.egui_ctx.clone();
+                    Ok(Box::new(
+                        OpenDrawApp::new(cc, Vec::new()).with_ole(bridge, &ctx),
+                    ))
+                }),
+            );
+            server.shutdown();
+            return result;
+        }
+        Err(e) => {
+            eprintln!("AcaudaOffice: {e}");
+            std::process::exit(1);
+        }
+    }
+
     // Files to open, as passed by the desktop (`%F`) or a drop onto the executable.
     let files: Vec<PathBuf> = args.into_iter().map(PathBuf::from).collect();
 
@@ -75,6 +104,25 @@ fn main() -> eframe::Result<()> {
         native_options(),
         Box::new(|cc| Ok(Box::new(OpenDrawApp::new(cc, files).with_update_check()))),
     )
+}
+
+/// The value after `flag` in `args`.
+fn value<'a>(args: &'a [OsString], flag: &str) -> Option<&'a OsString> {
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+}
+
+/// The scripted edit named by `--ole-test-script` (see `ole_server::script`).
+fn test_script(args: &[OsString]) -> Option<Script> {
+    let text = std::fs::read_to_string(value(args, "--ole-test-script")?).ok()?;
+    match Script::parse(&text) {
+        Ok(script) => Some(script),
+        Err(e) => {
+            ole_server::log(&format!("--ole-test-script: {e}"));
+            None
+        }
+    }
 }
 
 /// The OLE server's command lines (Windows):
@@ -89,8 +137,10 @@ fn main() -> eframe::Result<()> {
 mod ole {
     use std::ffi::OsString;
 
-    use open_draw_chemistry::ole_server::{self, com, register, script::Script};
+    use open_draw_chemistry::ole_server::{self, com, register};
     use open_draw_chemistry::{APP_NAME, OpenDrawApp};
+
+    use super::{test_script, value};
 
     pub fn run(args: &[OsString]) -> Option<eframe::Result<()>> {
         let first = args.first().map(|a| a.to_string_lossy().into_owned());
@@ -134,30 +184,12 @@ mod ole {
         }
     }
 
-    /// The value after `flag` in `args`.
-    fn value<'a>(args: &'a [OsString], flag: &str) -> Option<&'a OsString> {
-        args.iter()
-            .position(|a| a == flag)
-            .and_then(|i| args.get(i + 1))
-    }
-
     fn serve(args: &[OsString]) -> eframe::Result<()> {
         if let Some(path) = value(args, "--ole-log") {
             ole_server::open_log(std::path::Path::new(path));
         }
         ole_server::log(&format!("started: {args:?}"));
         let own_class = args.iter().any(|a| a == "--ole-own-class");
-        let script = value(args, "--ole-test-script")
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .map(|text| Script::parse(&text));
-        let script = match script {
-            Some(Ok(s)) => Some(s),
-            Some(Err(e)) => {
-                ole_server::log(&format!("--ole-test-script: {e}"));
-                None
-            }
-            None => None,
-        };
         let (server, mut bridge) = match com::Server::start(own_class) {
             Ok(started) => started,
             Err(e) => {
@@ -165,7 +197,7 @@ mod ole {
                 return Ok(());
             }
         };
-        bridge.script = script;
+        bridge.script = test_script(args);
         // The window opens when a container shows an object; a container that only needed the
         // object running (or nothing at all) never sees one.
         if !server.wait_until_shown() {

@@ -1,0 +1,16 @@
+# Lets AcaudaOffice create, edit and draw ChemDraw objects with Open DrawChemistry. Copy this file
+# into AcaudaOffice's handler folder (設定 > 外部エディター > フォルダーを開く) and set `command` to
+# the installed program, for example:
+#   Windows: C:/Program Files/Open DrawChemistry/open_draw_chemistry.exe
+#   macOS:   /Applications/Open DrawChemistry.app/Contents/MacOS/open_draw_chemistry
+#   Linux:   /usr/bin/open_draw_chemistry
+id = "io.github.indigocarmine.open-draw-chemistry"
+command = "open_draw_chemistry"
+prog_ids = ["ChemDraw.Document", "ChemDraw_x64.Document", "OpenDrawChemistry.Document"]
+new_object = true
+import_extensions = ["cdx", "cdxml"]
+export_extensions = ["cdx", "cdxml"]
+
+[name]
+ja = "Open DrawChemistry"
+en = "Open DrawChemistry"
