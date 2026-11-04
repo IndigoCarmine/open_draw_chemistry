@@ -7,9 +7,11 @@
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use molecule_optimizer_rs::calc::assembly::geometric_schedule;
 use molecule_optimizer_rs::calc::{self, OptimizeOptions};
 use molecule_optimizer_rs::distgeom::EmbedParams;
 use molecule_optimizer_rs::ff::mmff::{MmffBuilder, MmffVariant};
+use molecule_optimizer_rs::ff::softcore::{SoftCoreBuilder, SoftCoreParams};
 use molecule_optimizer_rs::ff::uff::UffBuilder;
 use molecule_optimizer_rs::ff::{self, ForceField as Field, ForceFieldBuilder};
 use molecule_optimizer_rs::io::{self, Format};
@@ -49,24 +51,37 @@ pub(crate) fn read(molfile: &str) -> Result<Molecule, Error> {
     io::read_molfile(molfile).map_err(|_| Error::Unreadable)
 }
 
+/// MMFF94 or MMFF94s as the app sets them up: no cutoff, the molecules' interactions on.
+fn mmff_builder(variant: MmffVariant) -> MmffBuilder {
+    MmffBuilder {
+        variant,
+        nonbonded_thresh: NO_CUTOFF,
+        ignore_interfrag_interactions: false,
+        ..MmffBuilder::default()
+    }
+}
+
+/// UFF as the app sets it up (see [`mmff_builder`]).
+fn uff_builder() -> UffBuilder {
+    UffBuilder {
+        vdw_thresh: NO_CUTOFF,
+        ignore_interfrag_interactions: false,
+    }
+}
+
 /// The library's builder for `force_field`.
 fn builder(force_field: ForceField) -> Box<dyn ForceFieldBuilder> {
     match force_field {
-        ForceField::Mmff94 | ForceField::Mmff94s => Box::new(MmffBuilder {
-            variant: if force_field == ForceField::Mmff94 {
-                MmffVariant::Mmff94
-            } else {
-                MmffVariant::Mmff94s
-            },
-            nonbonded_thresh: NO_CUTOFF,
-            ignore_interfrag_interactions: false,
-            ..MmffBuilder::default()
-        }),
-        ForceField::Uff => Box::new(UffBuilder {
-            vdw_thresh: NO_CUTOFF,
-            ignore_interfrag_interactions: false,
-        }),
+        ForceField::Mmff94 => Box::new(mmff_builder(MmffVariant::Mmff94)),
+        ForceField::Mmff94s => Box::new(mmff_builder(MmffVariant::Mmff94s)),
+        ForceField::Uff => Box::new(uff_builder()),
     }
+}
+
+/// The library's builder for `force_field`, shareable across threads: what a conformer search
+/// (see `crate::conformer`) minimises every conformer with, so its energies are the app's.
+pub(crate) fn shared_builder(force_field: ForceField) -> std::sync::Arc<dyn ForceFieldBuilder> {
+    std::sync::Arc::from(builder(force_field))
 }
 
 /// `force_field` set up for `mol` holding `constraints`, or [`Error::ForceField`] when it has
@@ -218,6 +233,98 @@ pub(crate) fn relax(
             });
         }
     }
+}
+
+/// Where a soft-core build has got (see [`soft_core`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum SoftCoreStage {
+    /// Minimising at step `step` (from 0) of `of`, the molecules' interactions at `lambda`.
+    Lambda { step: usize, of: usize, lambda: f64 },
+    /// The last, ordinary minimisation at full strength.
+    Final,
+}
+
+/// The coupling of the molecules' interactions at the first soft-core step: they start this
+/// weak (and soft at short range) and grow geometrically to full strength.
+const SOFT_CORE_START: f64 = 0.02;
+/// How many soft-core steps lead up to full strength.
+const SOFT_CORE_STEPS: usize = 12;
+
+/// How many separate molecules (bonded fragments) `mol` holds.
+pub(crate) fn fragment_count(mol: &Molecule) -> usize {
+    mol.fragments().len()
+}
+
+/// Build up the structure of `mol` from `coords` by λ-continuation of soft-core interactions
+/// between its molecules: the interactions between molecules start weak and soft (atoms of
+/// different molecules may pass through each other) and are turned up to full strength over
+/// [`SOFT_CORE_STEPS`] steps, the whole structure minimised by gradient (BFGS) for up to
+/// `steps` iterations at every step; then it is minimised as usual ([`relax`]) for up to
+/// `steps` more. Each molecule stays flexible; `constraints` hold throughout. `stage` hears of
+/// each step as it starts. The energy is the plain force field's.
+pub(crate) fn soft_core(
+    mol: &Molecule,
+    coords: &[[f64; 3]],
+    force_field: ForceField,
+    constraints: &[Constraint],
+    steps: u32,
+    cancel: Option<&AtomicBool>,
+    stage: &mut dyn FnMut(SoftCoreStage),
+) -> Result<Relaxed, Error> {
+    let params = SoftCoreParams {
+        include_all_pairs: true,
+        ..SoftCoreParams::default()
+    };
+    let held = restraints(constraints, mol.num_atoms());
+    let mut placed = mol.clone();
+    placed.coords = coords.to_vec();
+    let built = match force_field {
+        ForceField::Mmff94 | ForceField::Mmff94s => {
+            let variant = if force_field == ForceField::Mmff94 {
+                MmffVariant::Mmff94
+            } else {
+                MmffVariant::Mmff94s
+            };
+            SoftCoreBuilder::new(mmff_builder(variant))
+                .with_params(params)
+                .build_with_handle(&placed, &held)
+        }
+        ForceField::Uff => SoftCoreBuilder::new(uff_builder())
+            .with_params(params)
+            .build_with_handle(&placed, &held),
+    };
+    let (field, handle) = built.map_err(|_| Error::ForceField(force_field))?;
+    let mut watch = |_: &IterationInfo<'_>| {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    let options = MinimizeOptions {
+        max_iters: steps.max(1) as usize,
+        ..MinimizeOptions::default()
+    };
+    let schedule = geometric_schedule(SOFT_CORE_START, SOFT_CORE_STEPS);
+    let mut pos = placed.flat_coords();
+    for (step, &(vdw, ele)) in schedule.iter().enumerate() {
+        stage(SoftCoreStage::Lambda {
+            step,
+            of: schedule.len(),
+            lambda: vdw,
+        });
+        handle.set_lambda(vdw, ele);
+        let done = optim::minimize_with(&field, &mut pos, &options, false, &mut watch);
+        if done.status == MinimizeStatus::Cancelled {
+            return Ok(Relaxed::Cancelled);
+        }
+        if !done.energy.is_finite() {
+            return Err(Error::ForceField(force_field));
+        }
+    }
+    stage(SoftCoreStage::Final);
+    let built: Vec<[f64; 3]> = pos.as_chunks::<3>().0.to_vec();
+    relax(mol, &built, force_field, constraints, steps, cancel)
 }
 
 /// [`relax`] where nothing cancels it: Generate and Optimize run to the end.

@@ -14,6 +14,7 @@ use crate::document::Document;
 use crate::fragments::{self, FragmentStore};
 use crate::i18n::Lang;
 use crate::io::{self, Export, Format, Kind};
+use crate::softcore;
 use crate::theme;
 use crate::three_d::read::Format3d;
 use crate::three_d::{self, Export3d};
@@ -105,6 +106,9 @@ pub struct OpenDrawApp {
     /// The パラメータスキャン window.
     #[serde(skip)]
     scan_window: ui::scan::ScanWindow,
+    /// The 配座探索 (conformational search) window.
+    #[serde(skip)]
+    conformer_window: ui::conformer::ConformerWindow,
     /// The update found at startup, if any (see [`crate::update`]).
     #[serde(skip)]
     update: UpdateFlow,
@@ -140,6 +144,7 @@ impl Default for OpenDrawApp {
             context_atom: None,
             ole: None,
             scan_window: Default::default(),
+            conformer_window: Default::default(),
             update: UpdateFlow::default(),
         }
     }
@@ -545,6 +550,13 @@ impl OpenDrawApp {
                 }
             }
             Command::Export3d(export) => self.export_3d(export),
+            Command::SoftCore3d => self.start_softcore(softcore::Target::Model),
+            Command::SoftCoreAssembly => self.start_softcore(softcore::Target::Assembly),
+            Command::CancelSoftCore => {
+                if let Some(run) = self.active_doc_mut().and_then(|d| d.softcore.as_mut()) {
+                    run.cancel();
+                }
+            }
             Command::SetForceField(ff) => {
                 if let Some(doc) = self.active_doc_mut() {
                     doc.three_d.force_field = ff;
@@ -605,6 +617,7 @@ impl OpenDrawApp {
                 .to_owned();
             }
             Command::OpenScan => self.scan_window.open = true,
+            Command::OpenConformers => self.conformer_window.open = true,
             Command::InsertReactionTable => {
                 if let Some(doc) = self.active_doc_mut() {
                     let message = crate::ui::palette::insert_reaction_table(&mut doc.editor);
@@ -896,6 +909,13 @@ impl OpenDrawApp {
             recent: &self.recent,
             can_generate_3d: job.is_some() && !running,
             can_optimize_3d: has_model && !running,
+            can_softcore_3d: !running
+                && self.active_doc().is_some_and(|d| {
+                    !d.softcore.as_ref().is_some_and(softcore::Run::is_running)
+                        && d.three_d.model().is_some_and(|m| {
+                            softcore::refusal(m.atoms.len(), softcore::molecule_count(m)).is_none()
+                        })
+                }),
             can_export_3d: has_model,
             can_create_assembly: editor.is_some(),
             language: crate::i18n::language(),
@@ -915,6 +935,96 @@ impl OpenDrawApp {
                 self.status = message;
             }
             running |= doc.three_d.is_running();
+        }
+        if running {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    /// Start a soft-core build of the active document's 3D model or assembly.
+    fn start_softcore(&mut self, target: softcore::Target) {
+        let Some(doc) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        if doc.softcore.as_ref().is_some_and(softcore::Run::is_running) {
+            return;
+        }
+        let force_field = doc.three_d.force_field;
+        let started = match target {
+            softcore::Target::Model => {
+                if doc.three_d.is_running() {
+                    return;
+                }
+                let Some(model) = doc.three_d.model() else {
+                    return;
+                };
+                let constraints = doc.three_d.edit.active_constraints(model.atoms.len());
+                softcore::Run::start_model(model, force_field, constraints)
+            }
+            softcore::Target::Assembly => match doc.assembly.built() {
+                Ok(built) => softcore::Run::start_assembly(&built, force_field),
+                Err(e) => Err(e.to_string()),
+            },
+        };
+        match started {
+            Ok(run) => {
+                doc.softcore = Some(run);
+                self.status = t!("softcore.status.started").to_owned();
+            }
+            Err(e) => self.status = e,
+        }
+    }
+
+    /// Collect finished soft-core builds: a model's replaces it (one undoable step), an
+    /// assembly's opens as a new document. Keeps frames coming while any runs.
+    fn poll_softcore(&mut self, ctx: &egui::Context) {
+        let mut running = false;
+        let mut opened = Vec::new();
+        for (i, doc) in self.docs.iter_mut().enumerate() {
+            let Some(run) = &mut doc.softcore else {
+                continue;
+            };
+            let Some(outcome) = run.poll() else {
+                running |= run.is_running();
+                continue;
+            };
+            let message = match outcome {
+                softcore::Outcome::Cancelled => t!("softcore.status.cancelled").to_owned(),
+                softcore::Outcome::Failed(e) => t!("softcore.status.failed", error = e),
+                softcore::Outcome::Built(model) => match run.target {
+                    softcore::Target::Model => apply_softcore_model(doc, model),
+                    softcore::Target::Assembly => {
+                        let energy = format!("{:.1}", model.energy);
+                        let unit = model.energy_unit.clone();
+                        opened.push(model);
+                        t!(
+                            "softcore.status.assembly_built",
+                            energy = energy,
+                            unit = unit
+                        )
+                    }
+                },
+            };
+            if i == self.active {
+                self.status = message;
+            }
+        }
+        for model in opened {
+            match three_d::read::read(three_d::read::Format3d::Mol, &model.molfile) {
+                Ok(mut structure) => {
+                    // The model as built, its energy included (the file holds coordinates only).
+                    structure.model = Some(model);
+                    self.untitled += 1;
+                    self.docs.push(Document::untitled_with_structure_3d(
+                        &self.config,
+                        self.untitled,
+                        structure,
+                    ));
+                    self.active = self.docs.len() - 1;
+                    self.view = ViewMode::ThreeD;
+                }
+                Err(e) => self.status = t!("softcore.status.failed", error = e),
+            }
         }
         if running {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -1326,6 +1436,8 @@ impl eframe::App for OpenDrawApp {
 
         self.poll_3d(&ctx);
         ui::scan::poll(&ctx, &mut self.docs);
+        ui::conformer::poll(&ctx, &mut self.docs);
+        self.poll_softcore(&ctx);
         // A gesture on the assembly (dragging a value) is one undo step, closed on release.
         if !ctx.input(|i| i.pointer.any_down())
             && let Some(doc) = self.docs.get_mut(self.active)
@@ -1516,6 +1628,13 @@ impl eframe::App for OpenDrawApp {
         ) {
             self.status = message;
         }
+        if let Some(message) = ui::conformer::window(
+            &ctx,
+            &mut self.conformer_window,
+            self.docs.get_mut(self.active),
+        ) {
+            self.status = message;
+        }
         for command in commands {
             self.run(&ctx, command);
         }
@@ -1525,6 +1644,29 @@ impl eframe::App for OpenDrawApp {
         self.update_update(&ctx);
         self.update_window_title(&ctx);
     }
+}
+
+/// Put a soft-core build's `model` into `doc`'s 3D model, as one undoable step, when the model
+/// is still the structure built. The status message.
+fn apply_softcore_model(doc: &mut Document, model: three_d::Model3d) -> String {
+    let fits = doc
+        .three_d
+        .model()
+        .is_some_and(|m| doc.softcore.as_ref().is_some_and(|run| run.fits(m)));
+    let Some(current) = doc.three_d.model_mut().filter(|_| fits) else {
+        return t!("softcore.status.model_changed").to_owned();
+    };
+    let before = std::mem::replace(current, model);
+    let message = t!(
+        "softcore.status.model_built",
+        energy = format!("{:.1}", current.energy),
+        unit = current.energy_unit
+    );
+    let next = current.clone();
+    doc.three_d
+        .edit
+        .record_replacement(&before, &next, t!("softcore.undo_label"));
+    message
 }
 
 #[cfg(test)]
@@ -1606,6 +1748,67 @@ mod tests {
 
         app.docs[0].three_d.state = three_d::JobState::Running(three_d::Task::Optimize);
         assert!(app.work_is_running());
+    }
+
+    #[test]
+    fn a_soft_core_build_counts_as_running_work_and_its_model_is_undoable() {
+        let mut app = app_with_one_clean_document();
+        let start = crate::softcore::tests::overlapping_butanes();
+        app.docs[0].three_d = three_d::Job::with_model(start.clone(), &Default::default());
+        app.docs[0].three_d.force_field = three_d::ForceField::Uff;
+        app.start_softcore(softcore::Target::Model);
+        assert!(app.work_is_running());
+        let ctx = egui::Context::default();
+        while app.work_is_running() {
+            app.poll_softcore(&ctx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let model = app.docs[0].three_d.model().unwrap();
+        assert_ne!(model.atoms, start.atoms);
+        assert!(model.energy.is_finite());
+        assert!(app.docs[0].three_d.edit.can_undo());
+        assert_eq!(app.docs.len(), 1);
+    }
+
+    #[test]
+    fn a_built_assembly_opens_as_a_new_document() {
+        let mut app = app_with_one_clean_document();
+        let start = crate::softcore::tests::overlapping_butanes();
+        let built = crate::assembly::build::Built {
+            atoms: start.atoms.clone(),
+            bonds: start.bonds.clone(),
+            molecule_of_atom: (0..start.atoms.len())
+                .map(|i| i / (start.atoms.len() / 2))
+                .collect(),
+            molecule_start: vec![0, start.atoms.len() / 2, start.atoms.len()],
+            component_of_molecule: vec![0, 0],
+            ..Default::default()
+        };
+        let run = softcore::Run::start_assembly(&built, three_d::ForceField::Uff).unwrap();
+        app.docs[0].softcore = Some(run);
+        let ctx = egui::Context::default();
+        while app.work_is_running() {
+            app.poll_softcore(&ctx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(app.docs.len(), 2);
+        assert_eq!(app.active, 1);
+        let model = app.docs[1].three_d.model().expect("a model");
+        assert_eq!(model.atoms.len(), start.atoms.len());
+        assert!(!app.docs[1].is_dirty());
+        assert!(!app.docs[1].editor.molecule.is_blank());
+        assert_eq!(app.view, ViewMode::ThreeD);
+    }
+
+    #[test]
+    fn a_conformer_search_counts_as_running_work() {
+        let mut app = app_with_one_clean_document();
+        app.docs[0].conformers = Some(crate::conformer::Run::running_for_test());
+        assert!(!app.docs[0].is_dirty());
+        assert!(app.work_is_running());
+        app.docs[0].conformers.as_mut().unwrap().cancel();
+        app.docs[0].conformers.as_mut().unwrap().wait();
+        assert!(!app.work_is_running());
     }
 
     /// A download ending must not take a running scan down with it.

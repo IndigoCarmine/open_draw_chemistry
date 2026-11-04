@@ -43,6 +43,11 @@ pub struct Document {
     /// The last parameter scan of the assembly or the 3D model (パラメータスキャン), running or
     /// done.
     pub scan: Option<crate::scan::Run>,
+    /// The last conformational search of the 3D model (配座探索), running or done.
+    pub conformers: Option<crate::conformer::Run>,
+    /// The last soft-core build of the 3D model or the assembly (ソフトコア最適化), running or
+    /// done.
+    pub softcore: Option<crate::softcore::Run>,
     /// Ctrl+V on the canvas, taken from the editor widget (see [`crate::ole::PasteShortcut`]).
     paste_shortcut: crate::ole::PasteShortcut,
     /// Ctrl+V was pressed on the canvas: the app pastes (see [`Document::take_paste_request`]).
@@ -77,6 +82,8 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            conformers: None,
+            softcore: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
         }
@@ -100,9 +107,28 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            conformers: None,
+            softcore: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
         }
+    }
+
+    /// An untitled document holding a structure made here (a built assembly): `opened`'s
+    /// model as the 3D state and its 2D depiction in the editor, unchanged until edited.
+    pub fn untitled_with_structure_3d(
+        config: &Config,
+        untitled_number: usize,
+        opened: Opened3d,
+    ) -> Self {
+        let mut doc = Self::new(config, untitled_number);
+        doc.editor.molecule = opened.drawing.clone();
+        if let Some(model) = opened.model {
+            doc.three_d = Job::with_model(model, &opened.drawing);
+        }
+        doc.saved = opened.drawing;
+        doc.auto_fit = Some(AutoFit::default());
+        doc
     }
 
     /// A document holding the structure read from the 3D file at `path`: the file's model as
@@ -133,6 +159,8 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            conformers: None,
+            softcore: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
         }
@@ -212,7 +240,16 @@ impl Document {
     /// Whether a job of this document is running that quitting would end. These results are
     /// not in the drawing, so [`Document::is_dirty`] says nothing about them.
     pub fn has_running_work(&self) -> bool {
-        self.three_d.is_running() || self.scan.as_ref().is_some_and(crate::scan::Run::is_running)
+        self.three_d.is_running()
+            || self.scan.as_ref().is_some_and(crate::scan::Run::is_running)
+            || self
+                .conformers
+                .as_ref()
+                .is_some_and(crate::conformer::Run::is_running)
+            || self
+                .softcore
+                .as_ref()
+                .is_some_and(crate::softcore::Run::is_running)
     }
 
     /// An untitled document nobody has drawn in: opening a file replaces it.

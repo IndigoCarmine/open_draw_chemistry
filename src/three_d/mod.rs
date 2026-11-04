@@ -231,7 +231,8 @@ pub fn optimize_with(
 /// The minimiser behind [`optimize_with`]: a relaxed scan minimises each point with it (see
 /// `scan::energy`).
 pub(crate) use engine::{
-    ENERGY_UNIT, Relaxed, assemble, descend, field, read as read_molfile, relax,
+    ENERGY_UNIT, Relaxed, SoftCoreStage, assemble, descend, field, fragment_count,
+    model as checked_model, read as read_molfile, relax, shared_builder, soft_core,
 };
 
 #[cfg(test)]
