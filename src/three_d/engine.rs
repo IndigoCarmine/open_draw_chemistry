@@ -149,8 +149,6 @@ pub(crate) fn relax(
     let mut left = steps.max(1) as usize;
     let mut at = coords.to_vec();
     let mut before = f64::INFINITY;
-    #[cfg(test)]
-    let mut trace: Vec<String> = Vec::new();
     loop {
         let options = OptimizeOptions {
             minimize: MinimizeOptions {
@@ -172,30 +170,8 @@ pub(crate) fn relax(
         left = left.saturating_sub(done.iterations.max(1));
         let converged = done.status == MinimizeStatus::Converged;
         let settled = converged && before - done.energy < SETTLED_ENERGY;
-        #[cfg(test)]
-        trace.push(format!(
-            "it={} status={:?} E={:.10} ff={:.10} drop={:.3e} left={}",
-            done.iterations,
-            done.status,
-            done.energy,
-            done.ff_energy,
-            before - done.energy,
-            left
-        ));
         before = done.energy;
         if settled || !converged || left == 0 {
-            #[cfg(test)]
-            if !settled {
-                eprintln!("RELAX-TRACE unconverged after {} runs (steps {steps}):", trace.len());
-                let n = trace.len();
-                for (k, t) in trace.iter().enumerate() {
-                    if k < 5 || k + 15 >= n {
-                        eprintln!("RELAX-TRACE   #{k}: {t}");
-                    } else if k == 5 {
-                        eprintln!("RELAX-TRACE   ...");
-                    }
-                }
-            }
             return Ok(Relaxed::Done {
                 coords: at,
                 energy: done.ff_energy,
