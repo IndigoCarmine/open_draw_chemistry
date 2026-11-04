@@ -284,7 +284,7 @@ pub(crate) fn soft_core(
         }
     }
     stage(SoftCoreStage::Final);
-    let built: Vec<[f64; 3]> = pos.chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect();
+    let built: Vec<[f64; 3]> = pos.as_chunks::<3>().0.to_vec();
     relax(mol, &built, force_field, constraints, steps, cancel)
 }
 
