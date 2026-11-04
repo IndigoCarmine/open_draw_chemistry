@@ -12,6 +12,7 @@ use crate::three_d::{Export3d, ForceField};
 
 pub mod appearance;
 pub mod assembly;
+pub mod conformer;
 pub mod format_bar;
 pub mod fragments;
 pub mod icons;
@@ -152,6 +153,8 @@ pub enum Command {
     BracketShape(chembuider_rs::molecule::BracketShape),
     /// Open the パラメータスキャン window.
     OpenScan,
+    /// Open the 配座探索 (conformational search) window.
+    OpenConformers,
     /// 環を塗りつぶす: fill the rings of the selection with this colour (straight RGBA).
     FillRing([u8; 4]),
     /// 塗りつぶしを解除: remove the ring fills of the selection.

@@ -43,6 +43,8 @@ pub struct Document {
     /// The last parameter scan of the assembly or the 3D model (パラメータスキャン), running or
     /// done.
     pub scan: Option<crate::scan::Run>,
+    /// The last conformational search of the 3D model (配座探索), running or done.
+    pub conformers: Option<crate::conformer::Run>,
     /// Ctrl+V on the canvas, taken from the editor widget (see [`crate::ole::PasteShortcut`]).
     paste_shortcut: crate::ole::PasteShortcut,
     /// Ctrl+V was pressed on the canvas: the app pastes (see [`Document::take_paste_request`]).
@@ -77,6 +79,7 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            conformers: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
         }
@@ -100,6 +103,7 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            conformers: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
         }
@@ -133,6 +137,7 @@ impl Document {
             assembly: AssemblyState::default(),
             embedded: None,
             scan: None,
+            conformers: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
         }
@@ -212,7 +217,12 @@ impl Document {
     /// Whether a job of this document is running that quitting would end. These results are
     /// not in the drawing, so [`Document::is_dirty`] says nothing about them.
     pub fn has_running_work(&self) -> bool {
-        self.three_d.is_running() || self.scan.as_ref().is_some_and(crate::scan::Run::is_running)
+        self.three_d.is_running()
+            || self.scan.as_ref().is_some_and(crate::scan::Run::is_running)
+            || self
+                .conformers
+                .as_ref()
+                .is_some_and(crate::conformer::Run::is_running)
     }
 
     /// An untitled document nobody has drawn in: opening a file replaces it.

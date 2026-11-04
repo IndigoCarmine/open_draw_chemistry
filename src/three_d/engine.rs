@@ -69,6 +69,12 @@ fn builder(force_field: ForceField) -> Box<dyn ForceFieldBuilder> {
     }
 }
 
+/// The library's builder for `force_field`, shareable across threads: what a conformer search
+/// (see `crate::conformer`) minimises every conformer with, so its energies are the app's.
+pub(crate) fn shared_builder(force_field: ForceField) -> std::sync::Arc<dyn ForceFieldBuilder> {
+    std::sync::Arc::from(builder(force_field))
+}
+
 /// `force_field` set up for `mol` holding `constraints`, or [`Error::ForceField`] when it has
 /// no type or parameter for one of its atoms.
 pub(crate) fn field(

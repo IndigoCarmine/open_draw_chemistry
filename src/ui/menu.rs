@@ -322,6 +322,14 @@ pub fn menu_bar(
                 Command::OpenScan,
                 out,
             );
+            item(
+                ui,
+                t!("menu.three_d.conformer_search"),
+                "",
+                state.has_document,
+                Command::OpenConformers,
+                out,
+            );
             ui.separator();
             let button = egui::Button::new(t!("menu.three_d.create_assembly"));
             if ui

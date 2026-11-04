@@ -105,6 +105,9 @@ pub struct OpenDrawApp {
     /// The パラメータスキャン window.
     #[serde(skip)]
     scan_window: ui::scan::ScanWindow,
+    /// The 配座探索 (conformational search) window.
+    #[serde(skip)]
+    conformer_window: ui::conformer::ConformerWindow,
     /// The update found at startup, if any (see [`crate::update`]).
     #[serde(skip)]
     update: UpdateFlow,
@@ -140,6 +143,7 @@ impl Default for OpenDrawApp {
             context_atom: None,
             ole: None,
             scan_window: Default::default(),
+            conformer_window: Default::default(),
             update: UpdateFlow::default(),
         }
     }
@@ -605,6 +609,7 @@ impl OpenDrawApp {
                 .to_owned();
             }
             Command::OpenScan => self.scan_window.open = true,
+            Command::OpenConformers => self.conformer_window.open = true,
             Command::InsertReactionTable => {
                 if let Some(doc) = self.active_doc_mut() {
                     let message = crate::ui::palette::insert_reaction_table(&mut doc.editor);
@@ -1326,6 +1331,7 @@ impl eframe::App for OpenDrawApp {
 
         self.poll_3d(&ctx);
         ui::scan::poll(&ctx, &mut self.docs);
+        ui::conformer::poll(&ctx, &mut self.docs);
         // A gesture on the assembly (dragging a value) is one undo step, closed on release.
         if !ctx.input(|i| i.pointer.any_down())
             && let Some(doc) = self.docs.get_mut(self.active)
@@ -1516,6 +1522,13 @@ impl eframe::App for OpenDrawApp {
         ) {
             self.status = message;
         }
+        if let Some(message) = ui::conformer::window(
+            &ctx,
+            &mut self.conformer_window,
+            self.docs.get_mut(self.active),
+        ) {
+            self.status = message;
+        }
         for command in commands {
             self.run(&ctx, command);
         }
@@ -1606,6 +1619,17 @@ mod tests {
 
         app.docs[0].three_d.state = three_d::JobState::Running(three_d::Task::Optimize);
         assert!(app.work_is_running());
+    }
+
+    #[test]
+    fn a_conformer_search_counts_as_running_work() {
+        let mut app = app_with_one_clean_document();
+        app.docs[0].conformers = Some(crate::conformer::Run::running_for_test());
+        assert!(!app.docs[0].is_dirty());
+        assert!(app.work_is_running());
+        app.docs[0].conformers.as_mut().unwrap().cancel();
+        app.docs[0].conformers.as_mut().unwrap().wait();
+        assert!(!app.work_is_running());
     }
 
     /// A download ending must not take a running scan down with it.

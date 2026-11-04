@@ -991,6 +991,16 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
             if optimize.clicked() {
                 out.push(Command::Optimize3d);
             }
+            if ui
+                .add_enabled(
+                    job.is_some_and(|j| j.model().is_some()),
+                    egui::Button::new(t!("three_d.view.conformer_search")),
+                )
+                .on_hover_text(t!("three_d.view.conformer_search_tip"))
+                .clicked()
+            {
+                out.push(Command::OpenConformers);
+            }
         });
     });
     match job.map(|j| &j.state) {

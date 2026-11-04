@@ -247,6 +247,7 @@ generate = "Generate 3D from 2D"
 optimize = "Optimize structure"
 export = "Export 3D"
 parameter_scan = "Parameter scan…"
+conformer_search = "Conformer search…"
 create_assembly = "Create molecular assembly"
 create_assembly_tip = "Use the current 3D model as a monomer to build assemblies such as rings, stacks and helices (switches to the assembly view)"
 
@@ -742,6 +743,9 @@ regenerate_tip = "Rebuild the 3D model from the 2D structure"
 # Button: minimize the 3D structure's energy with the force field.
 optimize = "Optimize structure"
 optimize_tip = "Optimize the structure with the force field"
+# Opens the conformer search window.
+conformer_search = "Conformer search…"
+conformer_search_tip = "Search the model's low-energy conformers (ETKDG or random torsions, minimised with the force field)"
 optimize_constrained_tip = { one = "Optimize keeping {n} constraint", other = "Optimize keeping {n} constraints" }
 # "Make 3D" is the 2D view's context menu item that builds a 3D model.
 no_model_hint = "Right-click a molecule in the 2D view and choose “Make 3D”, or use “Regenerate from 2D”, to make a 3D model"
@@ -1534,3 +1538,62 @@ no_texts = "Select atom labels or texts to change their color"
 shadow_set = "Set the shadow"
 shadow_removed = "Removed the shadow"
 shadow_unchanged = "The shadow did not change"
+
+[conformer.method]
+etkdg = "ETKDG embedding"
+etkdg_tip = "Embeds the structure afresh many times with ETKDG: rings are sampled too, and the model's stereochemistry is kept"
+random_torsion = "Random torsions"
+random_torsion_tip = "Turns every rotatable bond of the current model to random angles: rings stay as they are; the first start is the model itself"
+
+[conformer.window]
+# Title of the conformer search window.
+title = "Conformer search"
+no_document = "Open a document with a 3D model to search its conformers"
+intro = "Many starting geometries are minimised under the force field; duplicates are dropped and the rest listed lowest energy first."
+method = "Method"
+starts = "Starting geometries"
+starts_tip = "How many starting geometries are generated and minimised"
+rmsd = "RMSD threshold"
+rmsd_tip = "Conformers whose heavy atoms superpose within this are counted as one"
+energy_window = "Energy window"
+energy_window_tip = "Keep conformers at most this far above the lowest (0: keep all)"
+force_field = "Force field"
+seed = "Random seed"
+seed_tip = "The same seed gives the same search"
+no_model = "Generate a 3D model first"
+# {atoms}: atoms in the model; {max}: the most a search accepts.
+too_many_atoms = "Too many atoms ({atoms}). A conformer search takes at most {max} atoms"
+summary = "{atoms} atoms, hydrogens included"
+start = "Start search"
+start_disabled_tip = "Generate a 3D model first (and wait for any 3D job to finish)"
+not_run = "No search yet"
+# {done}/{total}: starting geometries done/asked for; {found}: unique conformers so far; {elapsed}: time taken.
+progress = "{done} / {total} starts minimised, {found} conformers, {elapsed}"
+# Appended to the progress; {left}: estimated time left.
+time_left = " (about {left} left)"
+failed = "The search failed: {error}"
+cancelled = "Cancelled: {found} conformers from {done} of {total} starts ({elapsed})"
+done = "{found} conformers from {total} starts ({elapsed})"
+failed_starts = "{failed} starts could not be embedded or minimised"
+click_to_apply = "Click a number to put that conformer into the 3D model"
+save_sdf = "Save SDF…"
+save_sdf_tip = "Save every conformer as one SD file, with its energy"
+# Column headers; {unit}: the energy unit (kcal/mol).
+relative_energy = "ΔE ({unit})"
+energy = "E ({unit})"
+converged = "Converged"
+apply_tip = "Put this conformer into the 3D model (undoable)"
+not_converged_tip = "The minimisation stopped before converging; Optimize the model to finish it"
+
+[conformer.apply]
+# {rank}: the conformer's number in the list; {energy}: its energy above the lowest.
+done = "Applied conformer {rank} (ΔE = {energy} {unit})"
+no_model = "No 3D model"
+model_changed = "Cannot apply: the 3D model has changed since the search"
+# Name of the undo step.
+undo_label = "Apply conformer"
+
+[conformer.export]
+cancelled = "Save cancelled"
+done = "Saved {path}"
+failed = "Could not save: {error}"

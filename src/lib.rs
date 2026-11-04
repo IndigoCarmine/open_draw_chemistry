@@ -11,6 +11,7 @@ pub mod i18n;
 pub mod acauda;
 pub mod app;
 pub mod assembly;
+pub mod conformer;
 pub mod document;
 pub mod fragments;
 pub mod io;

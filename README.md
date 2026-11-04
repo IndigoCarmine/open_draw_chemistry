@@ -41,7 +41,7 @@ Windows, macOS and Linux.
 | 📂 **ChemDraw-compatible** | Open and save `.cdx` / `.cdxml`. Objects the editor can't show yet are kept when you save. |
 | 🏷️ **IUPAC names** | Preferred IUPAC names (2013 recommendations), including E/Z and R/S, rings, spiro and bicyclic systems, and inorganic salts. Alternatives are listed too: functional-class, retained and other systematic names. Copy a name or put it on the page. |
 | 🔬 **Analysis** | Formula, exact mass and molecular weight, isotope pattern (m/z) and elemental analysis, updated as you draw. |
-| 🧊 **3D** | Generate a 3D model (ETKDG), which respects wedges and expands Ph / OMe. Optimise it with MMFF94, MMFF94s or UFF, view and edit it in 3D, and export MOL, SDF, XYZ or PDB. |
+| 🧊 **3D** | Generate a 3D model (ETKDG), which respects wedges and expands Ph / OMe. Optimise it with MMFF94, MMFF94s or UFF, search its conformers (ETKDG or random torsions; the list sorted by energy, any one applied with a click, all saved as SDF), view and edit it in 3D, and export MOL, SDF, XYZ or PDB. |
 | 🧩 **Assemblies and scans** | Build rings, stacks, helices and crystal lattices from monomers. Check clashes, and measure distances and angles. Run multi-dimensional energy scans, rigid or relaxed. |
 | 📝 **Office integration** (Windows) | Edit ChemDraw objects in Word and PowerPoint on a PC without ChemDraw. Copy puts a ChemDraw-compatible structure and a picture on the clipboard. |
 | 🌐 **11 languages** | English, 日本語, 简体中文, 繁體中文, 한국어, Deutsch, Français, Español, Italiano, Português (Brasil), Русский. |
