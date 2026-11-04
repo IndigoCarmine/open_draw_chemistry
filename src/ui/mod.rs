@@ -155,6 +155,12 @@ pub enum Command {
     OpenScan,
     /// Open the 配座探索 (conformational search) window.
     OpenConformers,
+    /// ソフトコア最適化: build the active document's 3D model up by soft-core λ-continuation.
+    SoftCore3d,
+    /// The same of the active assembly; the result opens as a new document.
+    SoftCoreAssembly,
+    /// Stop the active document's soft-core build.
+    CancelSoftCore,
     /// 環を塗りつぶす: fill the rings of the selection with this colour (straight RGBA).
     FillRing([u8; 4]),
     /// 塗りつぶしを解除: remove the ring fills of the selection.

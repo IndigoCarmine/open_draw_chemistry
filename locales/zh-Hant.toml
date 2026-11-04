@@ -162,6 +162,7 @@ optimize = "結構最佳化"
 export = "匯出 3D"
 parameter_scan = "參數掃描…"
 conformer_search = "構形搜尋…"
+softcore = "軟核最佳化"
 create_assembly = "建立分子組裝體"
 create_assembly_tip = "以目前的 3D 模型為單體，建立環、堆疊、螺旋等組裝體（切換至組裝體檢視）"
 
@@ -1206,3 +1207,26 @@ undo_label = "套用構形"
 cancelled = "已取消儲存"
 done = "已儲存 {path}"
 failed = "無法儲存：{error}"
+
+[softcore]
+too_many_atoms = "原子過多（{atoms}）。軟核最佳化最多支援 {max} 個原子"
+one_molecule = "軟核最佳化需要兩個以上的分子：它減弱的是分子之間的交互作用"
+model_button = "軟核最佳化"
+model_tip = "建構多個分子的結構：分子間交互作用從弱而軟（重疊的原子可彼此穿過）開始，逐步增強到完整強度，每一步都將整個結構最佳化，最後再進行一般最佳化。固定原子與約束保持不變"
+assembly_button = "軟核最佳化 → 新 3D 模型"
+assembly_tip = "以軟核 λ-continuation（分子具柔性）建構聚集體，並將結果開啟為新文件的 3D 模型；聚集體本身不變"
+running = "軟核最佳化：{stage}"
+undo_label = "軟核最佳化"
+
+[softcore.stage]
+starting = "正在開始"
+lambda = "λ = {lambda}（第 {step} / {of} 步）"
+final = "最終最佳化"
+
+[softcore.status]
+started = "已開始軟核最佳化"
+cancelled = "已取消軟核最佳化"
+failed = "軟核最佳化失敗：{error}"
+assembly_built = "已以軟核最佳化建構聚集體（E = {energy} {unit}），並開啟為新文件"
+model_built = "軟核最佳化完成（E = {energy} {unit}）"
+model_changed = "未套用軟核最佳化結果：開始後 3D 模型已變更"

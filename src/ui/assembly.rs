@@ -873,6 +873,7 @@ pub fn panel(
     }
     let model_name = model_name(doc);
     let has_model = doc.three_d.model().is_some();
+    let softcore = SoftCoreStatus::of(doc);
     let mut changes = Vec::new();
 
     egui::Panel::bottom("assembly_footer")
@@ -888,7 +889,16 @@ pub fn panel(
             let state = &mut doc.assembly;
             match view.tab {
                 PanelTab::Build => {
-                    build_tab(ui, state, view, &look, &ink, has_model, out, &mut changes);
+                    build_tab(
+                        ui,
+                        state,
+                        view,
+                        (&look, &ink),
+                        has_model,
+                        &softcore,
+                        out,
+                        &mut changes,
+                    );
                 }
                 PanelTab::Display => display_tab(ui, state, view, &look, &ink, out),
             }
@@ -957,9 +967,9 @@ fn build_tab(
     ui: &mut egui::Ui,
     state: &mut AssemblyState,
     view: &mut AssemblyView,
-    look: &Look,
-    ink: &Ink,
+    (look, ink): (&Look, &Ink),
     has_model: bool,
+    softcore: &SoftCoreStatus,
     out: &mut Vec<Command>,
     changes: &mut Vec<Change>,
 ) {
@@ -978,11 +988,70 @@ fn build_tab(
         {
             out.push(Command::OpenScan);
         }
+        softcore_row(ui, state, softcore, ink, out);
     }
     style::caption(ui, look, t!("assembly.view.section_placement"));
     style::card(ui, look, false, 0.0, |ui| {
         place::section(ui, state, view, ink)
     });
+}
+
+/// Whether a soft-core build of the document runs, and of what.
+struct SoftCoreStatus {
+    /// Any build of the document (the 3D model's too) runs.
+    busy: bool,
+    /// The stage of the assembly's build, while one runs.
+    assembly: Option<String>,
+}
+
+impl SoftCoreStatus {
+    fn of(doc: &Document) -> Self {
+        let run = doc.softcore.as_ref().filter(|r| r.is_running());
+        Self {
+            busy: run.is_some(),
+            assembly: run
+                .filter(|r| r.target == crate::softcore::Target::Assembly)
+                .map(|r| r.stage_label()),
+        }
+    }
+}
+
+/// ソフトコア最適化 of the assembly: the button (its result opens as a new document), or the
+/// build's progress and Cancel while it runs.
+fn softcore_row(
+    ui: &mut egui::Ui,
+    state: &mut AssemblyState,
+    softcore: &SoftCoreStatus,
+    ink: &Ink,
+    out: &mut Vec<Command>,
+) {
+    if let Some(stage) = &softcore.assembly {
+        ui.horizontal_wrapped(|ui| {
+            ui.spinner();
+            ui.label(ink.muted(stage));
+            if ui.small_button(t!("common.cancel")).clicked() {
+                out.push(Command::CancelSoftCore);
+            }
+        });
+        return;
+    }
+    let refused = match state.built() {
+        Ok(built) => crate::softcore::refusal(built.atoms.len(), built.molecule_count()),
+        Err(e) => Some(e.to_string()),
+    };
+    let button = ui
+        .add_enabled(
+            refused.is_none() && !softcore.busy,
+            egui::Button::new(t!("softcore.assembly_button")),
+        )
+        .on_hover_text(t!("softcore.assembly_tip"));
+    let button = match &refused {
+        Some(why) => button.on_disabled_hover_text(why),
+        None => button,
+    };
+    if button.clicked() {
+        out.push(Command::SoftCoreAssembly);
+    }
 }
 
 /// The 表示 tab: how the assembly is shown, what it holds, and writing it out.

@@ -154,6 +154,7 @@ optimize = "Ottimizza struttura"
 export = "Esporta 3D"
 parameter_scan = "Scansione dei parametri…"
 conformer_search = "Ricerca conformazionale…"
+softcore = "Ottimizzazione soft-core"
 create_assembly = "Crea assemblaggio molecolare"
 create_assembly_tip = "Usa il modello 3D corrente come monomero per costruire assemblaggi come anelli, impilamenti ed eliche (passa alla vista assemblaggio)"
 
@@ -1184,3 +1185,26 @@ undo_label = "Applica conformero"
 cancelled = "Salvataggio annullato"
 done = "Salvato {path}"
 failed = "Impossibile salvare: {error}"
+
+[softcore]
+too_many_atoms = "Troppi atomi ({atoms}). Un'ottimizzazione soft-core accetta al massimo {max} atomi"
+one_molecule = "L'ottimizzazione soft-core richiede due o più molecole: attenua le interazioni tra molecole"
+model_button = "Ottimizzazione soft-core"
+model_tip = "Costruisce la struttura di più molecole: le loro interazioni partono deboli e morbide (atomi sovrapposti possono attraversarsi) e vengono aumentate passo dopo passo fino alla piena intensità, minimizzando l'intera struttura a ogni passo e poi in modo normale. Atomi fissati e vincoli vengono mantenuti"
+assembly_button = "Ottimizzazione soft-core → nuovo modello 3D"
+assembly_tip = "Costruisce l'aggregato per λ-continuazione soft-core (molecole flessibili) e apre il risultato come modello 3D di un nuovo documento; l'aggregato stesso non cambia"
+running = "Ottimizzazione soft-core: {stage}"
+undo_label = "Ottimizzazione soft-core"
+
+[softcore.stage]
+starting = "avvio"
+lambda = "λ = {lambda} (passo {step} di {of})"
+final = "minimizzazione finale"
+
+[softcore.status]
+started = "Ottimizzazione soft-core avviata"
+cancelled = "Ottimizzazione soft-core annullata"
+failed = "Ottimizzazione soft-core non riuscita: {error}"
+assembly_built = "Aggregato costruito con ottimizzazione soft-core (E = {energy} {unit}); aperto come nuovo documento"
+model_built = "Ottimizzazione soft-core completata (E = {energy} {unit})"
+model_changed = "Ottimizzazione soft-core non applicata: il modello 3D è cambiato dall'avvio"

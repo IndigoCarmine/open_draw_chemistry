@@ -1001,8 +1001,42 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
             {
                 out.push(Command::OpenConformers);
             }
+            let softcore_running = doc
+                .and_then(|d| d.softcore.as_ref())
+                .is_some_and(|r| r.is_running());
+            let refused = match model {
+                Some(m) if job.is_some_and(|j| j.model().is_some()) => {
+                    crate::softcore::refusal(m.atoms.len(), crate::softcore::molecule_count(m))
+                }
+                _ => Some(t!("conformer.window.no_model").to_owned()),
+            };
+            let button = ui
+                .add_enabled(
+                    refused.is_none() && !softcore_running,
+                    egui::Button::new(t!("softcore.model_button")),
+                )
+                .on_hover_text(t!("softcore.model_tip"));
+            let button = match &refused {
+                Some(why) => button.on_disabled_hover_text(why),
+                None => button,
+            };
+            if button.clicked() {
+                out.push(Command::SoftCore3d);
+            }
         });
     });
+    if let Some(run) = doc
+        .and_then(|d| d.softcore.as_ref())
+        .filter(|r| r.is_running() && r.target == crate::softcore::Target::Model)
+    {
+        ui.horizontal_wrapped(|ui| {
+            ui.spinner();
+            ui.label(ink.muted(&t!("softcore.running", stage = run.stage_label())));
+            if ui.small_button(t!("common.cancel")).clicked() {
+                out.push(Command::CancelSoftCore);
+            }
+        });
+    }
     match job.map(|j| &j.state) {
         Some(JobState::Running(task)) => {
             ui.horizontal(|ui| {

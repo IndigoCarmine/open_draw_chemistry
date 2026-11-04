@@ -155,6 +155,7 @@ optimize = "Otimizar estrutura"
 export = "Exportar 3D"
 parameter_scan = "Varredura de parâmetros…"
 conformer_search = "Busca conformacional…"
+softcore = "Otimização soft-core"
 create_assembly = "Criar montagem molecular"
 create_assembly_tip = "Usa o modelo 3D atual como monômero para construir montagens como anéis, empilhamentos e hélices (alterna para a visualização de montagem)"
 
@@ -1185,3 +1186,26 @@ undo_label = "Aplicar confôrmero"
 cancelled = "Salvamento cancelado"
 done = "{path} salvo"
 failed = "Não foi possível salvar: {error}"
+
+[softcore]
+too_many_atoms = "Átomos demais ({atoms}). Uma otimização soft-core aceita no máximo {max} átomos"
+one_molecule = "A otimização soft-core precisa de duas ou mais moléculas: ela suaviza as interações entre moléculas"
+model_button = "Otimização soft-core"
+model_tip = "Constrói a estrutura de várias moléculas: as interações entre elas começam fracas e suaves (átomos sobrepostos podem se atravessar) e são aumentadas passo a passo até a intensidade total, minimizando toda a estrutura a cada passo e depois normalmente. Átomos fixos e restrições são mantidos"
+assembly_button = "Otimização soft-core → novo modelo 3D"
+assembly_tip = "Constrói o agregado por λ-continuação soft-core (moléculas flexíveis) e abre o resultado como modelo 3D de um novo documento; o agregado em si não muda"
+running = "Otimização soft-core: {stage}"
+undo_label = "Otimização soft-core"
+
+[softcore.stage]
+starting = "iniciando"
+lambda = "λ = {lambda} (passo {step} de {of})"
+final = "minimização final"
+
+[softcore.status]
+started = "Otimização soft-core iniciada"
+cancelled = "Otimização soft-core cancelada"
+failed = "A otimização soft-core falhou: {error}"
+assembly_built = "Agregado construído por otimização soft-core (E = {energy} {unit}); aberto como novo documento"
+model_built = "Otimização soft-core concluída (E = {energy} {unit})"
+model_changed = "Otimização soft-core não aplicada: o modelo 3D mudou desde o início"

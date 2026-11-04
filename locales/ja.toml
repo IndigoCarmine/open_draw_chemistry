@@ -183,6 +183,7 @@ optimize = "構造最適化"
 export = "3D をエクスポート"
 parameter_scan = "パラメータスキャン…"
 conformer_search = "配座探索…"
+softcore = "ソフトコア最適化"
 create_assembly = "分子集合体を作成"
 create_assembly_tip = "今の 3D モデルを単量体にして、環状・積層・らせんなどの集合体を組み立てます（集合体画面に切り替わります）"
 
@@ -1238,3 +1239,26 @@ undo_label = "配座を適用"
 cancelled = "保存を取り消しました"
 done = "{path} に保存しました"
 failed = "保存できませんでした: {error}"
+
+[softcore]
+too_many_atoms = "原子が多すぎます（{atoms}）。ソフトコア最適化は {max} 原子までです"
+one_molecule = "ソフトコア最適化には 2 つ以上の分子が必要です（分子間の相互作用を弱めるため）"
+model_button = "ソフトコア最適化"
+model_tip = "複数分子の構造を構築します。分子間の相互作用を弱く柔らかい状態（重なった原子がすり抜けられる）から段階的に本来の強さまで上げ、各段階で構造全体を最適化し、最後に通常の最適化を行います。固定原子と拘束は保たれます"
+assembly_button = "ソフトコア最適化 → 新しい 3D モデル"
+assembly_tip = "集合体をソフトコア λ-continuation（分子はフレキシブル）で構築し、結果を新しい文書の 3D モデルとして開きます。集合体そのものは変わりません"
+running = "ソフトコア最適化: {stage}"
+undo_label = "ソフトコア最適化"
+
+[softcore.stage]
+starting = "開始中"
+lambda = "λ = {lambda}（{of} 段中 {step} 段目）"
+final = "最終最適化"
+
+[softcore.status]
+started = "ソフトコア最適化を開始しました"
+cancelled = "ソフトコア最適化を中止しました"
+failed = "ソフトコア最適化に失敗しました: {error}"
+assembly_built = "ソフトコア最適化で集合体を構築しました（E = {energy} {unit}）。新しい文書として開きました"
+model_built = "ソフトコア最適化が完了しました（E = {energy} {unit}）"
+model_changed = "ソフトコア最適化の結果は適用しませんでした: 開始後に 3D モデルが変わっています"

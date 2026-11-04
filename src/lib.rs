@@ -20,6 +20,7 @@ pub mod ole;
 pub mod ole_server;
 pub mod scan;
 pub mod smiles;
+pub mod softcore;
 pub mod theme;
 pub mod three_d;
 pub mod ui;

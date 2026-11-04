@@ -151,6 +151,7 @@ optimize = "Struktur optimieren"
 export = "3D exportieren"
 parameter_scan = "Parameter-Scan…"
 conformer_search = "Konformerensuche…"
+softcore = "Soft-Core-Optimierung"
 create_assembly = "Molekulares Aggregat erstellen"
 create_assembly_tip = "Das aktuelle 3D-Modell als Monomer verwenden, um Aggregate wie Ringe, Stapel und Helices aufzubauen (wechselt zur Aggregat-Ansicht)"
 
@@ -1181,3 +1182,26 @@ undo_label = "Konformer übernehmen"
 cancelled = "Speichern abgebrochen"
 done = "{path} gespeichert"
 failed = "Konnte nicht speichern: {error}"
+
+[softcore]
+too_many_atoms = "Zu viele Atome ({atoms}). Eine Soft-Core-Optimierung nimmt höchstens {max} Atome"
+one_molecule = "Die Soft-Core-Optimierung braucht zwei oder mehr Moleküle: Sie schwächt die Wechselwirkungen zwischen Molekülen ab"
+model_button = "Soft-Core-Optimierung"
+model_tip = "Baut die Struktur mehrerer Moleküle auf: Ihre Wechselwirkungen beginnen schwach und weich (überlappende Atome können sich durchdringen) und werden schrittweise auf volle Stärke gebracht; bei jedem Schritt wird die ganze Struktur minimiert, danach wie üblich. Fixierte Atome und Restraints bleiben erhalten"
+assembly_button = "Soft-Core-Optimierung → neues 3D-Modell"
+assembly_tip = "Baut das Aggregat per Soft-Core-λ-Fortsetzung auf (Moleküle flexibel) und öffnet das Ergebnis als 3D-Modell eines neuen Dokuments; das Aggregat selbst bleibt unverändert"
+running = "Soft-Core-Optimierung: {stage}"
+undo_label = "Soft-Core-Optimierung"
+
+[softcore.stage]
+starting = "Start"
+lambda = "λ = {lambda} (Schritt {step} von {of})"
+final = "abschließende Minimierung"
+
+[softcore.status]
+started = "Soft-Core-Optimierung gestartet"
+cancelled = "Soft-Core-Optimierung abgebrochen"
+failed = "Soft-Core-Optimierung fehlgeschlagen: {error}"
+assembly_built = "Aggregat per Soft-Core-Optimierung aufgebaut (E = {energy} {unit}); als neues Dokument geöffnet"
+model_built = "Soft-Core-Optimierung fertig (E = {energy} {unit})"
+model_changed = "Soft-Core-Optimierung nicht übernommen: Das 3D-Modell hat sich seit dem Start geändert"

@@ -248,6 +248,7 @@ optimize = "Optimize structure"
 export = "Export 3D"
 parameter_scan = "Parameter scan…"
 conformer_search = "Conformer search…"
+softcore = "Soft-core optimization"
 create_assembly = "Create molecular assembly"
 create_assembly_tip = "Use the current 3D model as a monomer to build assemblies such as rings, stacks and helices (switches to the assembly view)"
 
@@ -1597,3 +1598,33 @@ undo_label = "Apply conformer"
 cancelled = "Save cancelled"
 done = "Saved {path}"
 failed = "Could not save: {error}"
+
+[softcore]
+# {atoms}: atoms in the structure; {max}: the most it takes.
+too_many_atoms = "Too many atoms ({atoms}). A soft-core optimization takes at most {max} atoms"
+one_molecule = "Soft-core optimization needs two or more molecules: it softens the interactions between molecules"
+# Button in the 3D panel.
+model_button = "Soft-core optimize"
+model_tip = "Builds the structure of several molecules: the interactions between them start weak and soft (overlapping atoms may pass through each other) and are turned up step by step to full strength, the whole structure minimized at each step, then minimized as usual. Fixed atoms and restraints are kept"
+# Button in the assembly panel.
+assembly_button = "Soft-core optimize → new 3D model"
+assembly_tip = "Builds the assembly by soft-core λ-continuation (molecules flexible) and opens the result as a new document's 3D model; the assembly itself stays as it is"
+# {stage}: where it has got (see [softcore.stage]).
+running = "Soft-core optimization: {stage}"
+# Name of the undo step.
+undo_label = "Soft-core optimization"
+
+[softcore.stage]
+starting = "starting"
+# {lambda}: the coupling of the interactions between molecules (0–1); {step} of {of}: the step.
+lambda = "λ = {lambda} (step {step} of {of})"
+final = "final minimization"
+
+[softcore.status]
+started = "Soft-core optimization started"
+cancelled = "Soft-core optimization cancelled"
+failed = "Soft-core optimization failed: {error}"
+# {energy} {unit}: the final energy, e.g. "-12.3 kcal/mol".
+assembly_built = "Built the assembly by soft-core optimization (E = {energy} {unit}); it opened as a new document"
+model_built = "Soft-core optimization done (E = {energy} {unit})"
+model_changed = "Soft-core optimization not applied: the 3D model has changed since it started"

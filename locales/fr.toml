@@ -151,6 +151,7 @@ optimize = "Optimiser la structure"
 export = "Exporter en 3D"
 parameter_scan = "Balayage de paramètres…"
 conformer_search = "Recherche de conformères…"
+softcore = "Optimisation soft-core"
 create_assembly = "Créer un assemblage moléculaire"
 create_assembly_tip = "Utilise le modèle 3D actuel comme monomère pour construire des assemblages (anneaux, empilements, hélices…) (passe à la vue Assemblage)"
 
@@ -1181,3 +1182,26 @@ undo_label = "Appliquer le conformère"
 cancelled = "Enregistrement annulé"
 done = "{path} enregistré"
 failed = "Enregistrement impossible : {error}"
+
+[softcore]
+too_many_atoms = "Trop d'atomes ({atoms}). Une optimisation soft-core accepte au plus {max} atomes"
+one_molecule = "L'optimisation soft-core demande au moins deux molécules : elle adoucit les interactions entre molécules"
+model_button = "Optimisation soft-core"
+model_tip = "Construit la structure de plusieurs molécules : leurs interactions commencent faibles et douces (des atomes qui se chevauchent peuvent se traverser) et sont augmentées pas à pas jusqu'à pleine intensité, toute la structure étant minimisée à chaque pas, puis minimisée normalement. Les atomes fixés et les contraintes sont conservés"
+assembly_button = "Optimisation soft-core → nouveau modèle 3D"
+assembly_tip = "Construit l'assemblage par λ-continuation soft-core (molécules flexibles) et ouvre le résultat comme modèle 3D d'un nouveau document ; l'assemblage lui-même ne change pas"
+running = "Optimisation soft-core : {stage}"
+undo_label = "Optimisation soft-core"
+
+[softcore.stage]
+starting = "démarrage"
+lambda = "λ = {lambda} (étape {step} sur {of})"
+final = "minimisation finale"
+
+[softcore.status]
+started = "Optimisation soft-core lancée"
+cancelled = "Optimisation soft-core annulée"
+failed = "Échec de l'optimisation soft-core : {error}"
+assembly_built = "Assemblage construit par optimisation soft-core (E = {energy} {unit}) ; ouvert comme nouveau document"
+model_built = "Optimisation soft-core terminée (E = {energy} {unit})"
+model_changed = "Optimisation soft-core non appliquée : le modèle 3D a changé depuis son lancement"

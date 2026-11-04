@@ -154,6 +154,7 @@ optimize = "Optimizar estructura"
 export = "Exportar 3D"
 parameter_scan = "Barrido de parámetros…"
 conformer_search = "Búsqueda de confórmeros…"
+softcore = "Optimización soft-core"
 create_assembly = "Crear ensamblaje molecular"
 create_assembly_tip = "Usa el modelo 3D actual como monómero para construir ensamblajes como anillos, apilamientos y hélices (cambia a la vista de ensamblaje)"
 
@@ -1184,3 +1185,26 @@ undo_label = "Aplicar confórmero"
 cancelled = "Guardado cancelado"
 done = "Guardado {path}"
 failed = "No se pudo guardar: {error}"
+
+[softcore]
+too_many_atoms = "Demasiados átomos ({atoms}). Una optimización soft-core admite como máximo {max} átomos"
+one_molecule = "La optimización soft-core necesita dos o más moléculas: suaviza las interacciones entre moléculas"
+model_button = "Optimización soft-core"
+model_tip = "Construye la estructura de varias moléculas: sus interacciones empiezan débiles y suaves (los átomos superpuestos pueden atravesarse) y se aumentan paso a paso hasta su intensidad completa, minimizando toda la estructura en cada paso y luego de forma normal. Se conservan los átomos fijos y las restricciones"
+assembly_button = "Optimización soft-core → nuevo modelo 3D"
+assembly_tip = "Construye el ensamblaje por λ-continuación soft-core (moléculas flexibles) y abre el resultado como modelo 3D de un documento nuevo; el ensamblaje en sí no cambia"
+running = "Optimización soft-core: {stage}"
+undo_label = "Optimización soft-core"
+
+[softcore.stage]
+starting = "iniciando"
+lambda = "λ = {lambda} (paso {step} de {of})"
+final = "minimización final"
+
+[softcore.status]
+started = "Optimización soft-core iniciada"
+cancelled = "Optimización soft-core cancelada"
+failed = "La optimización soft-core falló: {error}"
+assembly_built = "Ensamblaje construido por optimización soft-core (E = {energy} {unit}); abierto como documento nuevo"
+model_built = "Optimización soft-core terminada (E = {energy} {unit})"
+model_changed = "No se aplicó la optimización soft-core: el modelo 3D cambió desde que empezó"

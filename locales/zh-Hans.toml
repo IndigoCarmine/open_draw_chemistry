@@ -159,6 +159,7 @@ optimize = "结构优化"
 export = "导出 3D"
 parameter_scan = "参数扫描…"
 conformer_search = "构象搜索…"
+softcore = "软核优化"
 create_assembly = "创建分子组装体"
 create_assembly_tip = "以当前 3D 模型为单体，构建环、堆叠、螺旋等组装体（切换到组装体视图）"
 
@@ -1203,3 +1204,26 @@ undo_label = "应用构象"
 cancelled = "已取消保存"
 done = "已保存 {path}"
 failed = "无法保存：{error}"
+
+[softcore]
+too_many_atoms = "原子过多（{atoms}）。软核优化最多支持 {max} 个原子"
+one_molecule = "软核优化需要两个或更多分子：它减弱的是分子之间的相互作用"
+model_button = "软核优化"
+model_tip = "构建多个分子的结构：分子间相互作用从弱而软（重叠的原子可以相互穿过）开始，逐步增强到完整强度，每一步都优化整个结构，最后再进行常规优化。固定原子和约束保持不变"
+assembly_button = "软核优化 → 新 3D 模型"
+assembly_tip = "用软核 λ-continuation（分子柔性）构建聚集体，并将结果作为新文档的 3D 模型打开；聚集体本身不变"
+running = "软核优化：{stage}"
+undo_label = "软核优化"
+
+[softcore.stage]
+starting = "正在开始"
+lambda = "λ = {lambda}（第 {step} / {of} 步）"
+final = "最终优化"
+
+[softcore.status]
+started = "已开始软核优化"
+cancelled = "已取消软核优化"
+failed = "软核优化失败：{error}"
+assembly_built = "已用软核优化构建聚集体（E = {energy} {unit}），并作为新文档打开"
+model_built = "软核优化完成（E = {energy} {unit}）"
+model_changed = "未应用软核优化结果：开始后 3D 模型已更改"

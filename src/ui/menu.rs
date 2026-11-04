@@ -29,6 +29,9 @@ pub struct MenuState<'a> {
     pub can_generate_3d: bool,
     /// There is a 3D model to optimise or export (optimising also needs no work running).
     pub can_optimize_3d: bool,
+    /// The 3D model can be built by soft-core λ-continuation now: two molecules or more, and
+    /// nothing running.
+    pub can_softcore_3d: bool,
     pub can_export_3d: bool,
     /// There is a document whose assembly can be started or shown.
     pub can_create_assembly: bool,
@@ -301,6 +304,14 @@ pub fn menu_bar(
                 "",
                 state.can_optimize_3d,
                 Command::Optimize3d,
+                out,
+            );
+            item(
+                ui,
+                t!("menu.three_d.softcore"),
+                "",
+                state.can_softcore_3d,
+                Command::SoftCore3d,
                 out,
             );
             ui.add_enabled_ui(state.can_export_3d, |ui| {
