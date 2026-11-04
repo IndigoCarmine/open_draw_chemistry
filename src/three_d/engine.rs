@@ -120,6 +120,33 @@ pub(crate) enum Relaxed {
 /// (kcal/mol) finds the minimum reached (see [`relax`]).
 const SETTLED_ENERGY: f64 = 1.0e-4;
 
+/// A minimiser run whose energy (restraints included) has not dropped by [`SETTLED_ENERGY`]
+/// for this many iterations has stalled (see [`relax`]).
+const STALL_ITERATIONS: usize = 200;
+
+/// Watches one minimiser run's energy for a stall: [`STALL_ITERATIONS`] iterations without a
+/// drop of [`SETTLED_ENERGY`].
+#[derive(Debug, Default)]
+struct StallWatch {
+    /// The energy and iteration of the last drop of [`SETTLED_ENERGY`] or more.
+    mark: Option<(f64, usize)>,
+}
+
+impl StallWatch {
+    /// Take in the energy at `iteration`; whether the run has stalled.
+    fn stalled(&mut self, iteration: usize, energy: f64) -> bool {
+        match self.mark {
+            Some((at, since)) if energy > at - SETTLED_ENERGY => {
+                iteration.saturating_sub(since) >= STALL_ITERATIONS
+            }
+            _ => {
+                self.mark = Some((energy, iteration));
+                false
+            }
+        }
+    }
+}
+
 /// Minimise `mol` from `coords` under `force_field` holding `constraints`, for at most `steps`
 /// iterations of the library's BFGS in all, looking at `cancel` (if any) after every one.
 ///
@@ -128,6 +155,13 @@ const SETTLED_ENERGY: f64 = 1.0e-4;
 /// a kcal/mol lower. So a run that converged is restarted from where it stopped (with a fresh
 /// Hessian), and the minimisation is converged once a restart no longer lowers the energy by
 /// [`SETTLED_ENERGY`].
+///
+/// Near a stiffly restrained minimum BFGS can also creep on without ever meeting that test:
+/// the gradient there is mostly rounding, and whether it passes depends on the platform's
+/// arithmetic (one 0° point of a relaxed dihedral scan spent all its 5000 iterations at its
+/// minimum on aarch64 macOS and converged on x86-64). So a run that has not lowered the energy
+/// by [`SETTLED_ENERGY`] for [`STALL_ITERATIONS`] iterations is stopped and treated as one
+/// that converged: restarted, and settled when the restart does not lower the energy either.
 pub(crate) fn relax(
     mol: &Molecule,
     coords: &[[f64; 3]],
@@ -138,18 +172,23 @@ pub(crate) fn relax(
 ) -> Result<Relaxed, Error> {
     let builder = builder(force_field);
     let constraints = restraints(constraints, mol.num_atoms());
-    let mut watch = |_: &IterationInfo<'_>| {
-        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
-    };
     let failed = || Error::ForceField(force_field);
     let mut left = steps.max(1) as usize;
     let mut at = coords.to_vec();
     let mut before = f64::INFINITY;
     loop {
+        let mut stall = StallWatch::default();
+        let mut stalled = false;
+        let mut watch = |info: &IterationInfo<'_>| {
+            if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                ControlFlow::Break(())
+            } else if stall.stalled(info.iteration, info.energy) {
+                stalled = true;
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        };
         let options = OptimizeOptions {
             minimize: MinimizeOptions {
                 max_iters: left,
@@ -160,7 +199,7 @@ pub(crate) fn relax(
         let done =
             calc::optimize::optimize_coords(mol, &at, builder.as_ref(), &options, &mut watch)
                 .map_err(|_| failed())?;
-        if done.status == MinimizeStatus::Cancelled {
+        if done.status == MinimizeStatus::Cancelled && !stalled {
             return Ok(Relaxed::Cancelled);
         }
         if !done.ff_energy.is_finite() {
@@ -168,7 +207,7 @@ pub(crate) fn relax(
         }
         at = done.coords;
         left = left.saturating_sub(done.iterations.max(1));
-        let converged = done.status == MinimizeStatus::Converged;
+        let converged = stalled || done.status == MinimizeStatus::Converged;
         let settled = converged && before - done.energy < SETTLED_ENERGY;
         before = done.energy;
         if settled || !converged || left == 0 {
@@ -406,6 +445,32 @@ fn usable(model: &Model3d) -> bool {
 pub(super) mod tests {
     use super::*;
     use crate::three_d::{GENERATE_STEPS, OPTIMIZE_STEPS, edit, geom};
+
+    /// A run whose energy keeps dropping has not stalled, however long it takes.
+    #[test]
+    fn a_falling_energy_is_no_stall() {
+        let mut watch = StallWatch::default();
+        for i in 0..10 * STALL_ITERATIONS {
+            assert!(
+                !watch.stalled(i, -(i as f64) * 2.0 * SETTLED_ENERGY),
+                "iteration {i}"
+            );
+        }
+    }
+
+    /// A run creeping by less than [`SETTLED_ENERGY`] per [`STALL_ITERATIONS`] iterations has
+    /// stalled, once that many iterations have passed since its last real drop.
+    #[test]
+    fn a_flat_energy_stalls_after_the_window() {
+        let mut watch = StallWatch::default();
+        assert!(!watch.stalled(0, 10.0));
+        assert!(!watch.stalled(1, 9.0));
+        for i in 2..1 + STALL_ITERATIONS {
+            let creep = 9.0 - (i as f64) * 1.0e-8;
+            assert!(!watch.stalled(i, creep), "iteration {i}");
+        }
+        assert!(watch.stalled(1 + STALL_ITERATIONS, 9.0 - 1.0e-6));
+    }
 
     /// The model of a 3D molfile under `force_field`, as the 3D view holds it.
     pub(crate) fn model_from_molfile(molfile: &str, force_field: ForceField) -> Model3d {
