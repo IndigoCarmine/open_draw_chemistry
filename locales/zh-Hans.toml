@@ -230,7 +230,7 @@ delete = "删除"
 rename = "重命名"
 
 [io.export]
-png = "PNG 图像"
+png = "PNG 图像（透明背景）"
 
 [io.error]
 unknown_format = "不支持的文件格式"
@@ -584,6 +584,7 @@ atom_count_value = "{atoms}（{hydrogens} 个 H）"
 energy = "能量"
 stale_long = "2D 结构已更改。请用“从 2D 重新生成”更新"
 no_wgpu = "3D 视图需要 wgpu 渲染器（此环境不可用）"
+export_image_tip = "将当前视图保存为透明背景的 PNG 图像"
 
 [three_d.edit]
 constraint_fix = "固定"
@@ -644,6 +645,8 @@ rotate_terminal = "旋转末端键不会改变形状"
 read_file_too_large = "文件过大（最大 {max} MB）"
 read_empty = "文件中没有原子"
 read_unreadable = "无法以 {format} 格式读取"
+not_shown = "请先显示 3D 视图"
+no_gpu = "没有可用的 GPU 渲染器"
 
 [assembly.view]
 title = "组装体"

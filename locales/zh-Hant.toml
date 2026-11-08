@@ -233,7 +233,7 @@ delete = "刪除"
 rename = "重新命名"
 
 [io.export]
-png = "PNG 圖片"
+png = "PNG 圖片（透明背景）"
 
 [io.error]
 unknown_format = "不支援的檔案格式"
@@ -587,6 +587,7 @@ atom_count_value = "{atoms}（{hydrogens} 個 H）"
 energy = "能量"
 stale_long = "2D 結構已變更。請以「從 2D 重新產生」更新"
 no_wgpu = "3D 檢視需要 wgpu 轉譯器（此環境無法使用）"
+export_image_tip = "將目前檢視儲存為透明背景的 PNG 圖片"
 
 [three_d.edit]
 constraint_fix = "固定"
@@ -647,6 +648,8 @@ rotate_terminal = "旋轉末端鍵不會改變形狀"
 read_file_too_large = "檔案過大（最大 {max} MB）"
 read_empty = "檔案中沒有原子"
 read_unreadable = "無法以 {format} 格式讀取"
+not_shown = "請先顯示 3D 檢視"
+no_gpu = "沒有可用的 GPU 繪製器"
 
 [assembly.view]
 title = "組裝體"

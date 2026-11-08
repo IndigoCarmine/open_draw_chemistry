@@ -221,7 +221,7 @@ delete = "Supprimer"
 rename = "Renommer"
 
 [io.export]
-png = "Image PNG"
+png = "Image PNG (fond transparent)"
 
 [io.error]
 unknown_format = "Format de fichier non pris en charge"
@@ -567,6 +567,7 @@ atom_count_value = "{atoms} ({hydrogens} H)"
 energy = "Énergie"
 stale_long = "La structure 2D a changé. Mettez à jour avec « Régénérer depuis la 2D »"
 no_wgpu = "La vue 3D nécessite le moteur de rendu wgpu (indisponible ici)"
+export_image_tip = "Enregistrer la vue en image PNG à fond transparent"
 
 [three_d.edit]
 constraint_fix = "Fixé"
@@ -627,6 +628,8 @@ rotate_terminal = "Tourner une liaison terminale ne change pas la forme"
 read_file_too_large = "Fichier trop volumineux ({max} Mo au maximum)"
 read_empty = "Le fichier ne contient aucun atome"
 read_unreadable = "Lecture impossible au format {format}"
+not_shown = "Affichez d'abord la vue 3D"
+no_gpu = "Aucun moteur de rendu GPU disponible"
 
 [assembly.view]
 title = "Assemblage"

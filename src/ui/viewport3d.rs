@@ -570,9 +570,31 @@ impl Viewport3d {
             let distance = (self.camera.position() - molecule.center()).magnitude();
             self.offscreen.submit_lod_distance(distance);
         }
+        let low = self.offscreen.is_low_mode();
+        self.render(render_state, width, height, low, self.clear_color)?;
+
+        let texture = self
+            .offscreen
+            .texture_id()
+            .ok_or_else(|| t!("three_d.error.texture").to_owned())?;
+        let response = ui.add(
+            egui::Image::from_texture(egui::load::SizedTexture::new(texture, available))
+                .sense(Sense::click_and_drag()),
+        );
+        Ok(self.interact(ui.ctx(), &response, claim_wheel))
+    }
+
+    /// Draw the scene as the camera sees it into the off-screen target at `width` × `height`.
+    fn render(
+        &mut self,
+        render_state: &egui_wgpu::RenderState,
+        width: u32,
+        height: u32,
+        low_mode: bool,
+        clear_color: [f32; 4],
+    ) -> Result<(), String> {
         self.offscreen
             .ensure_resources(render_state, width, height)?;
-
         let view_proj = self.camera.view_projection().data;
         let rotation = self.camera.camera_rotation();
         let frame = RenderFrameState::new(
@@ -587,7 +609,7 @@ impl Viewport3d {
             Some(&self.shared),
             self.offscreen.render_style(),
             self.offscreen.mesh_resolution(),
-            self.offscreen.is_low_mode(),
+            low_mode,
             self.viewer.molecule_opacity,
         )
         .with_geometry_revision(self.viewer.revision())
@@ -597,19 +619,38 @@ impl Viewport3d {
             self.viewer.atom_radii.as_deref(),
             self.viewer.atom_colors.as_deref(),
         )
-        .with_clear_color(self.clear_color);
-        self.offscreen
-            .render_frame_with_state(render_state, &frame)?;
+        .with_clear_color(clear_color);
+        self.offscreen.render_frame_with_state(render_state, &frame)
+    }
 
-        let texture = self
+    /// The view as last shown, as a PNG with a transparent background: [`IMAGE_SCALE`] times
+    /// the on-screen size, drawn at full detail and supersampled. The highlights (picked,
+    /// fixed, clashing atoms) are left out; the next [`Viewport3d::show`] puts them and the
+    /// on-screen size back. `Err` before the view has been shown.
+    pub fn render_png(&mut self, render_state: &egui_wgpu::RenderState) -> Result<Vec<u8>, String> {
+        let (shown_w, shown_h) = self.offscreen.size();
+        if shown_w == 0 || shown_h == 0 || self.viewer.molecule().is_none() {
+            return Err(t!("three_d.error.not_shown").to_owned());
+        }
+        let max_dim = render_state.device.limits().max_texture_dimension_2d;
+        let fit = |factor: u32| shown_w * factor <= max_dim && shown_h * factor <= max_dim;
+        let scale = (1..=IMAGE_SCALE).rev().find(|&s| fit(s)).unwrap_or(1);
+        let supersample = (1..=IMAGE_SUPERSAMPLE)
+            .rev()
+            .find(|&s| fit(scale * s))
+            .unwrap_or(1);
+        let (render_w, render_h) = (shown_w * scale * supersample, shown_h * scale * supersample);
+
+        self.set_highlights(Vec::new(), Vec::new());
+        let rendered = self
+            .render(render_state, render_w, render_h, false, [0.0; 4])
+            .and_then(|()| self.offscreen.read_rgba(render_state));
+        // Back to the on-screen size whatever happened; the next frame redraws it.
+        let _ = self
             .offscreen
-            .texture_id()
-            .ok_or_else(|| t!("three_d.error.texture").to_owned())?;
-        let response = ui.add(
-            egui::Image::from_texture(egui::load::SizedTexture::new(texture, available))
-                .sense(Sense::click_and_drag()),
-        );
-        Ok(self.interact(ui.ctx(), &response, claim_wheel))
+            .ensure_resources(render_state, shown_w, shown_h);
+        let rgba = downsample_premultiplied(&rendered?, render_w, render_h, supersample);
+        encode_png(rgba, shown_w * scale, shown_h * scale)
     }
 
     fn interact(
@@ -739,6 +780,61 @@ impl Viewport3d {
     }
 }
 
+/// An exported picture is this many times the on-screen size of the view…
+const IMAGE_SCALE: u32 = 2;
+/// …drawn at this many samples per pixel a side, for smooth edges.
+const IMAGE_SUPERSAMPLE: u32 = 2;
+
+/// Average each `factor` × `factor` block of premultiplied RGBA8 pixels into one. Averaging
+/// premultiplied values keeps a transparent neighbour from darkening an edge.
+fn downsample_premultiplied(rgba: &[u8], width: u32, height: u32, factor: u32) -> Vec<u8> {
+    if factor <= 1 {
+        return rgba.to_vec();
+    }
+    let (out_w, out_h) = ((width / factor) as usize, (height / factor) as usize);
+    let (width, factor) = (width as usize, factor as usize);
+    let samples = (factor * factor) as u32;
+    let mut out = Vec::with_capacity(out_w * out_h * 4);
+    for y in 0..out_h {
+        for x in 0..out_w {
+            let mut sum = [0u32; 4];
+            for dy in 0..factor {
+                let row = (y * factor + dy) * width;
+                for dx in 0..factor {
+                    let i = (row + x * factor + dx) * 4;
+                    for (s, &v) in sum.iter_mut().zip(&rgba[i..i + 4]) {
+                        *s += u32::from(v);
+                    }
+                }
+            }
+            out.extend(sum.map(|s| ((s + samples / 2) / samples) as u8));
+        }
+    }
+    out
+}
+
+/// PNG bytes of premultiplied RGBA8 pixels, the colour divided back out of the alpha (PNG's
+/// alpha is straight).
+fn encode_png(mut rgba: Vec<u8>, width: u32, height: u32) -> Result<Vec<u8>, String> {
+    for px in rgba.chunks_exact_mut(4) {
+        let a = u32::from(px[3]);
+        if a == 0 {
+            px[..3].fill(0);
+        } else if a < 255 {
+            for c in &mut px[..3] {
+                *c = ((u32::from(*c) * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+    let image = image::RgbaImage::from_raw(width, height, rgba)
+        .ok_or_else(|| "pixel buffer does not match the image size".to_owned())?;
+    let mut png = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    Ok(png)
+}
+
 fn project(camera: &OrbitalCamera, rect: Rect, pos: [f64; 3]) -> Option<Pos2> {
     let world = to_nm(pos) - camera.position();
     let local = camera.camera_rotation().inverse().rotate_vec(world);
@@ -825,6 +921,28 @@ pub type Role<'a> = (&'a [usize], (f32, f32, f32));
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_keeps_its_transparent_background() {
+        // 2×2 premultiplied: one opaque red pixel, one half-transparent red, two empty.
+        let rgba = [255, 0, 0, 255, 128, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0];
+        let one = downsample_premultiplied(&rgba, 2, 2, 2);
+        assert_eq!(one, vec![96, 0, 0, 96], "averaged while premultiplied");
+        let png = encode_png(rgba.to_vec(), 2, 2).unwrap();
+        let back = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(back.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(
+            back.get_pixel(1, 0).0,
+            [255, 0, 0, 128],
+            "straight alpha in the file"
+        );
+        assert_eq!(
+            back.get_pixel(0, 1).0,
+            [0, 0, 0, 0],
+            "the background stays clear"
+        );
+        assert_eq!(downsample_premultiplied(&rgba, 2, 2, 1), rgba.to_vec());
+    }
 
     /// Projecting a point and casting the picking ray back through that pixel must land on
     /// the point: labels and clicks agree on where an atom is.

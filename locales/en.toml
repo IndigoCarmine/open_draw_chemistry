@@ -339,7 +339,7 @@ rename = "Rename"
 
 [io.export]
 # File-dialog filter name
-png = "PNG image"
+png = "PNG image (transparent background)"
 
 [io.error]
 unknown_format = "Unsupported file format"
@@ -766,6 +766,8 @@ atom_count_value = "{atoms} ({hydrogens} H)"
 energy = "Energy"
 stale_long = "The 2D structure has changed. Update it with “Regenerate from 2D”"
 no_wgpu = "The 3D view needs the wgpu renderer (not available here)"
+# Tooltip of the 3D panel's ".png" export button.
+export_image_tip = "Save the view as a PNG image with a transparent background"
 
 [three_d.edit]
 # Kinds of optimization constraint, shown before the atoms they apply to.
@@ -846,6 +848,9 @@ read_file_too_large = "The file is too large (up to {max} MB)"
 read_empty = "The file has no atoms"
 # {format} is a file format name such as "MDL Molfile".
 read_unreadable = "Couldn't read as {format}"
+# The 3D picture export was asked for before the view was drawn.
+not_shown = "Show the 3D view first"
+no_gpu = "No GPU renderer is available"
 
 [assembly.view]
 # Panel heading of the assembly view (a molecular assembly built from monomers)

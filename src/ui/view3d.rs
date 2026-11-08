@@ -73,6 +73,15 @@ impl View3d {
         }
     }
 
+    /// The view as last drawn, as a PNG with a transparent background (see
+    /// [`Viewport3d::render_png`]).
+    pub fn render_png(&mut self, render_state: &RenderState) -> Result<Vec<u8>, String> {
+        match &mut self.viewport {
+            Some(viewport) => viewport.render_png(render_state),
+            None => Err(t!("three_d.error.not_shown").to_owned()),
+        }
+    }
+
     fn clashes_for(&mut self, model: &Model3d) -> &[Clash] {
         let coords = edit::coords(model);
         if self.clashes.0 != coords {
@@ -236,6 +245,17 @@ pub fn edit_panel(
             {
                 out.push(Command::Export3d(export));
             }
+        }
+        let has_view = doc
+            .as_deref()
+            .is_some_and(|d| d.three_d.shown_model().is_some());
+        if ui
+            .add_enabled(has_view, egui::Button::new(".png"))
+            .on_hover_text(t!("three_d.view.export_image_tip"))
+            .on_disabled_hover_text(t!("three_d.view.export_no_model"))
+            .clicked()
+        {
+            out.push(Command::Export3dImage);
         }
     });
 }

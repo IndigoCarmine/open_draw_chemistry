@@ -254,7 +254,7 @@ delete = "削除"
 rename = "名前変更"
 
 [io.export]
-png = "PNG 画像"
+png = "PNG 画像（背景透過）"
 
 [io.error]
 unknown_format = "対応していないファイル形式です"
@@ -624,6 +624,7 @@ atom_count_value = "{atoms}（うち H {hydrogens}）"
 energy = "エネルギー"
 stale_long = "2D の構造が変更されています。「2D から再生成」で更新できます"
 no_wgpu = "3D 表示には wgpu レンダラーが必要です（この環境では使えません）"
+export_image_tip = "表示中のビューを背景透過の PNG 画像として書き出す"
 
 [three_d.edit]
 constraint_fix = "固定"
@@ -684,6 +685,8 @@ rotate_terminal = "末端の結合は回しても形が変わりません"
 read_file_too_large = "ファイルが大きすぎます（{max} MB まで）"
 read_empty = "ファイルに原子がありません"
 read_unreadable = "{format} として読み込めませんでした"
+not_shown = "先に 3D ビューを表示してください"
+no_gpu = "GPU レンダラーが使えません"
 
 [assembly.view]
 title = "集合体"

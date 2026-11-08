@@ -221,7 +221,7 @@ delete = "Удалить"
 rename = "Переименовать"
 
 [io.export]
-png = "Изображение PNG"
+png = "Изображение PNG (прозрачный фон)"
 
 [io.error]
 unknown_format = "Неподдерживаемый формат файла"
@@ -567,6 +567,7 @@ atom_count_value = "{atoms} ({hydrogens} H)"
 energy = "Энергия"
 stale_long = "2D-структура изменилась. Обновите её командой «Пересоздать из 2D»"
 no_wgpu = "Для 3D-вида нужен рендерер wgpu (здесь недоступен)"
+export_image_tip = "Сохранить вид как изображение PNG с прозрачным фоном"
 
 [three_d.edit]
 constraint_fix = "Закреплён"
@@ -627,6 +628,8 @@ rotate_terminal = "Поворот концевой связи не меняет 
 read_file_too_large = "Файл слишком велик (не более {max} MB)"
 read_empty = "В файле нет атомов"
 read_unreadable = "Не удалось прочитать как {format}"
+not_shown = "Сначала откройте 3D-вид"
+no_gpu = "Нет доступного GPU-рендерера"
 
 [assembly.view]
 title = "Ансамбль"

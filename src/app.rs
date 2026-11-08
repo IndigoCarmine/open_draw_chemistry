@@ -112,6 +112,10 @@ pub struct OpenDrawApp {
     /// The update found at startup, if any (see [`crate::update`]).
     #[serde(skip)]
     update: UpdateFlow,
+    /// Where the 3D view's picture goes, once the view has been drawn (see
+    /// [`OpenDrawApp::write_3d_image`]).
+    #[serde(skip)]
+    pending_3d_image: Option<PathBuf>,
 }
 
 impl Default for OpenDrawApp {
@@ -146,6 +150,7 @@ impl Default for OpenDrawApp {
             scan_window: Default::default(),
             conformer_window: Default::default(),
             update: UpdateFlow::default(),
+            pending_3d_image: None,
         }
     }
 }
@@ -446,6 +451,60 @@ impl OpenDrawApp {
         };
     }
 
+    /// Ask where to save the 3D view as a transparent PNG. The picture is taken after the 3D
+    /// view is next drawn ([`OpenDrawApp::write_3d_image`]), so the view is switched to.
+    fn export_3d_image(&mut self) {
+        let Some(doc) = self.active_doc() else { return };
+        if doc.three_d.shown_model().is_none() {
+            self.status = t!("app.status.no_3d_model_to_export").to_owned();
+            return;
+        }
+        let stem = doc
+            .path
+            .as_deref()
+            .and_then(Path::file_stem)
+            .map_or_else(|| doc.title(), |s| s.to_string_lossy().into_owned());
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(t!("io.export.png"), &["png"])
+            .set_file_name(format!("{stem}_3d.png"))
+            .save_file()
+        else {
+            return;
+        };
+        self.pending_3d_image = Some(path);
+        self.view = ViewMode::ThreeD;
+    }
+
+    /// Write the picture [`OpenDrawApp::export_3d_image`] asked for, if the 3D view was drawn
+    /// this frame (`shown_3d`).
+    fn write_3d_image(
+        &mut self,
+        shown_3d: bool,
+        render_state: Option<&eframe::egui_wgpu::RenderState>,
+    ) {
+        if !shown_3d || self.pending_3d_image.is_none() {
+            return;
+        }
+        let Some(path) = self.pending_3d_image.take() else {
+            return;
+        };
+        let Some(render_state) = render_state else {
+            self.status = t!(
+                "app.status.export_failed",
+                error = t!("three_d.error.no_gpu")
+            );
+            return;
+        };
+        let written = self
+            .view3d
+            .render_png(render_state)
+            .and_then(|png| std::fs::write(&path, png).map_err(|e| e.to_string()));
+        self.status = match written {
+            Ok(()) => t!("app.status.exported", path = path.display()),
+            Err(e) => t!("app.status.export_failed", error = e),
+        };
+    }
+
     /// Close the tab at `index`, first asking about unsaved changes.
     fn close_tab(&mut self, index: usize) {
         if index >= self.docs.len() {
@@ -550,6 +609,7 @@ impl OpenDrawApp {
                 }
             }
             Command::Export3d(export) => self.export_3d(export),
+            Command::Export3dImage => self.export_3d_image(),
             Command::SoftCore3d => self.start_softcore(softcore::Target::Model),
             Command::SoftCoreAssembly => self.start_softcore(softcore::Target::Assembly),
             Command::CancelSoftCore => {
@@ -1638,6 +1698,9 @@ impl eframe::App for OpenDrawApp {
         for command in commands {
             self.run(&ctx, command);
         }
+        // After the commands: one may have just asked for the picture of the view drawn above.
+        let shown_3d = view.is_3d() && self.docs.get(self.active).is_some();
+        self.write_3d_image(shown_3d, frame.wgpu_render_state());
         self.unsaved_changes_dialog(&ctx);
         self.about_window(&ctx);
         self.fragment_window(&ctx);

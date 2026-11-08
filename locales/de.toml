@@ -221,7 +221,7 @@ delete = "Löschen"
 rename = "Umbenennen"
 
 [io.export]
-png = "PNG-Bild"
+png = "PNG-Bild (transparenter Hintergrund)"
 
 [io.error]
 unknown_format = "Nicht unterstütztes Dateiformat"
@@ -567,6 +567,7 @@ atom_count_value = "{atoms} ({hydrogens} H)"
 energy = "Energie"
 stale_long = "Die 2D-Struktur wurde geändert. Mit „Neu aus 2D erzeugen“ aktualisieren"
 no_wgpu = "Die 3D-Ansicht benötigt den wgpu-Renderer (hier nicht verfügbar)"
+export_image_tip = "Ansicht als PNG-Bild mit transparentem Hintergrund speichern"
 
 [three_d.edit]
 constraint_fix = "Fixiert"
@@ -627,6 +628,8 @@ rotate_terminal = "Drehen einer terminalen Bindung ändert die Form nicht"
 read_file_too_large = "Die Datei ist zu groß (höchstens {max} MB)"
 read_empty = "Die Datei enthält keine Atome"
 read_unreadable = "Konnte nicht als {format} gelesen werden"
+not_shown = "Zuerst die 3D-Ansicht anzeigen"
+no_gpu = "Kein GPU-Renderer verfügbar"
 
 [assembly.view]
 title = "Aggregat"

@@ -225,7 +225,7 @@ delete = "Excluir"
 rename = "Renomear"
 
 [io.export]
-png = "Imagem PNG"
+png = "Imagem PNG (fundo transparente)"
 
 [io.error]
 unknown_format = "Formato de arquivo não compatível"
@@ -571,6 +571,7 @@ atom_count_value = "{atoms} ({hydrogens} H)"
 energy = "Energia"
 stale_long = "A estrutura 2D foi alterada. Atualize com “Regenerar a partir do 2D”"
 no_wgpu = "A visualização 3D requer o renderizador wgpu (indisponível aqui)"
+export_image_tip = "Salvar a vista como imagem PNG com fundo transparente"
 
 [three_d.edit]
 constraint_fix = "Fixo"
@@ -631,6 +632,8 @@ rotate_terminal = "Girar uma ligação terminal não altera a forma"
 read_file_too_large = "O arquivo é grande demais (máximo de {max} MB)"
 read_empty = "O arquivo não contém átomos"
 read_unreadable = "Não foi possível ler como {format}"
+not_shown = "Mostre primeiro a vista 3D"
+no_gpu = "Nenhum renderizador de GPU disponível"
 
 [assembly.view]
 title = "Montagem"
