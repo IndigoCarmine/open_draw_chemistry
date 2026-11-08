@@ -172,6 +172,15 @@ impl AssemblyView {
         }
     }
 
+    /// The view as last drawn, as a PNG with a transparent background (see
+    /// [`Viewport3d::render_png`]).
+    pub fn render_png(&mut self, render_state: &RenderState) -> Result<Vec<u8>, String> {
+        match &mut self.viewport {
+            Some(viewport) => viewport.render_png(render_state),
+            None => Err(t!("three_d.error.not_shown").to_owned()),
+        }
+    }
+
     /// Whether three atoms are being picked to orient a monomer.
     pub fn is_orienting(&self) -> bool {
         self.orient.is_some()
@@ -1139,6 +1148,14 @@ fn display_tab(
                 {
                     out.push(Command::AssemblyExport(export));
                 }
+            }
+            if ui
+                .add_enabled(can_export, egui::Button::new(".png"))
+                .on_hover_text(t!("three_d.view.export_image_tip"))
+                .on_disabled_hover_text(t!("assembly.export.nothing"))
+                .clicked()
+            {
+                out.push(Command::AssemblyImage);
             }
         });
         ui.horizontal_wrapped(|ui| {

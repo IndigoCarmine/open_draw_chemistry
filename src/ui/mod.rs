@@ -143,6 +143,8 @@ pub enum Command {
     AssemblyAddFile,
     /// Write the active assembly to a file the user picks.
     AssemblyExport(AssemblyExport),
+    /// Save the assembly view as a picture with a transparent background (PNG).
+    AssemblyImage,
     /// Save the active assembly as `.odasm`, or open one into it.
     AssemblySave,
     AssemblyOpen,
