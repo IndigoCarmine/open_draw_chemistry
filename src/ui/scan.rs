@@ -16,7 +16,7 @@ use crate::scan::param::design_params;
 use crate::scan::run::Relax;
 use crate::scan::run::format_duration;
 use crate::scan::source::{Point, Source};
-use crate::scan::{self, Axis, MAX_POINTS, Param, Reduce, Run, Scan};
+use crate::scan::{self, Axis, Param, Reduce, Run, Scan};
 use crate::theme;
 use crate::three_d::{ForceField, edit};
 
@@ -80,7 +80,7 @@ impl AxisForm {
             param: self.param.clone()?,
             start: self.start,
             end: self.end,
-            points: self.points.clamp(1, MAX_POINTS),
+            points: self.points.max(1),
         })
     }
 }
@@ -258,29 +258,13 @@ fn edit_axes(axes: &mut Vec<AxisForm>, k: usize, action: AxisAction) {
     }
 }
 
-/// What keeps a scan of `axes` over `atoms` atoms from starting, if anything: a parameter on
-/// two axes, too many atoms, too many points, or (relaxing) too much work.
-fn refusal(axes: &[Axis], atoms: usize, relax: bool) -> Option<String> {
-    let total = scan::total_points(axes);
+/// What keeps a scan of `axes` from starting, if anything: a parameter on two axes.
+fn refusal(axes: &[Axis]) -> Option<String> {
     let same = axes
         .iter()
         .enumerate()
         .any(|(k, a)| axes[..k].iter().any(|b| b.param == a.param));
-    if same {
-        Some(t!("scan.window.same_axes").into())
-    } else if atoms > scan::MAX_ATOMS {
-        Some(t!(
-            "scan.window.too_many_atoms",
-            atoms = atoms,
-            max = scan::MAX_ATOMS
-        ))
-    } else if let Some(why) = scan::points_refusal(total) {
-        Some(why)
-    } else if relax {
-        scan::relax_refusal(atoms, total)
-    } else {
-        None
-    }
+    same.then(|| t!("scan.window.same_axes").into())
 }
 
 #[derive(Debug)]
@@ -456,9 +440,10 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     ui.label(RichText::new(heading).strong());
 
     // Every axis's points multiplied, also before their parameters are chosen.
-    let total_all = win.axes.iter().fold(1usize, |t, f| {
-        t.saturating_mul(f.points.clamp(1, MAX_POINTS))
-    });
+    let total_all = win
+        .axes
+        .iter()
+        .fold(1usize, |t, f| t.saturating_mul(f.points.max(1)));
     let count = win.axes.len();
     let mut action = None;
     let atoms;
@@ -617,8 +602,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     if has_lattice {
         ui.label(muted(ui, t!("scan.window.crystal_note")));
     }
-    // Of the axes set so far: too many atoms is said before any is.
-    let refused = refusal(&axes, atoms, relax);
+    let refused = refusal(&axes);
     if let Some(why) = &refused {
         ui.label(RichText::new(why).color(warn_color(ui)));
     } else if relax && all_set {
@@ -705,19 +689,13 @@ fn axis_row(
                     .suffix(unit),
             );
             ui.label(t!("scan.window.points"));
-            ui.add(egui::DragValue::new(&mut form.points).range(1..=MAX_POINTS))
+            ui.add(egui::DragValue::new(&mut form.points).range(1..=usize::MAX))
                 .on_hover_text(t!("scan.window.points_tip"));
             if count > 1 {
-                let color = if total > scan::MAX_SCAN_POINTS {
-                    warn_color(ui)
-                } else {
-                    theme::muted(ui.visuals().dark_mode)
-                };
+                let color = theme::muted(ui.visuals().dark_mode);
                 let text = t!("scan.window.total_points", total = total);
-                ui.label(RichText::new(text).color(color)).on_hover_text(t!(
-                    "scan.window.total_points_tip",
-                    max = scan::MAX_SCAN_POINTS
-                ));
+                ui.label(RichText::new(text).color(color))
+                    .on_hover_text(t!("scan.window.total_points_tip"));
             }
         });
     }
@@ -1943,47 +1921,23 @@ mod tests {
         }
     }
 
-    /// Settings beyond the cap on points (all axes together) cannot start: the window says how
-    /// many and the cap, next to every axis's points as well as above the button.
+    /// Only the same parameter on two axes keeps a scan from starting: no cap on points.
     #[test]
-    fn a_scan_of_too_many_points_cannot_start() {
-        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
-        let model = chain_model();
-        doc.three_d = three_d::Job::with_model(model.clone(), &doc.editor.molecule);
-        let form = |param: Param, points| AxisForm {
-            param: Some(param),
+    fn only_the_same_parameter_twice_is_refused() {
+        let axis = |param: Param, points| Axis {
+            param,
             start: 1.0,
             end: 2.0,
             points,
         };
-        let mut win = ScanWindow {
-            open: true,
-            axes: vec![
-                form(Param::Bond([0, 1]), MAX_POINTS),
-                form(Param::Bond([1, 2]), MAX_POINTS),
-                form(Param::Bond([2, 3]), 2),
-            ],
-            ..Default::default()
-        };
-        let text = frame(&mut win, &mut doc, ViewMode::ThreeD, false);
-        assert!(text.contains("Too many points (80000)"), "{text}");
-        assert!(text.contains("at most 40000 points"), "{text}");
-        assert_eq!(text.matches("→ 80000 points in all").count(), 3, "{text}");
-        let axes: Vec<Axis> = win.axes.iter().filter_map(AxisForm::axis).collect();
-        assert!(refusal(&axes, model.atoms.len(), false).is_some());
-        assert!(Run::start(Source::model(&model, None, vec![]), &axes, ForceField::Uff).is_err());
-        // One point fewer along the last axis: allowed (rigid; relaxed, the relaxed caps).
-        win.axes[2].points = 1;
-        let axes: Vec<Axis> = win.axes.iter().filter_map(AxisForm::axis).collect();
-        assert_eq!(refusal(&axes, model.atoms.len(), false), None);
-        let relaxed = refusal(&axes, model.atoms.len(), true).unwrap();
-        assert!(relaxed.contains("Too many points to relax"), "{relaxed}");
-        let text = frame(&mut win, &mut doc, ViewMode::ThreeD, false);
-        assert!(!text.contains("Too many points"), "{text}");
-        // The same parameter twice is refused too.
-        win.axes[1].param = Some(Param::Bond([0, 1]));
-        let axes: Vec<Axis> = win.axes.iter().filter_map(AxisForm::axis).collect();
-        assert!(refusal(&axes, 4, false).unwrap().contains("same parameter"));
+        let many = [
+            axis(Param::Bond([0, 1]), 500),
+            axis(Param::Bond([1, 2]), 500),
+            axis(Param::Bond([2, 3]), 2),
+        ];
+        assert_eq!(refusal(&many), None);
+        let same = [axis(Param::Bond([0, 1]), 3), axis(Param::Bond([0, 1]), 3)];
+        assert!(refusal(&same).unwrap().contains("same parameter"));
     }
 
     /// Axes are added, moved and removed; the last one stays.

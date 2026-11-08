@@ -339,7 +339,7 @@ rename = "Rename"
 
 [io.export]
 # File-dialog filter name
-png = "PNG image"
+png = "PNG image (transparent background)"
 
 [io.error]
 unknown_format = "Unsupported file format"
@@ -366,8 +366,6 @@ sentence_separator = ". "
 kept = { one = "{n} hidden object will be kept when saving", other = "{n} hidden objects will be kept when saving" }
 
 [smiles.row]
-# {n}: the largest number of atoms
-too_large = { one = "The structure is too large (up to {n} atom)", other = "The structure is too large (up to {n} atoms)" }
 computing = "Computing…"
 copy_tip = "Copy SMILES"
 # {smiles}: the copied SMILES
@@ -768,6 +766,8 @@ atom_count_value = "{atoms} ({hydrogens} H)"
 energy = "Energy"
 stale_long = "The 2D structure has changed. Update it with “Regenerate from 2D”"
 no_wgpu = "The 3D view needs the wgpu renderer (not available here)"
+# Tooltip of the 3D panel's ".png" export button.
+export_image_tip = "Save the view as a PNG image with a transparent background"
 
 [three_d.edit]
 # Kinds of optimization constraint, shown before the atoms they apply to.
@@ -824,7 +824,6 @@ unknown_labels = "Some labels can't be converted to 3D: {labels}"
 list_separator = ", "
 quadruple_bond = "Quadruple bonds aren't supported in 3D generation"
 multiple_group = "Multiple-group brackets that can't be written out (a repeat count that isn't a number, three or more bonds crossing the bracket, …) can't be made 3D. Set the label to a repeat count (2, 3, …) or remove the brackets"
-too_large = "The structure is too large (up to 999 atoms and 999 bonds)"
 unreadable = "Couldn't read the structure"
 generation_failed = "Couldn't generate 3D coordinates"
 # {force_field} is a force field name such as MMFF94.
@@ -847,10 +846,11 @@ rotate_terminal = "Turning a terminal bond doesn't change the shape"
 # {max} is a size in MB.
 read_file_too_large = "The file is too large (up to {max} MB)"
 read_empty = "The file has no atoms"
-# {count} is the number of atoms in the file, {max} the limit.
-read_too_many_atoms = "Too many atoms ({count}; up to {max} can be read)"
 # {format} is a file format name such as "MDL Molfile".
 read_unreadable = "Couldn't read as {format}"
+# The 3D picture export was asked for before the view was drawn.
+not_shown = "Show the 3D view first"
+no_gpu = "No GPU renderer is available"
 
 [assembly.view]
 # Panel heading of the assembly view (a molecular assembly built from monomers)
@@ -1067,8 +1067,6 @@ file_invalid = "Cannot read this as an assembly file ({detail})"
 # {version}: the file's format version; {supported}: the newest this app reads
 file_newer = "This file was saved by a newer version of the app (format {version}; this version reads up to {supported})"
 file_no_version = "version is missing"
-# {count}: atoms the build would have; {max}: the limit
-too_large = "Too many atoms ({count}; at most {max} can be built). Reduce the repeat counts"
 # {name}: monomer name; {error}: why
 monomer = "Monomer \"{name}\": {error}"
 # {error}: why the crystal step cannot be built
@@ -1261,9 +1259,7 @@ remove_axis_tip = "Remove this axis"
 # Next to an axis's number of points; {total}: the points of all axes together.
 total_points = "→ {total} points in all"
 # {max}: the most points a scan takes.
-total_points_tip = "The points of every axis multiplied. A scan takes at most {max} points"
-# {points}: points asked for (all axes together); {max}: the most a scan takes.
-too_many_points = "Too many points ({points}). A scan takes at most {max} points, all axes together; use fewer points or axes"
+total_points_tip = "The points of every axis multiplied."
 # Heading of what a scan of three or more parameters plots.
 view_heading = "Plot"
 # Label before the parameter plotted across (x).
@@ -1285,8 +1281,6 @@ force_field = "Force field"
 # {total}: number of grid points; {atoms}: number of atoms; {unit}: energy unit such as kcal/mol.
 summary = "Points: {total} · atoms: {atoms} · single-point energy at each point, no optimization ({unit})"
 crystal_note = "Crystals are computed without periodic boundaries (the force fields do not support periodic systems, so this is the energy of the finite supercell that was built)"
-# {atoms}: atoms in the structure; {max}: the most a scan accepts.
-too_many_atoms = "Too many atoms ({atoms}). A scan takes at most {max} atoms"
 same_axes = "Two axes are the same parameter"
 start = "Start scan"
 start_disabled_tip = "Choose the parameters to scan"
@@ -1314,18 +1308,12 @@ relax_tip = "At every point, hold the scanned parameters (and the restraints set
 relax_assembly_tip = "At every point, keep each molecule's centroid and orientation where the scanned parameters place it while all of its atoms relax (bond lengths, angles and the whole shape), then take the energy of the optimized structure. Each point starts from its neighbor's optimized shapes, and from the rigid structure too if that ends no lower. Clicking a point sets its parameters in the design; the optimized shapes are not kept. Much slower than a single-point scan"
 # Replaces "summary" when relaxing; {total}: number of grid points; {atoms}: number of atoms; {unit}: energy unit.
 summary_relaxed = "Points: {total} · atoms: {atoms} · optimized at each point with the scanned parameters held ({unit})"
-# {atoms}: atoms in the structure; {max}: the most a relaxed scan accepts.
-relax_too_many_atoms = "Too many atoms to relax ({atoms}). A relaxed scan takes at most {max} atoms"
-# {points}: grid points asked for; {max}: the most a relaxed scan accepts.
-relax_too_many_points = "Too many points to relax ({points}). A relaxed scan takes at most {max} points"
 # Shown when some relaxed points ran out of optimization steps before converging.
 unconverged_points = { one = "{n} point did not converge within the optimization steps (ringed in the plot)", other = "{n} points did not converge within the optimization steps (ringed in the plot)" }
 # Tooltip line of a point whose optimization did not converge.
 unconverged = "Not converged (optimization ran out of steps)"
 # {param}: the scanned parameter's name. Shown when atoms fixed in the 3D view are on both sides of it.
 relax_fixed_both_sides = "Atoms fixed in the 3D view are on both sides of {param}, so it cannot be set without moving one of them. Unfix the atoms on one side to relax this scan"
-# {points}: grid points; {atoms}: atoms; {low}–{high}: the estimated time; {max}: the most points a relaxed scan of this size takes.
-relax_too_much_work = "Too long to relax: {points} points of {atoms} atoms would take about {low}–{high}. At this size a relaxed scan takes at most {max} points"
 # Before a relaxed scan starts. {low}–{high}: the estimated time.
 relax_estimate = "Estimated time: {low}–{high}"
 # Replaces relax_estimate for a long relaxed scan. {cancel}: how long Cancel can take to stop it.
@@ -1398,7 +1386,6 @@ dihedral = "Dihedral {atoms}"
 item_missing = "The scanned item was not found (the assembly has changed)"
 model_param = "This parameter belongs to the 3D model"
 assembly_param = "This parameter belongs to the assembly"
-too_many_atoms = "Too many atoms ({atoms}). A scan takes at most {max} atoms. Reduce the number of repeats"
 start_failed = "Could not start the scan: {error}"
 empty_assembly = "The assembly has no molecules"
 
@@ -1562,8 +1549,6 @@ force_field = "Force field"
 seed = "Random seed"
 seed_tip = "The same seed gives the same search"
 no_model = "Generate a 3D model first"
-# {atoms}: atoms in the model; {max}: the most a search accepts.
-too_many_atoms = "Too many atoms ({atoms}). A conformer search takes at most {max} atoms"
 summary = "{atoms} atoms, hydrogens included"
 start = "Start search"
 start_disabled_tip = "Generate a 3D model first (and wait for any 3D job to finish)"
@@ -1600,8 +1585,6 @@ done = "Saved {path}"
 failed = "Could not save: {error}"
 
 [softcore]
-# {atoms}: atoms in the structure; {max}: the most it takes.
-too_many_atoms = "Too many atoms ({atoms}). A soft-core optimization takes at most {max} atoms"
 one_molecule = "Soft-core optimization needs two or more molecules: it softens the interactions between molecules"
 # Button in the 3D panel.
 model_button = "Soft-core optimize"

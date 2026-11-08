@@ -9,10 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::energy::{self, Evaluator, Relaxation};
 use super::source::{Point, Reference, Source};
-use super::{
-    Axis, MAX_ATOMS, Scan, ScanAxis, grid, points_refusal, previous_neighbour, relax_refusal,
-    total_points,
-};
+use super::{Axis, Scan, ScanAxis, grid, previous_neighbour};
 use crate::three_d::geom::Vec3;
 use crate::three_d::{Constraint, ForceField, RESTRAINED_OPTIMIZE_STEPS};
 
@@ -125,20 +122,8 @@ pub struct Run {
 
 impl Run {
     /// Start scanning `axes` (any number, the parameters of `source` in order) under
-    /// `force_field`. Refuses at once — without a thread — a structure of more than
-    /// [`MAX_ATOMS`] atoms and a scan of more than [`super::MAX_SCAN_POINTS`] points.
+    /// `force_field`.
     pub fn start(source: Source, axes: &[Axis], force_field: ForceField) -> Result<Run, String> {
-        let atoms = source.atom_count();
-        if atoms > MAX_ATOMS {
-            return Err(t!(
-                "scan.error.too_many_atoms",
-                atoms = atoms,
-                max = MAX_ATOMS
-            ));
-        }
-        if let Some(why) = points_refusal(total_points(axes)) {
-            return Err(why);
-        }
         let points = grid(axes);
         let work = move |source: &Source, send: &Sender<Message>, cancel: &AtomicBool| {
             let Some((_, mut evaluator)) = set_up(source, force_field, send) else {
@@ -187,28 +172,13 @@ impl Run {
     /// rigid scan's. A point whose atoms differ from the start's (see [`Point::Rebuilt`]) has
     /// no neighbour of the same atoms: it is relaxed on its own from its rigid structure, on a
     /// molecule read for it.
-    ///
-    /// Either is refused beyond [`super::relax_refusal`]'s limits, taken at the most atoms any
-    /// point has ([`Source::most_atoms`]: an assembly's points can have more than its design).
     pub fn start_relaxed(
         source: Source,
         axes: &[Axis],
         force_field: ForceField,
         relax: Relax,
     ) -> Result<Run, String> {
-        let total = total_points(axes);
-        if let Some(why) = points_refusal(total) {
-            return Err(why);
-        }
-        // The points and the design's own atoms first: counting every point's atoms takes a
-        // while, more so for a grid far beyond a relaxed scan's.
-        if let Some(why) = relax_refusal(source.atom_count(), total) {
-            return Err(why);
-        }
         let points = grid(axes);
-        if let Some(why) = relax_refusal(source.most_atoms(&points), total) {
-            return Err(why);
-        }
         let params = source.params().to_vec();
         let fixed = relax.fixed();
         if let Some(why) = source.fixed_conflict(&fixed) {
@@ -495,8 +465,7 @@ fn relax_points(
     let Some((reference, mut evaluator)) = set_up(source, force_field, send) else {
         return;
     };
-    // What each point keeps for the points after it (its minimised structure). At most
-    // `MAX_RELAX_WORK / atoms` atoms' coordinates in all.
+    // What each point keeps for the points after it (its minimised structure).
     let mut kept: Vec<Option<Vec<Vec3>>> = vec![None; points.len()];
     for (index, values) in points.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
@@ -621,9 +590,7 @@ fn lower(a: Relaxation, b: Relaxation) -> Relaxation {
 }
 
 /// Relax a structure other than the scan's reference (an assembly point with other atoms)
-/// from where `atoms` are, held by `hold`, on a molecule read for it; it fails when larger than
-/// a relaxed scan takes ([`super::MAX_RELAX_ATOMS`] — [`Run::start_relaxed`] refuses such a
-/// scan before it starts).
+/// from where `atoms` are, held by `hold`, on a molecule read for it.
 fn relax_alone(
     atoms: &[crate::three_d::Atom3d],
     bonds: &[crate::three_d::Bond3d],
@@ -632,9 +599,6 @@ fn relax_alone(
     steps: u32,
     cancel: &AtomicBool,
 ) -> Relaxation {
-    if atoms.len() > super::MAX_RELAX_ATOMS {
-        return Relaxation::Failed;
-    }
     let Ok(mut evaluator) = Evaluator::new(&energy::molfile(atoms, bonds), force_field) else {
         return Relaxation::Failed;
     };
@@ -967,51 +931,6 @@ mod tests {
     }
 
     #[test]
-    fn too_large_scans_are_refused_at_once() {
-        let mut model = chain_model();
-        let atom = model.atoms[0].clone();
-        model.atoms.resize(MAX_ATOMS + 1, atom);
-        let source = Source::model(&model, None, vec![Param::Dihedral([0, 1, 2, 3])]);
-        let Err(message) = Run::start(source, &[dihedral_axis(3)], ForceField::Uff) else {
-            panic!("a scan of too many atoms started");
-        };
-        assert!(message.contains("Too many atoms"), "{message}");
-    }
-
-    /// A grid of more points than a scan takes is refused before it is built (three axes of
-    /// 200 points would be 8 million), rigid or relaxed; the message says how many and the cap.
-    #[test]
-    fn scans_of_too_many_points_are_refused_at_once() {
-        let params = vec![
-            Param::Dihedral([0, 1, 2, 3]),
-            Param::Bond([0, 1]),
-            Param::Bond([2, 3]),
-        ];
-        let axes: Vec<Axis> = params
-            .iter()
-            .map(|p| Axis {
-                param: p.clone(),
-                start: 1.0,
-                end: 2.0,
-                points: crate::scan::MAX_POINTS,
-            })
-            .collect();
-        let source = || Source::model(&chain_model(), None, params.clone());
-        let Err(message) = Run::start(source(), &axes, ForceField::Uff) else {
-            panic!("a scan of too many points started");
-        };
-        assert!(
-            message.contains("Too many points") && message.contains("8000000"),
-            "{message}"
-        );
-        let Err(message) = Run::start_relaxed(source(), &axes, ForceField::Uff, Relax::new(vec![]))
-        else {
-            panic!("a relaxed scan of too many points started");
-        };
-        assert!(message.contains("8000000"), "{message}");
-    }
-
-    #[test]
     fn durations_read_in_english() {
         assert_eq!(format_duration(Duration::from_millis(12_340)), "12.3 s");
         assert_eq!(format_duration(Duration::from_millis(42)), "0.04 s");
@@ -1036,7 +955,10 @@ mod energy_tests {
     use crate::assembly::math;
     use crate::assembly::model::{Component, Design, Instance, Step};
     use crate::assembly::place::centroid;
-    use crate::scan::{MAX_POINTS, Param, PoseField, StepField};
+    use crate::scan::{Param, PoseField, StepField};
+
+    /// Points enough that a scan is still running when cancelled.
+    const MAX_POINTS: usize = 200;
     use crate::three_d::edit;
     use crate::three_d::{Model3d, OPTIMIZE_STEPS};
     use chembuider_rs::BondOrder;
@@ -1786,32 +1708,6 @@ mod energy_tests {
         );
     }
 
-    /// What a relaxed scan cannot do is refused before starting.
-    #[test]
-    fn relaxed_scans_it_cannot_do_are_refused_at_once() {
-        let model = butane(ForceField::Uff);
-        // An assembly is held to the same limits: 50 benzenes are 600 atoms.
-        let axis = Axis {
-            param: stack_rise(),
-            start: 3.0,
-            end: 4.0,
-            points: 3,
-        };
-        let source = Source::assembly(&stack_of(benzene(), 50), vec![stack_rise()]);
-        let Err(message) = Run::start_relaxed(source, &[axis], ForceField::Uff, Relax::new(vec![]))
-        else {
-            panic!("an assembly of 600 atoms was relaxed");
-        };
-        assert!(message.contains("Too many atoms to relax"), "{message}");
-
-        let mut big = model.clone();
-        let atom = big.atoms[0].clone();
-        big.atoms.resize(crate::scan::MAX_RELAX_ATOMS + 1, atom);
-        let source = Source::model(&big, None, vec![Param::Dihedral([0, 1, 2, 3])]);
-        let axis = butane_dihedral_axis(3);
-        assert!(Run::start_relaxed(source, &[axis], ForceField::Uff, Relax::new(vec![])).is_err());
-    }
-
     fn stack_rise() -> Param {
         Param::Step {
             step: 0,
@@ -2206,66 +2102,6 @@ mod energy_tests {
         );
         assert_eq!(relaxed.structure(1).unwrap().len(), 36);
         assert!(assert_relaxed_below_rigid(&relaxed, &rigid) > 0.1);
-    }
-
-    /// The work a relaxed scan of the assembly takes is that of its largest point, not of the
-    /// design as it is: from a cell where copies coincide (240 atoms, a scan the budget would
-    /// take) the larger cells part them (360 atoms, too much).
-    #[test]
-    fn a_relaxed_scan_is_refused_when_its_larger_points_are_too_much_work() {
-        let design = inverted_stack(10, 7.0);
-        let source = Source::assembly(&design, vec![cell_c()]);
-        let axis = Axis {
-            param: cell_c(),
-            start: 7.0,
-            end: 13.0,
-            points: MAX_POINTS,
-        };
-        let points = grid(std::slice::from_ref(&axis));
-        assert_eq!(source.atom_count(), 240);
-        assert_eq!(source.most_atoms(&points), 360);
-        assert!(matches!(source.at(&[10.0]), Ok(Point::Rebuilt { .. })));
-        assert_eq!(
-            relax_refusal(240, MAX_POINTS),
-            None,
-            "the design as it is fits"
-        );
-        let Err(message) = Run::start_relaxed(
-            source.clone(),
-            std::slice::from_ref(&axis),
-            ForceField::Uff,
-            Relax::new(Vec::new()),
-        ) else {
-            panic!("a relaxed scan of 200 points of up to 360 atoms started");
-        };
-        assert!(message.contains("Too long to relax"), "{message}");
-        assert!(message.contains("360 atoms"), "{message}");
-        // Without relaxing it runs.
-        assert!(Run::start(source.clone(), std::slice::from_ref(&axis), ForceField::Uff).is_ok());
-
-        // Too many points is told before any point's atoms are counted.
-        let cell_a = Param::Step {
-            step: 1,
-            field: StepField::CellA,
-        };
-        let axes = [
-            axis,
-            Axis {
-                param: cell_a,
-                start: 7.0,
-                end: 9.0,
-                points: MAX_POINTS,
-            },
-        ];
-        let Err(message) =
-            Run::start_relaxed(source, &axes, ForceField::Uff, Relax::new(Vec::new()))
-        else {
-            panic!(
-                "a relaxed scan of {} points started",
-                MAX_POINTS * MAX_POINTS
-            );
-        };
-        assert!(message.contains("Too many points"), "{message}");
     }
 
     /// A point started from a neighbour's shapes that are worse than its rigid structure — and

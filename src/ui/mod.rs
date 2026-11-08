@@ -125,6 +125,8 @@ pub enum Command {
     /// Minimise the active document's 3D model further.
     Optimize3d,
     Export3d(Export3d),
+    /// Save the 3D view as a picture with a transparent background (PNG).
+    Export3dImage,
     /// The force field the active document's next generation or optimisation uses.
     SetForceField(ForceField),
     About,
@@ -141,6 +143,8 @@ pub enum Command {
     AssemblyAddFile,
     /// Write the active assembly to a file the user picks.
     AssemblyExport(AssemblyExport),
+    /// Save the assembly view as a picture with a transparent background (PNG).
+    AssemblyImage,
     /// Save the active assembly as `.odasm`, or open one into it.
     AssemblySave,
     AssemblyOpen,

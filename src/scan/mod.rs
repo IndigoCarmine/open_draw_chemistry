@@ -31,38 +31,10 @@ pub use run::{Progress, Run};
 
 use crate::three_d::ForceField;
 
-/// The most atoms a scan accepts: every point is a full single-point energy over all atom
-/// pairs, so beyond this one point takes too long to be useful.
-pub const MAX_ATOMS: usize = 20_000;
-
-/// The most points along one axis.
-pub const MAX_POINTS: usize = 200;
-
-/// The most points of a scan, all axes together: the largest 2D map the axes allow (200 ×
-/// 200), so no one- or two-parameter scan is refused, and three or more parameters at up to
-/// 34 points each (37 × 37 × 29 for two dihedrals at 10° and a third parameter). A rigid point
-/// of butane takes ~1 ms (UFF) to ~4 ms (MMFF94; debug build), so
-/// this many take ~1–3 min; a large structure takes longer per point, as a 2D map of it always
-/// did, with the time left shown and Cancel keeping the points done. Each point keeps only its
-/// energy (a relaxed scan, which keeps each point's structure too, is held to
-/// [`MAX_RELAX_POINTS`] and [`MAX_RELAX_WORK`]).
-pub const MAX_SCAN_POINTS: usize = MAX_POINTS * MAX_POINTS;
-
 /// How many points a scan over `axes` has (saturating: a product beyond `usize` is `MAX`).
 pub fn total_points(axes: &[Axis]) -> usize {
     axes.iter()
         .fold(1usize, |total, a| total.saturating_mul(a.count()))
-}
-
-/// Why a scan of `points` points is refused, if it is: more than [`MAX_SCAN_POINTS`].
-pub fn points_refusal(points: usize) -> Option<String> {
-    (points > MAX_SCAN_POINTS).then(|| {
-        t!(
-            "scan.window.too_many_points",
-            points = points,
-            max = MAX_SCAN_POINTS
-        )
-    })
 }
 
 /// The flat index (in [`grid`] order: the first axis outermost) of the point at `indices` along
@@ -113,39 +85,15 @@ pub enum Reduce {
     Minimum,
 }
 
-/// The most atoms a relaxed scan accepts: every point is two whole constrained minimisations
-/// (see [`run::Run::start_relaxed`]) of up to [`crate::three_d::RESTRAINED_OPTIMIZE_STEPS`]
-/// iterations each over all atom pairs. Measured per point (optimised force fields, an
-/// alkane's dihedral, the `relaxed_point_timing` report): ~0.3 s at 100 atoms, ~1.3 s at 300
-/// and ~3.5 s at 500, under MMFF94 and UFF alike — so a 37-point dihedral scan of the most
-/// atoms takes a few minutes.
-pub const MAX_RELAX_ATOMS: usize = 500;
-
-/// The most points (all axes together) of a relaxed scan: a 10° × 10° map of two dihedrals
-/// (37 × 37 = 1369) fits — of a molecule small enough for [`MAX_RELAX_WORK`]. Beyond, even a
-/// small molecule takes tens of minutes (see [`MAX_RELAX_ATOMS`]); each point's minimised
-/// structure is also kept, for clicking.
-pub const MAX_RELAX_POINTS: usize = 1_500;
-
-// A relaxed scan is a scan: its cap on points is within that of any scan.
-const _: () = assert!(MAX_RELAX_POINTS <= MAX_SCAN_POINTS);
-
 /// Seconds a relaxed point takes per atom squared, at the fastest and the slowest measured
-/// (optimised force fields, an alkane's dihedral — see [`MAX_RELAX_ATOMS`] and the
-/// `relaxed_point_timing` report): a point minimises over all atom pairs. MMFF94 and UFF both
+/// (optimised force fields, an alkane's dihedral — the `relaxed_point_timing`
+/// report): a point minimises over all atom pairs. MMFF94 and UFF both
 /// measured 1.2e-5 to 1.5e-5 at 300–500 atoms and up to 2.9e-5 at 100.
 pub const RELAX_SECONDS_PER_ATOM2: [f64; 2] = [1.2e-5, 3.0e-5];
 
 /// Seconds one minimiser segment (the steps between two looks at the cancel flag) takes per
 /// atom squared at worst: how long Cancel can take to stop a relaxed scan.
 pub const RELAX_SEGMENT_SECONDS_PER_ATOM2: f64 = 1.0e-6;
-
-/// The most work a relaxed scan accepts, in atoms² × points: ~10 min at the slowest rate of
-/// [`RELAX_SECONDS_PER_ATOM2`] (the caps on atoms and points alone would let through 500 atoms
-/// × 1500 points). The window shows the estimate — warning of a long one — before a scan
-/// starts, which can be cancelled. A 37 × 37 map fits up to ~120 atoms, a 37-point dihedral up
-/// to the most atoms.
-pub const MAX_RELAX_WORK: f64 = 2.0e7;
 
 /// From this estimated time (at the slowest rate) on, the window warns before a relaxed scan
 /// starts.
@@ -167,36 +115,6 @@ fn relax_work(atoms: usize, points: usize) -> f64 {
     (atoms as f64).powi(2) * points as f64
 }
 
-/// Why a relaxed scan of `atoms` atoms and `points` points is refused, if it is: more than
-/// [`MAX_RELAX_ATOMS`] atoms, [`MAX_RELAX_POINTS`] points, or [`MAX_RELAX_WORK`] together.
-pub fn relax_refusal(atoms: usize, points: usize) -> Option<String> {
-    if atoms > MAX_RELAX_ATOMS {
-        Some(t!(
-            "scan.window.relax_too_many_atoms",
-            atoms = atoms,
-            max = MAX_RELAX_ATOMS
-        ))
-    } else if points > MAX_RELAX_POINTS {
-        Some(t!(
-            "scan.window.relax_too_many_points",
-            points = points,
-            max = MAX_RELAX_POINTS
-        ))
-    } else if relax_work(atoms, points) > MAX_RELAX_WORK {
-        let [low, high] = relax_estimate(atoms, points);
-        Some(t!(
-            "scan.window.relax_too_much_work",
-            points = points,
-            atoms = atoms,
-            low = run::format_duration(low),
-            high = run::format_duration(high),
-            max = (MAX_RELAX_WORK / relax_work(atoms, 1)) as usize
-        ))
-    } else {
-        None
-    }
-}
-
 /// One scanned parameter and the values it takes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Axis {
@@ -208,9 +126,9 @@ pub struct Axis {
 }
 
 impl Axis {
-    /// How many values it takes (`points`, from 1 to [`MAX_POINTS`]).
+    /// How many values it takes (`points`, at least 1).
     pub fn count(&self) -> usize {
-        self.points.clamp(1, MAX_POINTS)
+        self.points.max(1)
     }
 
     /// The values, evenly spaced from `start` to `end`, both included.
@@ -384,7 +302,7 @@ impl Scan {
             })
             .collect();
         // The points in grid order, their indices turning as an odometer (this runs every
-        // frame, over up to `MAX_SCAN_POINTS` points).
+        // frame).
         let mut indices = vec![0; shape.len()];
         for index in 0..self.total() {
             let held = indices
@@ -545,7 +463,7 @@ mod tests {
         assert_eq!(*v.last().unwrap(), 0.7, "exactly the end");
         // Downwards works too.
         assert_eq!(axis(2.0, 1.0, 3).values(), [2.0, 1.5, 1.0]);
-        assert_eq!(axis(0.0, 1.0, 10_000).values().len(), MAX_POINTS);
+        assert_eq!(axis(0.0, 1.0, 10_000).values().len(), 10_000);
     }
 
     #[test]
@@ -896,79 +814,6 @@ mod tests {
         }
     }
 
-    /// The cap on a scan's points (all axes together) counts without overflowing, lets every
-    /// 1D and 2D scan the axes allow through, and refuses beyond.
-    #[test]
-    fn scans_of_too_many_points_are_refused() {
-        let a = |n| axis(0.0, 1.0, n);
-        assert_eq!(total_points(&[a(37), a(37), a(11)]), 37 * 37 * 11);
-        assert_eq!(
-            total_points(&[a(0), a(4)]),
-            4,
-            "an axis has at least one point"
-        );
-        assert_eq!(total_points(&[]), 1);
-        let huge = vec![a(MAX_POINTS); 12];
-        assert_eq!(total_points(&huge), usize::MAX, "saturates");
-        assert_eq!(points_refusal(total_points(&[a(MAX_POINTS)])), None);
-        assert_eq!(
-            points_refusal(total_points(&[a(MAX_POINTS), a(MAX_POINTS)])),
-            None,
-            "the largest 2D map"
-        );
-        assert_eq!(points_refusal(MAX_SCAN_POINTS), None);
-        let why = points_refusal(MAX_SCAN_POINTS + 1).unwrap();
-        assert!(why.contains("40001") && why.contains("40000"), "{why}");
-        assert!(points_refusal(total_points(&huge)).is_some());
-    }
-
-    /// Seconds a relaxed point takes per atom squared under MMFF94 for a large molecule (300–500
-    /// atoms), as measured for [`RELAX_SECONDS_PER_ATOM2`].
-    const MMFF94_LARGE_SECONDS_PER_ATOM2: f64 = 1.5e-5;
-
-    /// The work guard: the caps on atoms and points alone, then their product, which the
-    /// largest atoms × the most points exceed many times over.
-    #[test]
-    fn relaxed_scans_too_long_to_run_are_refused_before_starting() {
-        assert_eq!(relax_refusal(32, 37), None);
-        assert_eq!(
-            relax_refusal(MAX_RELAX_ATOMS, 37),
-            None,
-            "a dihedral of the most atoms"
-        );
-        assert_eq!(relax_refusal(100, 37 * 37), None, "a 10° map of 100 atoms");
-        let too_many_atoms = relax_refusal(MAX_RELAX_ATOMS + 1, 2).unwrap();
-        assert!(
-            too_many_atoms.contains("Too many atoms"),
-            "{too_many_atoms}"
-        );
-        let too_many_points = relax_refusal(10, MAX_RELAX_POINTS + 1).unwrap();
-        assert!(
-            too_many_points.contains("Too many points"),
-            "{too_many_points}"
-        );
-        // Each alone allowed, together over 3 h.
-        let why = relax_refusal(MAX_RELAX_ATOMS, MAX_RELAX_POINTS).unwrap();
-        assert!(why.contains("1500 points"), "{why}");
-        assert!(why.contains("at most 80 points"), "{why}");
-        let [low, high] = relax_estimate(MAX_RELAX_ATOMS, MAX_RELAX_POINTS);
-        assert!(low < high);
-        assert!(high > Duration::from_secs(3 * 3600), "{high:?}");
-        // Right at the budget is allowed; one point more is not.
-        let atoms = 200;
-        let most = (MAX_RELAX_WORK / (atoms * atoms) as f64) as usize;
-        assert_eq!(relax_refusal(atoms, most), None);
-        assert!(relax_refusal(atoms, most + 1).is_some());
-        // Whatever is allowed ends within ~5 min at MMFF94's rate for a large molecule, and
-        // within ~10 min at the slowest.
-        assert!(
-            Duration::from_secs_f64(MAX_RELAX_WORK * MMFF94_LARGE_SECONDS_PER_ATOM2)
-                <= Duration::from_secs(6 * 60)
-        );
-        let [_, slowest] = relax_estimate(atoms, most);
-        assert!(slowest <= Duration::from_secs(11 * 60), "{slowest:?}");
-    }
-
     /// The estimate warns of a long run (and how long Cancel takes) before it starts.
     #[test]
     fn the_relaxed_estimate_grows_as_atoms_squared_times_points() {
@@ -982,11 +827,8 @@ mod tests {
             relax_estimate(32, 13)[1] < LONG_RELAX,
             "butane-sized: short"
         );
-        assert!(
-            relax_estimate(MAX_RELAX_ATOMS, 100)[1] > LONG_RELAX,
-            "warned"
-        );
-        assert!(relax_cancel_latency(MAX_RELAX_ATOMS) < Duration::from_secs(30));
-        assert!(relax_cancel_latency(MAX_RELAX_ATOMS) > relax_cancel_latency(100));
+        assert!(relax_estimate(500, 100)[1] > LONG_RELAX, "warned");
+        assert!(relax_cancel_latency(500) < Duration::from_secs(30));
+        assert!(relax_cancel_latency(500) > relax_cancel_latency(100));
     }
 }

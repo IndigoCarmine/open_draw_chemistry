@@ -112,6 +112,10 @@ pub struct OpenDrawApp {
     /// The update found at startup, if any (see [`crate::update`]).
     #[serde(skip)]
     update: UpdateFlow,
+    /// The view (3D or assembly) whose picture is to be written, and where, once that view
+    /// has been drawn (see [`OpenDrawApp::write_view_image`]).
+    #[serde(skip)]
+    pending_image: Option<(ViewMode, PathBuf)>,
 }
 
 impl Default for OpenDrawApp {
@@ -146,6 +150,7 @@ impl Default for OpenDrawApp {
             scan_window: Default::default(),
             conformer_window: Default::default(),
             update: UpdateFlow::default(),
+            pending_image: None,
         }
     }
 }
@@ -446,6 +451,74 @@ impl OpenDrawApp {
         };
     }
 
+    /// Ask where to save `view` (the 3D view or the assembly) as a transparent PNG. The
+    /// picture is taken after that view is next drawn ([`OpenDrawApp::write_view_image`]), so
+    /// it is switched to.
+    fn export_view_image(&mut self, view: ViewMode) {
+        let Some(doc) = self.active_doc_mut() else { return };
+        let (shown, suffix) = match view {
+            ViewMode::ThreeD => (doc.three_d.shown_model().is_some(), "3d"),
+            ViewMode::Assembly => (
+                doc.assembly.built().is_ok_and(|b| !b.is_empty()),
+                "assembly",
+            ),
+            ViewMode::TwoD => return,
+        };
+        if !shown {
+            self.status = match view {
+                ViewMode::ThreeD => t!("app.status.no_3d_model_to_export"),
+                _ => t!("assembly.export.nothing"),
+            }
+            .to_owned();
+            return;
+        }
+        let stem = doc
+            .path
+            .as_deref()
+            .and_then(Path::file_stem)
+            .map_or_else(|| doc.title(), |s| s.to_string_lossy().into_owned());
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(t!("io.export.png"), &["png"])
+            .set_file_name(format!("{stem}_{suffix}.png"))
+            .save_file()
+        else {
+            return;
+        };
+        self.pending_image = Some((view, path));
+        self.view = view;
+    }
+
+    /// Write the picture [`OpenDrawApp::export_view_image`] asked for, if its view was the one
+    /// drawn this frame (`shown`).
+    fn write_view_image(
+        &mut self,
+        shown: Option<ViewMode>,
+        render_state: Option<&eframe::egui_wgpu::RenderState>,
+    ) {
+        if shown.is_none() || self.pending_image.as_ref().map(|p| p.0) != shown {
+            return;
+        }
+        let Some((view, path)) = self.pending_image.take() else {
+            return;
+        };
+        let Some(render_state) = render_state else {
+            self.status = t!(
+                "app.status.export_failed",
+                error = t!("three_d.error.no_gpu")
+            );
+            return;
+        };
+        let png = match view {
+            ViewMode::Assembly => self.assembly_view.render_png(render_state),
+            _ => self.view3d.render_png(render_state),
+        };
+        let written = png.and_then(|png| std::fs::write(&path, png).map_err(|e| e.to_string()));
+        self.status = match written {
+            Ok(()) => t!("app.status.exported", path = path.display()),
+            Err(e) => t!("app.status.export_failed", error = e),
+        };
+    }
+
     /// Close the tab at `index`, first asking about unsaved changes.
     fn close_tab(&mut self, index: usize) {
         if index >= self.docs.len() {
@@ -550,6 +623,8 @@ impl OpenDrawApp {
                 }
             }
             Command::Export3d(export) => self.export_3d(export),
+            Command::Export3dImage => self.export_view_image(ViewMode::ThreeD),
+            Command::AssemblyImage => self.export_view_image(ViewMode::Assembly),
             Command::SoftCore3d => self.start_softcore(softcore::Target::Model),
             Command::SoftCoreAssembly => self.start_softcore(softcore::Target::Assembly),
             Command::CancelSoftCore => {
@@ -913,7 +988,7 @@ impl OpenDrawApp {
                 && self.active_doc().is_some_and(|d| {
                     !d.softcore.as_ref().is_some_and(softcore::Run::is_running)
                         && d.three_d.model().is_some_and(|m| {
-                            softcore::refusal(m.atoms.len(), softcore::molecule_count(m)).is_none()
+                            softcore::refusal(softcore::molecule_count(m)).is_none()
                         })
                 }),
             can_export_3d: has_model,
@@ -1638,6 +1713,9 @@ impl eframe::App for OpenDrawApp {
         for command in commands {
             self.run(&ctx, command);
         }
+        // After the commands: one may have just asked for the picture of the view drawn above.
+        let shown = (!view.is_drawing() && self.docs.get(self.active).is_some()).then_some(view);
+        self.write_view_image(shown, frame.wgpu_render_state());
         self.unsaved_changes_dialog(&ctx);
         self.about_window(&ctx);
         self.fragment_window(&ctx);
