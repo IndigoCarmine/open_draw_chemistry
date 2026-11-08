@@ -13,10 +13,6 @@ use super::math::Cell;
 use super::model::{AssemblyState, Crystal, Design, OrientError};
 use crate::three_d::{Atom3d, Bond3d};
 
-/// The most atoms an assembly may have. Beyond this the viewer and the exports become
-/// impractical, so the build is refused rather than freezing the app.
-pub const MAX_ATOMS: usize = 200_000;
-
 /// A built assembly. Molecules are contiguous runs of atoms, in the order the design places
 /// them (see [`Design::instances`]).
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -80,8 +76,6 @@ const GRAMS_PER_CM3_PER_DALTON_PER_A3: f64 = 1.660_539_07;
 /// Why an assembly could not be built.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuildError {
-    /// More atoms than [`MAX_ATOMS`] (the count it would have).
-    TooLarge(usize),
     /// A component's orientation atoms are unusable.
     Orient {
         component: String,
@@ -94,9 +88,6 @@ pub enum BuildError {
 impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BuildError::TooLarge(n) => {
-                f.write_str(&t!("assembly.error.too_large", count = n, max = MAX_ATOMS))
-            }
             BuildError::Orient { component, error } => f.write_str(&t!(
                 "assembly.error.monomer",
                 name = component,
@@ -112,9 +103,6 @@ impl std::error::Error for BuildError {}
 /// Build `design`, tagging the result with `revision`.
 pub fn build(design: &Design, revision: u64) -> Result<Built, BuildError> {
     let atom_count = design.atom_count();
-    if atom_count > MAX_ATOMS {
-        return Err(BuildError::TooLarge(atom_count));
-    }
     // Each component's oriented coordinates, once.
     let oriented = design
         .components
@@ -271,18 +259,13 @@ mod tests {
     }
 
     #[test]
-    fn too_many_atoms_and_bad_orientations_are_refused_in_japanese() {
+    fn bad_orientations_are_refused_in_japanese() {
         let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
         let mut design = Design {
             components: vec![methanol_like()],
-            steps: vec![Step::new_stack(); 6],
+            steps: vec![Step::new_stack()],
             ..Default::default()
         };
-        // 10⁶ molecules.
-        let err = build(&design, 1).unwrap_err();
-        assert_eq!(err, BuildError::TooLarge(3_000_000));
-        assert!(err.to_string().contains("多すぎます"));
-        design.steps.truncate(1);
         design.components[0].orient = Some([0, 1, 1]);
         let err = build(&design, 1).unwrap_err();
         assert!(err.to_string().contains("meoh"), "{err}");

@@ -28,7 +28,7 @@ use super::Error;
 /// 3D builder sensible distances to start from.
 pub const ANGSTROM_PER_UNIT: f64 = 1.0;
 
-/// A V2000 count field is three digits wide.
+/// A V2000 count field is three digits wide; beyond it the molfile is written as V3000.
 const MAX_COUNT: usize = 999;
 
 /// What 3D generation builds of `mol` (see the module docs): its numbered brackets written
@@ -64,7 +64,8 @@ pub fn polymer_note(mol: &Molecule) -> Option<&'static str> {
     }
 }
 
-/// `mol` as a V2000 molfile, abbreviations expanded (see the module docs).
+/// `mol` as a V2000 molfile (V3000 when it has more atoms or bonds than V2000 holds),
+/// abbreviations expanded (see the module docs).
 ///
 /// Coordinates are scaled by [`ANGSTROM_PER_UNIT`] with y flipped (the editor's y points down,
 /// a molfile's up), so the drawing keeps its handedness and wedges keep their meaning. Fails
@@ -75,9 +76,6 @@ pub fn to_molfile(mol: &Molecule, config: &Config) -> Result<String, Error> {
         return Err(Error::Empty);
     }
     let mol = expand_labels(&built_structure(mol)?, config)?;
-    if mol.atoms.len() > MAX_COUNT || mol.bonds.len() > MAX_COUNT {
-        return Err(Error::TooLarge);
-    }
     if mol.bonds.iter().any(|b| b.order == BondOrder::Quadruple) {
         return Err(Error::QuadrupleBond);
     }
@@ -98,6 +96,10 @@ pub fn to_molfile(mol: &Molecule, config: &Config) -> Result<String, Error> {
     let _ = writeln!(out, "{}", mol.name.lines().next().unwrap_or(""));
     let _ = writeln!(out, "  OpenDraw          2D");
     let _ = writeln!(out);
+    if mol.atoms.len() > MAX_COUNT || mol.bonds.len() > MAX_COUNT {
+        write_v3000(&mut out, &mol, &index, &stereo_flags, chiral);
+        return Ok(out);
+    }
     let _ = writeln!(
         out,
         "{:>3}{:>3}  0  0{:>3}  0  0  0  0  0999 V2000",
@@ -145,6 +147,69 @@ pub fn to_molfile(mol: &Molecule, config: &Config) -> Result<String, Error> {
     }
     let _ = writeln!(out, "M  END");
     Ok(out)
+}
+
+/// The V3000 connection table of `mol` (atoms numbered by `index`, bonds flagged by
+/// `stereo_flags` as V2000 would) into `out`, ending with `M  END`.
+fn write_v3000(
+    out: &mut String,
+    mol: &Molecule,
+    index: &HashMap<u32, usize>,
+    stereo_flags: &[u8],
+    chiral: u8,
+) {
+    let _ = writeln!(out, "  0  0  0     0  0            999 V3000");
+    let _ = writeln!(out, "M  V30 BEGIN CTAB");
+    let _ = writeln!(
+        out,
+        "M  V30 COUNTS {} {} 0 0 {chiral}",
+        mol.atoms.len(),
+        mol.bonds.len()
+    );
+    let _ = writeln!(out, "M  V30 BEGIN ATOM");
+    for (i, atom) in mol.atoms.iter().enumerate() {
+        let x = f64::from(atom.pos[0]) * ANGSTROM_PER_UNIT;
+        let y = -f64::from(atom.pos[1]) * ANGSTROM_PER_UNIT;
+        let _ = write!(out, "M  V30 {} {} {x:.4} {y:.4} 0 0", i + 1, atom.element);
+        if atom.charge != 0 {
+            let _ = write!(out, " CHG={}", atom.charge);
+        }
+        let _ = writeln!(out);
+    }
+    let _ = writeln!(out, "M  V30 END ATOM");
+    let _ = writeln!(out, "M  V30 BEGIN BOND");
+    for (i, (bond, stereo)) in mol.bonds.iter().zip(stereo_flags).enumerate() {
+        let order = match bond.order {
+            BondOrder::Single => 1,
+            BondOrder::Double => 2,
+            BondOrder::Triple => 3,
+            BondOrder::Quadruple => unreachable!("rejected above"),
+        };
+        let _ = write!(
+            out,
+            "M  V30 {} {order} {} {}",
+            i + 1,
+            index[&bond.begin],
+            index[&bond.end]
+        );
+        // V2000's 1 (wedge), 6 (hash) and 4 (either) are V3000's CFG 1, 3 and 2.
+        match stereo {
+            1 => {
+                let _ = write!(out, " CFG=1");
+            }
+            6 => {
+                let _ = write!(out, " CFG=3");
+            }
+            4 => {
+                let _ = write!(out, " CFG=2");
+            }
+            _ => {}
+        }
+        let _ = writeln!(out);
+    }
+    let _ = writeln!(out, "M  V30 END BOND");
+    let _ = writeln!(out, "M  V30 END CTAB");
+    let _ = writeln!(out, "M  END");
 }
 
 /// The molfile bond stereo flag of a drawn bond: 1 for a solid wedge, 6 for a hashed one and
@@ -367,6 +432,36 @@ mod tests {
         assert_eq!(bonds.len(), 2);
         assert_eq!(atoms[2][3], "O");
         assert_eq!(bonds[1][..4], ["2", "3", "1", "0"]);
+    }
+
+    /// A structure beyond V2000's three-digit counts is written as V3000, every atom, bond
+    /// and charge kept, and reads back whole.
+    #[test]
+    fn a_large_structure_is_written_as_v3000() {
+        let mut mol = Molecule::default();
+        let mut prev = None;
+        for k in 0..1200 {
+            let charge = if k == 7 { 1 } else { 0 };
+            let id = mol.add_atom(
+                "C".to_owned(),
+                [k as f32 * 1.3, (k % 2) as f32 * 0.75],
+                charge,
+            );
+            if let Some(p) = prev {
+                mol.add_bond(p, id, BondOrder::Single);
+            }
+            prev = Some(id);
+        }
+        let text = to_molfile(&mol, &Config::default()).unwrap();
+        assert!(text.lines().nth(3).unwrap().ends_with("V3000"));
+        assert!(text.contains("M  V30 COUNTS 1200 1199 0 0 0"));
+        assert!(
+            text.contains("M  V30 8 C 9.1000 -0.7500 0 0 CHG=1"),
+            "{}",
+            &text[..600]
+        );
+        let read = crate::three_d::read_molfile(&text).expect("reads back");
+        assert_eq!((read.num_atoms(), read.num_bonds()), (1200, 1199));
     }
 
     #[test]

@@ -23,19 +23,11 @@ use molecule_optimizer_rs::calc::{
 };
 use molecule_optimizer_rs::core::geometry::kabsch;
 use molecule_optimizer_rs::distgeom::EmbedParams;
-use molecule_optimizer_rs::io;
 use molecule_optimizer_rs::optim::{MinimizeOptions, MinimizeStatus};
 use molecule_optimizer_rs::tasks::{Engine, JobHandle};
 
 use crate::three_d::geom::Vec3;
 use crate::three_d::{self, ForceField, Model3d};
-
-/// The most atoms (hydrogens included) a search accepts: every start is an embedding and a
-/// whole minimisation over all atom pairs.
-pub const MAX_ATOMS: usize = 300;
-
-/// The most starting geometries of one search.
-pub const MAX_STARTS: usize = 1000;
 
 /// Two conformers closer than the RMSD threshold are the same one only if their energies are
 /// also within this (kcal/mol): minimisations of one conformer end a little apart.
@@ -73,7 +65,7 @@ impl Method {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
     pub method: Method,
-    /// How many starting geometries (1 to [`MAX_STARTS`]).
+    /// How many starting geometries (at least 1).
     pub starts: usize,
     /// Conformers whose heavy atoms superpose within this (Å) are one.
     pub rmsd_threshold: f64,
@@ -111,7 +103,7 @@ impl Settings {
                 ConformerSearchOptions::new(Arc::new(RandomTorsionGenerator { seed: self.seed }))
             }
         };
-        options.num_conformers = self.starts.clamp(1, MAX_STARTS);
+        options.num_conformers = self.starts.max(1);
         options.minimize = MinimizeOptions {
             max_iters: three_d::OPTIMIZE_STEPS as usize,
             ..MinimizeOptions::default()
@@ -125,17 +117,6 @@ impl Settings {
         };
         options
     }
-}
-
-/// Why a search of a structure of `atoms` atoms is refused, if it is.
-pub fn refusal(atoms: usize) -> Option<String> {
-    (atoms > MAX_ATOMS).then(|| {
-        t!(
-            "conformer.window.too_many_atoms",
-            atoms = atoms,
-            max = MAX_ATOMS
-        )
-    })
 }
 
 /// One conformer found: its geometry (superposed on the starting model) and energy.
@@ -187,9 +168,6 @@ pub struct Run {
 impl Run {
     /// Start searching `model`'s conformers in the background.
     pub fn start(model: &Model3d, settings: Settings) -> Result<Run, String> {
-        if let Some(why) = refusal(model.atoms.len()) {
-            return Err(why);
-        }
         let mol = three_d::read_molfile(&model.molfile).map_err(|e| e.to_string())?;
         if mol.num_atoms() != model.atoms.len() {
             return Err(three_d::Error::Unreadable.to_string());
@@ -304,7 +282,7 @@ impl Run {
     }
 
     pub fn progress(&self) -> Progress {
-        let total = self.settings.starts.clamp(1, MAX_STARTS);
+        let total = self.settings.starts.max(1);
         let done = (self.completed + self.failed).min(total);
         let elapsed = self.finished.unwrap_or_else(Instant::now) - self.started;
         let left = (self.is_running() && done > 0 && done < total)
@@ -343,9 +321,9 @@ impl Run {
             .iter()
             .enumerate()
             .map(|(rank, c)| {
-                io::write_sdf_record(
+                three_d::sdf_record(
                     &self.mol,
-                    Some(&c.coords),
+                    &c.coords,
                     &[
                         ("Conformer", (rank + 1).to_string()),
                         ("Energy", format!("{:.4}", c.energy)),
@@ -370,13 +348,17 @@ fn transform(r: &[[f64; 3]; 3], t: Vec3, p: Vec3) -> Vec3 {
     std::array::from_fn(|i| r[i][0] * p[0] + r[i][1] * p[1] + r[i][2] * p[2] + t[i])
 }
 
+/// The starts of [`Run::running_for_test`]: enough that it is still running when cancelled.
+#[cfg(test)]
+const RUNNING_STARTS: usize = 1000;
+
 #[cfg(test)]
 impl Run {
     /// A search that runs until cancelled (a long one of butane).
     pub fn running_for_test() -> Run {
         let model = tests::butane(ForceField::Uff);
         let settings = Settings {
-            starts: MAX_STARTS,
+            starts: RUNNING_STARTS,
             force_field: ForceField::Uff,
             ..Settings::default()
         };
@@ -542,12 +524,6 @@ pub(crate) mod tests {
             "{:?}",
             asked.elapsed()
         );
-        assert!(run.was_cancelled() || run.progress().done == MAX_STARTS);
-    }
-
-    #[test]
-    fn too_many_atoms_is_refused() {
-        assert!(refusal(MAX_ATOMS).is_none());
-        assert!(refusal(MAX_ATOMS + 1).is_some());
+        assert!(run.was_cancelled() || run.progress().done == RUNNING_STARTS);
     }
 }

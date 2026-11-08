@@ -160,8 +160,6 @@ pub enum Error {
     QuadrupleBond,
     /// A multiple-group bracket (×n) that cannot be written out (its count no number, say).
     MultipleGroup,
-    /// More atoms or bonds than a V2000 molfile holds.
-    TooLarge,
     /// The structure handed to the force field could not be read.
     Unreadable,
     /// No usable 3D geometry came out, even after retrying.
@@ -182,7 +180,6 @@ impl fmt::Display for Error {
             )),
             Error::QuadrupleBond => f.write_str(t!("three_d.error.quadruple_bond")),
             Error::MultipleGroup => f.write_str(t!("three_d.error.multiple_group")),
-            Error::TooLarge => f.write_str(t!("three_d.error.too_large")),
             Error::Unreadable => f.write_str(t!("three_d.error.unreadable")),
             Error::GenerationFailed => f.write_str(t!("three_d.error.generation_failed")),
             Error::ForceField(ff) => {
@@ -232,7 +229,7 @@ pub fn optimize_with(
 /// `scan::energy`).
 pub(crate) use engine::{
     ENERGY_UNIT, Relaxed, SoftCoreStage, assemble, descend, field, fragment_count,
-    model as checked_model, read as read_molfile, relax, shared_builder, soft_core,
+    model as checked_model, read as read_molfile, relax, sdf_record, shared_builder, soft_core,
 };
 
 #[cfg(test)]

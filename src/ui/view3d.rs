@@ -1006,7 +1006,7 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
                 .is_some_and(|r| r.is_running());
             let refused = match model {
                 Some(m) if job.is_some_and(|j| j.model().is_some()) => {
-                    crate::softcore::refusal(m.atoms.len(), crate::softcore::molecule_count(m))
+                    crate::softcore::refusal(crate::softcore::molecule_count(m))
                 }
                 _ => Some(t!("conformer.window.no_model").to_owned()),
             };

@@ -187,28 +187,6 @@ impl Source {
         })
     }
 
-    /// The most atoms the structure has at any of `points` (the values of each, one per
-    /// parameter): the model's are always its own; the assembly's change where a crystal's
-    /// copies on special positions merge or part, so each point's design is counted (a point
-    /// that cannot be set counts as the design as it is).
-    pub fn most_atoms(&self, points: &[Vec<f64>]) -> usize {
-        let Source::Assembly { design, params, .. } = self else {
-            return self.atom_count();
-        };
-        // One copy, every point writing all the parameters over it.
-        let mut d = design.clone();
-        let mut at = |values: &[f64]| {
-            for (p, &v) in params.iter().zip(values) {
-                p.write_design(&mut d, v).ok()?;
-            }
-            Some(d.atom_count())
-        };
-        points
-            .iter()
-            .filter_map(|values| at(values))
-            .fold(design.atom_count(), usize::max)
-    }
-
     /// The model's atoms at `from` (another structure of them, such as a neighbouring point's
     /// relaxed one) with the parameters set to `values`, none of the `fixed` atoms moving (see
     /// [`Source::pinned`]). The assembly's points are always rebuilt from its design, so for

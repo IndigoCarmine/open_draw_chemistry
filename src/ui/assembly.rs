@@ -1036,7 +1036,7 @@ fn softcore_row(
         return;
     }
     let refused = match state.built() {
-        Ok(built) => crate::softcore::refusal(built.atoms.len(), built.molecule_count()),
+        Ok(built) => crate::softcore::refusal(built.molecule_count()),
         Err(e) => Some(e.to_string()),
     };
     let button = ui

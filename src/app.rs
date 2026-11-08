@@ -913,7 +913,7 @@ impl OpenDrawApp {
                 && self.active_doc().is_some_and(|d| {
                     !d.softcore.as_ref().is_some_and(softcore::Run::is_running)
                         && d.three_d.model().is_some_and(|m| {
-                            softcore::refusal(m.atoms.len(), softcore::molecule_count(m)).is_none()
+                            softcore::refusal(softcore::molecule_count(m)).is_none()
                         })
                 }),
             can_export_3d: has_model,
