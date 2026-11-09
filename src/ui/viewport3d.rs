@@ -816,7 +816,7 @@ fn downsample_premultiplied(rgba: &[u8], width: u32, height: u32, factor: u32) -
 /// PNG bytes of premultiplied RGBA8 pixels, the colour divided back out of the alpha (PNG's
 /// alpha is straight).
 fn encode_png(mut rgba: Vec<u8>, width: u32, height: u32) -> Result<Vec<u8>, String> {
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         let a = u32::from(px[3]);
         if a == 0 {
             px[..3].fill(0);
