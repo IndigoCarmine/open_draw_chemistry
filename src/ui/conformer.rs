@@ -214,7 +214,8 @@ fn start(win: &mut ConformerWindow, doc: &mut Document) {
     let Some(model) = doc.three_d.model() else {
         return;
     };
-    match Run::start(model, win.settings) {
+    let constraints = doc.three_d.edit.active_constraints(model.atoms.len());
+    match Run::start(model, win.settings, &constraints) {
         Ok(run) => {
             doc.conformers = Some(run);
             win.applied = None;

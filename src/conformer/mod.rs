@@ -12,23 +12,30 @@
 //!
 //! Every conformer is superposed (Kabsch, heavy atoms) on the model the search started from,
 //! so putting one into the 3D view leaves the molecule where it was.
+//!
+//! The 3D view's constraints (when in use) hold in every conformer, as in Optimize: each
+//! minimisation holds them, the energies are the molecule's own (the restraints' penalty left
+//! out). Fixed atoms stay where they are in the model — the starts are placed so, and the
+//! conformers are not superposed then — and a random-torsion start turns no bond that would
+//! move a fixed atom or change a restrained length, angle or dihedral.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use molecule_optimizer_rs::Molecule;
-use molecule_optimizer_rs::calc::conformer::RandomTorsionGenerator;
+use molecule_optimizer_rs::calc::conformer::{ConformerGenerator, RandomTorsionGenerator};
 use molecule_optimizer_rs::calc::{
     ConformerSearchOptions, ConformerSearchResult, ConformerSearchSnapshot,
 };
 use molecule_optimizer_rs::core::geometry::kabsch;
+use molecule_optimizer_rs::core::geometry::rotate_about_axis;
 use molecule_optimizer_rs::distgeom::EmbedParams;
 use molecule_optimizer_rs::io;
-use molecule_optimizer_rs::optim::{MinimizeOptions, MinimizeStatus};
+use molecule_optimizer_rs::optim::{MinimizeOptions, MinimizeStatus, Observer};
 use molecule_optimizer_rs::tasks::{Engine, JobHandle};
 
 use crate::three_d::geom::Vec3;
-use crate::three_d::{self, ForceField, Model3d};
+use crate::three_d::{self, Constraint, ForceField, Model3d};
 
 /// The most atoms (hydrogens included) a search accepts: every start is an embedding and a
 /// whole minimisation over all atom pairs.
@@ -172,6 +179,8 @@ pub struct Run {
     /// The model's elements, to tell whether the model is still that structure.
     elements: Vec<String>,
     pub settings: Settings,
+    /// The constraints held (those that fit the structure).
+    constraints: Vec<Constraint>,
     /// The unique conformers, lowest energy first (those found so far while running).
     pub conformers: Vec<Found>,
     completed: usize,
@@ -185,8 +194,12 @@ pub struct Run {
 }
 
 impl Run {
-    /// Start searching `model`'s conformers in the background.
-    pub fn start(model: &Model3d, settings: Settings) -> Result<Run, String> {
+    /// Start searching `model`'s conformers in the background, holding `constraints`.
+    pub fn start(
+        model: &Model3d,
+        settings: Settings,
+        constraints: &[Constraint],
+    ) -> Result<Run, String> {
         if let Some(why) = refusal(model.atoms.len()) {
             return Err(why);
         }
@@ -195,17 +208,36 @@ impl Run {
             return Err(three_d::Error::Unreadable.to_string());
         }
         // Set up once here, so an atom the force field cannot type is said at once.
-        three_d::field(&mol, settings.force_field, &[]).map_err(|e| e.to_string())?;
+        let constraints: Vec<Constraint> = constraints
+            .iter()
+            .filter(|c| c.is_valid_for(mol.num_atoms()))
+            .copied()
+            .collect();
+        three_d::field(&mol, settings.force_field, &constraints).map_err(|e| e.to_string())?;
+        let mut options = settings.options();
+        if !constraints.is_empty() {
+            options.generator = match settings.method {
+                Method::RandomTorsion => Arc::new(HeldTorsions {
+                    seed: settings.seed,
+                    constraints: constraints.clone(),
+                }),
+                Method::Etkdg => Arc::new(Anchored {
+                    inner: options.generator,
+                    fixed: fixed_atoms(&constraints),
+                }),
+            };
+        }
         let handle = Engine::global().conformer_search(
             Arc::new(mol.clone()),
-            three_d::shared_builder(settings.force_field),
-            settings.options(),
+            three_d::restrained_builder(settings.force_field, &constraints, mol.num_atoms()),
+            options,
         );
         Ok(Run {
             handle: Some(handle),
             mol,
             elements: model.atoms.iter().map(|a| a.element.clone()).collect(),
             settings,
+            constraints,
             conformers: Vec::new(),
             completed: 0,
             failed: 0,
@@ -275,32 +307,40 @@ impl Run {
         }
     }
 
-    /// `found` (lowest energy first) superposed on the starting model, those past the energy
+    /// `found` superposed on the starting model (unless atoms are fixed: then they are already
+    /// in its place), with the molecule's own energies, lowest first, those past the energy
     /// window left out.
     fn superposed(&self, found: &[molecule_optimizer_rs::calc::Conformer]) -> Vec<Found> {
         let heavy = self.mol.heavy_atoms();
         let reference: Vec<Vec3> = heavy.iter().map(|&i| self.mol.coords[i]).collect();
-        let lowest = found.first().map_or(0.0, |c| c.energy);
-        let window = self.settings.options().energy_window;
-        found
+        let superpose = fixed_atoms(&self.constraints).is_empty();
+        let mut out: Vec<Found> = found
             .iter()
-            .filter(|c| c.energy.is_finite() && c.energy - lowest <= window)
             .map(|c| {
-                let coords = if heavy.len() >= 3 && c.coords.len() == self.mol.coords.len() {
-                    let moving: Vec<Vec3> = heavy.iter().map(|&i| c.coords[i]).collect();
-                    let (_, r, t) = kabsch(&reference, &moving);
-                    c.coords.iter().map(|&p| transform(&r, t, p)).collect()
-                } else {
-                    c.coords.clone()
-                };
+                let coords =
+                    if superpose && heavy.len() >= 3 && c.coords.len() == self.mol.coords.len() {
+                        let moving: Vec<Vec3> = heavy.iter().map(|&i| c.coords[i]).collect();
+                        let (_, r, t) = kabsch(&reference, &moving);
+                        c.coords.iter().map(|&p| transform(&r, t, p)).collect()
+                    } else {
+                        c.coords.clone()
+                    };
+                // The search minimised the energy with the restraints' penalty in it.
+                let penalty = three_d::restraint_energy(&self.mol, &self.constraints, &c.coords);
                 Found {
                     start: c.id,
                     coords,
-                    energy: c.energy,
+                    energy: c.energy - penalty,
                     converged: c.status == MinimizeStatus::Converged,
                 }
             })
-            .collect()
+            .filter(|c| c.energy.is_finite())
+            .collect();
+        out.sort_by(|a, b| a.energy.total_cmp(&b.energy).then(a.start.cmp(&b.start)));
+        let lowest = out.first().map_or(0.0, |c| c.energy);
+        let window = self.settings.options().energy_window;
+        out.retain(|c| c.energy - lowest <= window);
+        out
     }
 
     pub fn progress(&self) -> Progress {
@@ -365,6 +405,146 @@ impl Drop for Run {
     }
 }
 
+/// The atoms `constraints` fix, in order.
+fn fixed_atoms(constraints: &[Constraint]) -> Vec<usize> {
+    let mut fixed: Vec<usize> = constraints
+        .iter()
+        .filter_map(|c| match *c {
+            Constraint::Fix(i) => Some(i),
+            _ => None,
+        })
+        .collect();
+    fixed.sort_unstable();
+    fixed.dedup();
+    fixed
+}
+
+/// Starts from `inner` (an embedding, in a frame of its own) put where the model is: turned
+/// onto the model's fixed atoms (onto its heavy atoms when fewer than three are fixed), moved
+/// so the fixed atoms' centre is the model's, and the fixed atoms then set exactly where they
+/// are in the model — the minimiser holds them wherever they start.
+struct Anchored {
+    inner: Arc<dyn ConformerGenerator>,
+    fixed: Vec<usize>,
+}
+
+impl ConformerGenerator for Anchored {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn generate(
+        &self,
+        mol: &Molecule,
+        conf_id: usize,
+        observer: &mut dyn Observer,
+    ) -> molecule_optimizer_rs::Result<Vec<Vec3>> {
+        let mut coords = self.inner.generate(mol, conf_id, observer)?;
+        if self.fixed.is_empty() || coords.len() != mol.coords.len() {
+            return Ok(coords);
+        }
+        let heavy = mol.heavy_atoms();
+        let by = if self.fixed.len() >= 3 || heavy.len() < 3 {
+            &self.fixed
+        } else {
+            &heavy
+        };
+        if by.len() >= 3 {
+            let reference: Vec<Vec3> = by.iter().map(|&i| mol.coords[i]).collect();
+            let moving: Vec<Vec3> = by.iter().map(|&i| coords[i]).collect();
+            let (_, r, t) = kabsch(&reference, &moving);
+            for p in &mut coords {
+                *p = transform(&r, t, *p);
+            }
+        }
+        let centre = |c: &[Vec3]| -> Vec3 {
+            std::array::from_fn(|k| {
+                self.fixed.iter().map(|&i| c[i][k]).sum::<f64>() / self.fixed.len() as f64
+            })
+        };
+        let (want, have) = (centre(&mol.coords), centre(&coords));
+        for p in &mut coords {
+            *p = std::array::from_fn(|k| p[k] + want[k] - have[k]);
+        }
+        for &i in &self.fixed {
+            coords[i] = mol.coords[i];
+        }
+        Ok(coords)
+    }
+}
+
+/// [`RandomTorsionGenerator`] that keeps `constraints`: a bond is turned only if that changes
+/// no restrained length, angle or dihedral (no restraint has atoms on both sides of it, the
+/// bond's own atoms aside), and then on the side without fixed atoms (not at all if both
+/// sides have some). The first start is the model itself.
+struct HeldTorsions {
+    seed: u64,
+    constraints: Vec<Constraint>,
+}
+
+impl ConformerGenerator for HeldTorsions {
+    fn name(&self) -> &str {
+        "RandomTorsion"
+    }
+
+    fn generate(
+        &self,
+        mol: &Molecule,
+        conf_id: usize,
+        _observer: &mut dyn Observer,
+    ) -> molecule_optimizer_rs::Result<Vec<Vec3>> {
+        let mut coords = mol.coords.clone();
+        if conf_id == 0 {
+            return Ok(coords);
+        }
+        let fixed = fixed_atoms(&self.constraints);
+        let mut state = self.seed ^ (conf_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut m = mol.clone();
+        for (a, b) in RandomTorsionGenerator::rotatable_bonds(&mut m) {
+            let Some(side) = mol.fragment_side(b, a) else {
+                continue;
+            };
+            let theta = (unit(&mut state) * 2.0 - 1.0) * std::f64::consts::PI;
+            let mut on_side = vec![false; mol.num_atoms()];
+            for &i in &side {
+                on_side[i] = true;
+            }
+            // Whether `atoms` (the bond's own aside: they stay put) lie on both sides.
+            let spans = |atoms: &[usize]| {
+                let off_axis = || atoms.iter().filter(|&&i| i != a && i != b);
+                off_axis().any(|&i| on_side[i]) && off_axis().any(|&i| !on_side[i])
+            };
+            if spans(&fixed)
+                || self
+                    .constraints
+                    .iter()
+                    .any(|c| !matches!(c, Constraint::Fix(_)) && spans(c.atoms()))
+            {
+                continue;
+            }
+            let fixed_on_side = fixed.iter().any(|&i| i != a && i != b && on_side[i]);
+            let origin = coords[a];
+            let axis: Vec3 = std::array::from_fn(|k| coords[b][k] - coords[a][k]);
+            for (i, p) in coords.iter_mut().enumerate() {
+                if on_side[i] != fixed_on_side {
+                    *p = rotate_about_axis(*p, origin, axis, theta);
+                }
+            }
+        }
+        Ok(coords)
+    }
+}
+
+/// The next number in [0, 1) of a SplitMix64 stream at `state`.
+fn unit(state: &mut u64) -> f64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    (z >> 11) as f64 / (1u64 << 53) as f64
+}
+
 /// `r · p + t`.
 fn transform(r: &[[f64; 3]; 3], t: Vec3, p: Vec3) -> Vec3 {
     std::array::from_fn(|i| r[i][0] * p[0] + r[i][1] * p[1] + r[i][2] * p[2] + t[i])
@@ -380,7 +560,7 @@ impl Run {
             force_field: ForceField::Uff,
             ..Settings::default()
         };
-        Run::start(&model, settings).expect("search")
+        Run::start(&model, settings, &[]).expect("search")
     }
 }
 
@@ -405,7 +585,7 @@ pub(crate) mod tests {
     }
 
     fn search(model: &Model3d, settings: Settings) -> Run {
-        let mut run = Run::start(model, settings).expect("search starts");
+        let mut run = Run::start(model, settings, &[]).expect("search starts");
         run.wait();
         assert!(run.error().is_none(), "{:?}", run.error());
         run
@@ -543,6 +723,75 @@ pub(crate) mod tests {
             asked.elapsed()
         );
         assert!(run.was_cancelled() || run.progress().done == MAX_STARTS);
+    }
+
+    /// The 3D view's constraints hold in every conformer, whichever method: a fixed atom stays
+    /// where it is in the model, a restrained dihedral (butane's C–C–C–C at gauche, 60°) and a
+    /// restrained length keep their values, and the energies are the molecule's own.
+    #[test]
+    fn constraints_hold_in_every_conformer() {
+        use crate::three_d::geom;
+        let model = butane(ForceField::Uff);
+        // Where the fixed atom must stay (within the molfile's precision: the search starts
+        // from the model's molfile).
+        let model_coords: Vec<Vec3> = model.atoms.iter().map(|a| a.pos).collect();
+        // A hydrogen on C1 and one on C4, held 3.0 Å apart.
+        let h = |carbon: usize| {
+            model
+                .bonds
+                .iter()
+                .find_map(|b| {
+                    let other = if b.begin == carbon {
+                        b.end
+                    } else if b.end == carbon {
+                        b.begin
+                    } else {
+                        return None;
+                    };
+                    (model.atoms[other].element == "H").then_some(other)
+                })
+                .expect("a hydrogen")
+        };
+        let (h1, h4) = (h(0), h(3));
+        let constraints = [
+            Constraint::Fix(0),
+            Constraint::Torsion([0, 1, 2, 3], 60.0),
+            Constraint::Distance([h1, h4], 3.0),
+        ];
+        for method in Method::ALL {
+            let settings = Settings {
+                method,
+                starts: 12,
+                force_field: ForceField::Uff,
+                ..Settings::default()
+            };
+            let mut run = Run::start(&model, settings, &constraints).expect("search starts");
+            run.wait();
+            assert!(run.error().is_none(), "{method:?}: {:?}", run.error());
+            assert!(!run.conformers.is_empty(), "{method:?}: no conformer");
+            for c in &run.conformers {
+                let moved = geom::distance(c.coords[0], model_coords[0]);
+                assert!(
+                    moved < 1e-3,
+                    "{method:?}: the fixed atom moved {moved:.3} Å"
+                );
+                let torsion = geom::dihedral(c.coords[0], c.coords[1], c.coords[2], c.coords[3]);
+                assert!(
+                    geom::wrap_degrees(torsion - 60.0).abs() < 1.0,
+                    "{method:?}: dihedral {torsion:.1}°"
+                );
+                let length = geom::distance(c.coords[h1], c.coords[h4]);
+                assert!((length - 3.0).abs() < 0.05, "{method:?}: H–H {length:.3} Å");
+                let mut placed = model.clone();
+                crate::three_d::edit::set_coords(&mut placed, &c.coords);
+                let energy = three_d::energy(&placed, ForceField::Uff).expect("energy");
+                assert!(
+                    (energy - c.energy).abs() < 1e-3,
+                    "{method:?}: {energy} vs {}",
+                    c.energy
+                );
+            }
+        }
     }
 
     #[test]
