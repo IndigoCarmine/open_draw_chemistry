@@ -312,14 +312,16 @@ pub fn moving_side_avoiding(
         .ok_or(EditError::AnchorBlocks)
 }
 
-/// Whether the `a`–`b` bond can be turned: single (`order` 1), not in a ring, and with
-/// something on both ends to turn.
+/// Whether the user may turn the `a`–`b` bond: single or double (`order` 1 or 2 — turning a
+/// double bond is how cis becomes trans), not in a ring, and with something on both ends to
+/// turn. A triple bond is straight, so turning it changes nothing; an aromatic one is in a ring.
+/// What the solvers may turn by themselves is [`is_free_rotor`].
 pub fn is_rotatable(graph: &Graph, a: usize, b: usize, order: u8) -> Result<(), RotateReject> {
     if !graph.bonded(a, b) {
         return Err(RotateReject::NotABond);
     }
-    if order != 1 {
-        return Err(RotateReject::Multiple);
+    if !matches!(order, 1 | 2) {
+        return Err(RotateReject::TripleOrAromatic);
     }
     if graph.in_ring(a, b) {
         return Err(RotateReject::Ring);
@@ -330,11 +332,17 @@ pub fn is_rotatable(graph: &Graph, a: usize, b: usize, order: u8) -> Result<(), 
     Ok(())
 }
 
+/// Whether a solver may turn the `a`–`b` bond on its own: a rotatable single bond. A double
+/// bond turns only when the user asks ([`is_rotatable`]), so E/Z never flips unbidden.
+pub fn is_free_rotor(graph: &Graph, a: usize, b: usize, order: u8) -> bool {
+    order == 1 && is_rotatable(graph, a, b, order).is_ok()
+}
+
 /// Why a bond cannot be turned about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RotateReject {
     NotABond,
-    Multiple,
+    TripleOrAromatic,
     Ring,
     Terminal,
 }
@@ -343,7 +351,7 @@ impl fmt::Display for RotateReject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             RotateReject::NotABond => t!("three_d.error.rotate_not_a_bond"),
-            RotateReject::Multiple => t!("three_d.error.rotate_multiple"),
+            RotateReject::TripleOrAromatic => t!("three_d.error.rotate_triple"),
             RotateReject::Ring => t!("three_d.error.rotate_ring"),
             RotateReject::Terminal => t!("three_d.error.rotate_terminal"),
         })
@@ -598,8 +606,8 @@ const SOLVE_TOLERANCE: f64 = 1e-4;
 const SOLVE_SWEEPS: usize = 200;
 
 /// Bring atoms `a` and `b` to `goal` by turning the rotatable single bonds on the path between
-/// them (cyclic coordinate descent, each bond solved in closed form). `orders` gives each
-/// bond's order for `bonds`, so multiple bonds are left alone.
+/// them (cyclic coordinate descent, each bond solved in closed form). `bond_order` gives each
+/// bond's order, so multiple bonds are left alone (see [`is_free_rotor`]).
 pub fn solve_distance(
     coords: &[Vec3],
     graph: &Graph,
@@ -619,7 +627,7 @@ pub fn solve_distance(
     let path = graph.shortest_path(a, b).ok_or(EditError::NotConnected)?;
     let dofs: Vec<Dof> = path
         .windows(2)
-        .filter(|w| is_rotatable(graph, w[0], w[1], bond_order(w[0], w[1])).is_ok())
+        .filter(|w| is_free_rotor(graph, w[0], w[1], bond_order(w[0], w[1])))
         .filter_map(|w| {
             let moving = graph.side(w[0], w[1])?;
             moving.contains(&b).then(|| Dof {
@@ -993,6 +1001,8 @@ mod tests {
         assert!(graph.in_ring(0, 1));
         assert!(!graph.in_ring(0, 3));
         assert_eq!(is_rotatable(&graph, 0, 1, 1), Err(RotateReject::Ring));
+        // A ring double bond neither.
+        assert_eq!(is_rotatable(&graph, 0, 1, 2), Err(RotateReject::Ring));
         let coords = vec![
             [0.0; 3],
             [1.5, 0.0, 0.0],
@@ -1007,6 +1017,45 @@ mod tests {
         let out = set_bond_length(&coords, &graph, 0, 3, 2.0, None).unwrap();
         assert!(close(distance(out[0], out[3]), 2.0, 1e-9));
         assert!(same_point(out[1], coords[1]));
+    }
+
+    #[test]
+    fn a_double_bond_turns_only_when_asked() {
+        // H4–C0–C1=C2–C3–H5: but-2-ene's chain, the C1=C2 bond double.
+        let (coords, graph) = butane();
+        assert_eq!(is_rotatable(&graph, 1, 2, 2), Ok(()));
+        assert_eq!(
+            is_rotatable(&graph, 1, 2, 3),
+            Err(RotateReject::TripleOrAromatic)
+        );
+        assert_eq!(
+            is_rotatable(&graph, 1, 2, 5),
+            Err(RotateReject::TripleOrAromatic)
+        );
+        assert_eq!(is_rotatable(&graph, 0, 4, 2), Err(RotateReject::Terminal));
+        // The solvers leave it alone.
+        assert!(is_free_rotor(&graph, 1, 2, 1));
+        assert!(!is_free_rotor(&graph, 1, 2, 2));
+        // Turning it by 180° takes trans to cis.
+        let before = dihedral(coords[0], coords[1], coords[2], coords[3]);
+        let out = rotate_bond(&coords, &graph, 1, 2, 180.0, None).unwrap();
+        let after = dihedral(out[0], out[1], out[2], out[3]);
+        assert!(close(wrap_degrees(after - before).abs(), 180.0, 1e-9));
+        assert!(close(
+            distance(out[1], out[2]),
+            distance(coords[1], coords[2]),
+            1e-9
+        ));
+        // The distance solver turns the single bonds on the path and keeps C0–C1=C2–C3 as
+        // it was.
+        let orders = |x: usize, y: usize| if (x.min(y), x.max(y)) == (1, 2) { 2 } else { 1 };
+        let s = solve_distance(&coords, &graph, orders, 4, 5, Goal::Closest).unwrap();
+        assert!(s.achieved < s.start);
+        assert!(close(
+            dihedral(s.coords[0], s.coords[1], s.coords[2], s.coords[3]),
+            before,
+            1e-9
+        ));
     }
 
     #[test]

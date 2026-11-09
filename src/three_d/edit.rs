@@ -872,6 +872,40 @@ mod tests {
     }
 
     #[test]
+    fn a_double_bond_is_turned_like_a_single_one() {
+        // H2–C0=C1–H3.
+        let mut m = model();
+        m.bonds[0].order = 2;
+        let mut edit = Edit3d {
+            picked: vec![0, 1],
+            ..Edit3d::default()
+        };
+        assert_eq!(picked_rotor(&m, &edit.picked), Some((0, 1)));
+        let c = coords(&m);
+        let before = geom::dihedral(c[2], c[0], c[1], c[3]);
+        assert!(rotate_picked(&mut m, &mut edit, 180.0));
+        let c = coords(&m);
+        let after = geom::dihedral(c[2], c[0], c[1], c[3]);
+        assert!((geom::wrap_degrees(after - before).abs() - 180.0).abs() < 1e-6);
+        assert_eq!(edit.undo_label(), Some(t!("three_d.edit.undo_rotate")));
+        assert!(edit.undo(&mut m).is_some());
+        let c = coords(&m);
+        assert!((geom::dihedral(c[2], c[0], c[1], c[3]) - before).abs() < 1e-6);
+
+        // The distance between the hydrogens is not solved by turning it.
+        edit.picked = vec![2, 3];
+        let start = m.distance(2, 3);
+        assert!(!set_value(&mut m, &mut edit, start + 0.5));
+        assert!(edit.report.as_ref().is_some_and(|(_, problem)| *problem));
+        assert!((m.distance(2, 3) - start).abs() < 1e-9);
+
+        // A triple bond does not turn.
+        m.bonds[0].order = 3;
+        edit.picked = vec![0, 1];
+        assert_eq!(picked_rotor(&m, &edit.picked), None);
+    }
+
+    #[test]
     fn measures_follow_the_number_of_atoms() {
         let m = model();
         let c = coords(&m);

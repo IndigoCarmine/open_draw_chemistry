@@ -840,7 +840,7 @@ edit_bad_target = "The target value is out of range"
 edit_degenerate = "The atoms overlap, so the direction is undefined"
 # Reasons a bond can't be rotated.
 rotate_not_a_bond = "Not a bond"
-rotate_multiple = "Multiple and aromatic bonds can't be rotated"
+rotate_triple = "Triple and aromatic bonds can't be rotated"
 rotate_ring = "Bonds in a ring can't be rotated"
 rotate_terminal = "Turning a terminal bond doesn't change the shape"
 # {max} is a size in MB.
