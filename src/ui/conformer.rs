@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use egui::{Color32, RichText, vec2};
 
-use crate::conformer::{self, MAX_STARTS, Method, Run, Settings};
+use crate::conformer::{Method, Run, Settings};
 use crate::document::Document;
 use crate::scan::run::format_duration;
 use crate::theme;
@@ -133,7 +133,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ConformerWindow, doc: &mut Document) {
                 ui.end_row();
 
                 ui.label(t!("conformer.window.starts"));
-                ui.add(egui::DragValue::new(&mut s.starts).range(1..=MAX_STARTS))
+                ui.add(egui::DragValue::new(&mut s.starts).range(1..=usize::MAX))
                     .on_hover_text(t!("conformer.window.starts_tip"));
                 ui.end_row();
 
@@ -182,7 +182,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ConformerWindow, doc: &mut Document) {
 
     let refused = match atoms {
         None => Some(t!("conformer.window.no_model").to_owned()),
-        Some(n) => conformer::refusal(n),
+        Some(_) => None,
     };
     if let Some(why) = &refused {
         ui.label(RichText::new(why).color(warn_color(ui)));

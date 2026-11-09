@@ -323,6 +323,12 @@ pub fn menu_bar(
                             ui.close();
                         }
                     }
+                    ui.separator();
+                    let label = format!("{} (.png)…", t!("io.export.png"));
+                    if ui.button(label).clicked() {
+                        out.push(Command::Export3dImage);
+                        ui.close();
+                    }
                 });
             });
             item(

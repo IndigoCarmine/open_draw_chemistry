@@ -506,7 +506,11 @@ pub fn export(molfile: &str, format: Export3d) -> Result<String, Error> {
         Export3d::Pdb => Format::Pdb,
         Export3d::Mol2 => Format::Mol2,
     };
-    Ok(io::write_str(&mol, None, format))
+    Ok(match format {
+        Format::Mol => molblock(&mol, &mol.coords),
+        Format::Sdf => sdf_record(&mol, &mol.coords, &[]),
+        _ => io::write_str(&mol, None, format),
+    })
 }
 
 /// The model of `mol` at `coords`, or [`Error::GenerationFailed`] when its geometry or energy
@@ -567,8 +571,87 @@ pub(crate) fn assemble(
         force_field,
         energy,
         energy_unit: ENERGY_UNIT.to_owned(),
-        molfile: io::write_molblock(&placed),
+        molfile: molblock(&placed, coords),
     }
+}
+
+/// A V2000 count field is three digits wide; beyond it a molblock is written as V3000.
+const V2000_MAX: usize = 999;
+
+/// `mol` at `coords` as a molblock: the library's V2000 one when the counts fit, V3000
+/// (Kekulé bond orders and formal charges, as the V2000 one) otherwise.
+pub(crate) fn molblock(mol: &Molecule, coords: &[[f64; 3]]) -> String {
+    use std::fmt::Write as _;
+    if mol.num_atoms() <= V2000_MAX && mol.num_bonds() <= V2000_MAX {
+        return io::molfile::write_molblock_coords(mol, coords);
+    }
+    let km = molecule_optimizer_rs::perception::kekulized_copy(mol).unwrap_or_else(|_| mol.clone());
+    let mut s = String::with_capacity(80 * (km.num_atoms() + km.num_bonds()) + 200);
+    let _ = writeln!(s, "{}", mol.name);
+    let _ = writeln!(s, "  molecule_optimizer_rs   3D");
+    let _ = writeln!(s);
+    let _ = writeln!(s, "  0  0  0     0  0            999 V3000");
+    let _ = writeln!(s, "M  V30 BEGIN CTAB");
+    let _ = writeln!(
+        s,
+        "M  V30 COUNTS {} {} 0 0 0",
+        km.num_atoms(),
+        km.num_bonds()
+    );
+    let _ = writeln!(s, "M  V30 BEGIN ATOM");
+    for (i, (a, p)) in km.atoms().iter().zip(coords).enumerate() {
+        let _ = write!(
+            s,
+            "M  V30 {} {} {:.4} {:.4} {:.4} 0",
+            i + 1,
+            a.symbol(),
+            p[0],
+            p[1],
+            p[2]
+        );
+        if a.formal_charge != 0 {
+            let _ = write!(s, " CHG={}", a.formal_charge);
+        }
+        let _ = writeln!(s);
+    }
+    let _ = writeln!(s, "M  V30 END ATOM");
+    let _ = writeln!(s, "M  V30 BEGIN BOND");
+    for (i, b) in km.bonds().iter().enumerate() {
+        let t = match b.order {
+            BondOrder::Single => 1,
+            BondOrder::Double => 2,
+            BondOrder::Triple => 3,
+            BondOrder::Aromatic => 4,
+            BondOrder::Dative => 9,
+            BondOrder::Zero => 0,
+        };
+        let _ = write!(s, "M  V30 {} {} {} {}", i + 1, t, b.begin + 1, b.end + 1);
+        if b.order == BondOrder::Double
+            && b.dir == molecule_optimizer_rs::core::molecule::BondDir::Either
+        {
+            let _ = write!(s, " CFG=2");
+        }
+        let _ = writeln!(s);
+    }
+    let _ = writeln!(s, "M  V30 END BOND");
+    let _ = writeln!(s, "M  V30 END CTAB");
+    let _ = writeln!(s, "M  END");
+    s
+}
+
+/// An SD file record of `mol` at `coords` with `extra` data fields, written through
+/// [`molblock`] so a structure of any size is written whole.
+pub(crate) fn sdf_record(mol: &Molecule, coords: &[[f64; 3]], extra: &[(&str, String)]) -> String {
+    use std::fmt::Write as _;
+    let mut s = molblock(mol, coords);
+    for (k, v) in mol.props.iter() {
+        let _ = writeln!(s, "> <{k}>\n{v}\n");
+    }
+    for (k, v) in extra {
+        let _ = writeln!(s, "> <{k}>\n{v}\n");
+    }
+    s.push_str("$$$$\n");
+    s
 }
 
 /// The unit every force field here reports its energy in.
@@ -620,6 +703,40 @@ fn usable(model: &Model3d) -> bool {
 pub(super) mod tests {
     use super::*;
     use crate::three_d::{GENERATE_STEPS, OPTIMIZE_STEPS, edit, geom};
+
+    /// A model beyond V2000's three-digit counts carries a V3000 molfile that reads back
+    /// whole, as do its MOL and SDF exports.
+    #[test]
+    fn a_large_model_is_written_as_v3000() {
+        let atoms: Vec<Atom3d> = (0..1200)
+            .map(|k| Atom3d {
+                element: "C".to_owned(),
+                pos: [k as f64 * 1.5, (k % 2) as f64, 0.0],
+            })
+            .collect();
+        let bonds: Vec<Bond3d> = (1..1200)
+            .map(|k| Bond3d {
+                begin: k - 1,
+                end: k,
+                order: 1,
+            })
+            .collect();
+        let mol = read(&crate::scan::energy::molfile(&atoms, &bonds)).expect("read");
+        let model = assemble(&mol, &mol.coords, ForceField::Uff, 0.0);
+        assert!(model.molfile.lines().nth(3).unwrap().ends_with("V3000"));
+        assert_eq!(
+            read(&model.molfile).expect("reads back").num_atoms(),
+            mol.num_atoms()
+        );
+        for format in [Export3d::Mol, Export3d::Sdf] {
+            let text = export(&model.molfile, format).expect("export");
+            assert!(text.contains("V3000"));
+            assert_eq!(
+                read(&text).expect("reads back").num_atoms(),
+                mol.num_atoms()
+            );
+        }
+    }
 
     /// A run whose energy keeps dropping has not stalled, however long it takes.
     #[test]

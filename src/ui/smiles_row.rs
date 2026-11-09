@@ -12,9 +12,6 @@ use chembuider_rs::{Config, Molecule};
 
 use crate::smiles;
 
-/// Atoms above which the SMILES is not computed: the panel would wait too long on it.
-const MAX_ATOMS: usize = 999;
-
 #[derive(Default)]
 struct State {
     /// The structures the result (or the running work) is for.
@@ -45,24 +42,20 @@ pub fn show(ui: &mut egui::Ui, mol: &Molecule, selection: &HashSet<u32>, config:
         state.generation += 1;
         state.copied = None;
         state.source = Some(target.clone());
-        if target.atoms.len() > MAX_ATOMS {
-            state.result = Some(Err(tn!("smiles.row.too_large", MAX_ATOMS)));
-        } else {
-            state.result = None;
-            let generation = state.generation;
-            let shared = shared.clone();
-            let config = config.clone();
-            let ctx = ui.ctx().clone();
-            std::thread::spawn(move || {
-                let result = smiles::compute(&target, &config);
-                if let Ok(mut state) = shared.lock()
-                    && state.generation == generation
-                {
-                    state.result = Some(result);
-                    ctx.request_repaint();
-                }
-            });
-        }
+        state.result = None;
+        let generation = state.generation;
+        let shared = shared.clone();
+        let config = config.clone();
+        let ctx = ui.ctx().clone();
+        std::thread::spawn(move || {
+            let result = smiles::compute(&target, &config);
+            if let Ok(mut state) = shared.lock()
+                && state.generation == generation
+            {
+                state.result = Some(result);
+                ctx.request_repaint();
+            }
+        });
     }
 
     let result = state.result.clone();

@@ -29,6 +29,6 @@ pub mod model;
 pub mod place;
 pub mod symop;
 
-pub use build::{BuildError, Built, MAX_ATOMS};
+pub use build::{BuildError, Built};
 pub use export::AssemblyExport;
 pub use model::{AssemblyState, Component, Design, Instance, Step};

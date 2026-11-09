@@ -20,10 +20,6 @@ use std::time::{Duration, Instant};
 use crate::assembly::build::Built;
 use crate::three_d::{self, Constraint, ForceField, Model3d, Relaxed, SoftCoreStage};
 
-/// The most atoms a build takes: what a V2000 molfile holds, and what a new document can lay
-/// out in 2D (see [`three_d::read::MAX_ATOMS`]).
-pub const MAX_ATOMS: usize = three_d::read::MAX_ATOMS;
-
 /// Minimiser iterations at each step, and for the last minimisation.
 const STEPS: u32 = 1000;
 
@@ -79,19 +75,9 @@ pub struct Run {
     finished: Option<Instant>,
 }
 
-/// Why a structure of `atoms` atoms in `molecules` molecules is refused, if it is.
-pub fn refusal(atoms: usize, molecules: usize) -> Option<String> {
-    if atoms > MAX_ATOMS {
-        Some(t!(
-            "softcore.too_many_atoms",
-            atoms = atoms,
-            max = MAX_ATOMS
-        ))
-    } else if molecules < 2 {
-        Some(t!("softcore.one_molecule").to_owned())
-    } else {
-        None
-    }
+/// Why a structure of `molecules` molecules is refused, if it is: fewer than two.
+pub fn refusal(molecules: usize) -> Option<String> {
+    (molecules < 2).then(|| t!("softcore.one_molecule").to_owned())
 }
 
 /// How many separate molecules `model` holds (bonded fragments).
@@ -121,7 +107,7 @@ impl Run {
         force_field: ForceField,
         constraints: Vec<Constraint>,
     ) -> Result<Run, String> {
-        if let Some(why) = refusal(model.atoms.len(), molecule_count(model)) {
+        if let Some(why) = refusal(molecule_count(model)) {
             return Err(why);
         }
         Self::start(
@@ -135,7 +121,7 @@ impl Run {
 
     /// Start building the assembly `built` under `force_field`.
     pub fn start_assembly(built: &Built, force_field: ForceField) -> Result<Run, String> {
-        if let Some(why) = refusal(built.atoms.len(), built.molecule_count()) {
+        if let Some(why) = refusal(built.molecule_count()) {
             return Err(why);
         }
         let molfile = crate::scan::energy::molfile(&built.atoms, &built.bonds);
@@ -386,8 +372,8 @@ pub(crate) mod tests {
         assert!(Run::start_model(&butane(), ForceField::Uff, Vec::new()).is_err());
         assert_eq!(molecule_count(&butane()), 1);
         assert_eq!(molecule_count(&overlapping_butanes()), 2);
-        assert!(refusal(MAX_ATOMS + 1, 2).is_some());
-        assert!(refusal(10, 2).is_none());
+        assert!(refusal(1).is_some());
+        assert!(refusal(2).is_none());
     }
 
     /// Cancel ends a build at once, with nothing built.

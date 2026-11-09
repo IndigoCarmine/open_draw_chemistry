@@ -17,10 +17,6 @@ use chembuider_rs::Molecule;
 
 use super::Model3d;
 
-/// The most atoms (hydrogens included) a file may hold. The 2D editor is no place for a
-/// protein, and bond perception and layout grow quickly with size.
-pub const MAX_ATOMS: usize = 999;
-
 /// The largest file read at all, before it is parsed.
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -94,8 +90,6 @@ pub enum Error {
     FileTooLarge,
     /// The file holds no atoms.
     Empty,
-    /// More than [`MAX_ATOMS`] atoms (the count found).
-    TooManyAtoms(usize),
     /// The file could not be read in this format.
     Unreadable(Format3d),
 }
@@ -108,11 +102,6 @@ impl fmt::Display for Error {
                 max = MAX_FILE_BYTES / (1024 * 1024)
             )),
             Error::Empty => f.write_str(t!("three_d.error.read_empty")),
-            Error::TooManyAtoms(n) => f.write_str(&t!(
-                "three_d.error.read_too_many_atoms",
-                count = n,
-                max = MAX_ATOMS
-            )),
             Error::Unreadable(format) => f.write_str(&t!(
                 "three_d.error.read_unreadable",
                 format = format.description()
@@ -128,28 +117,8 @@ pub fn read(format: Format3d, text: &str) -> Result<Opened3d, Error> {
     if text.trim().is_empty() {
         return Err(Error::Empty);
     }
-    // Refuse a protein before seconds go into perceiving its bonds.
-    if let Some(n) = quick_atom_count(format, text)
-        && n > MAX_ATOMS
-    {
-        return Err(Error::TooManyAtoms(n));
-    }
     let records = record_count(format, text);
     engine::read(format, text, records)
-}
-
-/// The atom count a PDB or XYZ file declares, read cheaply without parsing it.
-fn quick_atom_count(format: Format3d, text: &str) -> Option<usize> {
-    match format {
-        Format3d::Xyz => text.lines().next()?.trim().parse().ok(),
-        Format3d::Pdb => Some(
-            text.lines()
-                .take_while(|l| !l.starts_with("ENDMDL"))
-                .filter(|l| l.starts_with("ATOM  ") || l.starts_with("HETATM"))
-                .count(),
-        ),
-        _ => None,
-    }
 }
 
 /// How many structures the file holds (at least one).
@@ -267,7 +236,7 @@ mod engine {
     use molecule_optimizer_rs::perception::{self, SanitizeOptions};
     use molecule_optimizer_rs::{Atom, BondOrder as Order, Molecule as Structure};
 
-    use super::{Error, Format3d, MAX_ATOMS, Opened3d};
+    use super::{Error, Format3d, Opened3d};
     use crate::three_d::{self, ForceField, Model3d};
 
     pub fn read(format: Format3d, text: &str, records: usize) -> Result<Opened3d, Error> {
@@ -291,9 +260,6 @@ mod engine {
         let atoms = mol.num_atoms();
         if atoms == 0 {
             return Err(Error::Empty);
-        }
-        if atoms > MAX_ATOMS {
-            return Err(Error::TooManyAtoms(atoms));
         }
         if mol.coords.iter().flatten().any(|c| !c.is_finite()) {
             return Err(unreadable());
@@ -473,15 +439,6 @@ mod tests {
         assert_eq!(
             record_count(Format3d::Pdb, "MODEL        1\nENDMDL\nMODEL        2\n"),
             2
-        );
-    }
-
-    #[test]
-    fn a_huge_file_is_refused_before_parsing() {
-        let text = format!("{}\n\n", MAX_ATOMS + 1);
-        assert_eq!(
-            read(Format3d::Xyz, &text),
-            Err(Error::TooManyAtoms(MAX_ATOMS + 1))
         );
     }
 

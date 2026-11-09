@@ -231,19 +231,6 @@ fn bad_files_are_reported() {
     );
     std::fs::remove_dir_all(dir).ok();
 
-    let mut big = format!("{}\nmany\n", read::MAX_ATOMS + 1);
-    for i in 0..=read::MAX_ATOMS {
-        big += &format!("C {}.0 0.0 0.0\n", i * 2);
-    }
-    let (dir, big) = temp_file("big.xyz", &big);
-    let err = io::load_3d(&big).unwrap_err();
-    assert!(
-        matches!(err, io::Error::Structure3d(read::Error::TooManyAtoms(_))),
-        "{err:?}"
-    );
-    assert!(err.to_string().contains("原子が多すぎます"));
-    std::fs::remove_dir_all(dir).ok();
-
     assert!(matches!(
         io::load_3d(Path::new("does/not/exist.pdb")),
         Err(io::Error::Io(_))
