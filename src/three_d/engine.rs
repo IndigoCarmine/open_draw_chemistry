@@ -84,6 +84,74 @@ pub(crate) fn shared_builder(force_field: ForceField) -> std::sync::Arc<dyn Forc
     std::sync::Arc::from(builder(force_field))
 }
 
+/// [`shared_builder`] whose every force field also holds `constraints`: a conformer search
+/// builds its one field itself, without restraints, so they ride in on the builder.
+pub(crate) fn restrained_builder(
+    force_field: ForceField,
+    constraints: &[Constraint],
+    atoms: usize,
+) -> std::sync::Arc<dyn ForceFieldBuilder> {
+    let held = restraints(constraints, atoms);
+    if held.is_empty() {
+        return shared_builder(force_field);
+    }
+    std::sync::Arc::new(Restrained {
+        inner: builder(force_field),
+        held,
+    })
+}
+
+/// A builder adding `held` to the restraints it is asked for (see [`restrained_builder`]).
+struct Restrained {
+    inner: Box<dyn ForceFieldBuilder>,
+    held: Vec<ff::Constraint>,
+}
+
+impl Restrained {
+    fn with(&self, constraints: &[ff::Constraint]) -> Vec<ff::Constraint> {
+        self.held.iter().chain(constraints).cloned().collect()
+    }
+}
+
+impl ForceFieldBuilder for Restrained {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn build(
+        &self,
+        mol: &Molecule,
+        constraints: &[ff::Constraint],
+    ) -> molecule_optimizer_rs::Result<ff::ContribForceField> {
+        self.inner.build(mol, &self.with(constraints))
+    }
+
+    fn build_dyn(
+        &self,
+        mol: &Molecule,
+        constraints: &[ff::Constraint],
+    ) -> molecule_optimizer_rs::Result<Box<dyn Field>> {
+        self.inner.build_dyn(mol, &self.with(constraints))
+    }
+}
+
+/// The restraints' own penalty (kcal/mol) at `coords` of `mol`: what a minimisation under
+/// [`restrained_builder`] adds to the molecule's energy.
+pub(crate) fn restraint_energy(
+    mol: &Molecule,
+    constraints: &[Constraint],
+    coords: &[[f64; 3]],
+) -> f64 {
+    let held = restraints(constraints, mol.num_atoms());
+    if held.is_empty() || coords.len() != mol.num_atoms() {
+        return 0.0;
+    }
+    let mut penalty = ff::ContribForceField::new(mol.num_atoms(), 3);
+    penalty.add_constraints(&mol.coords, &held);
+    let flat: Vec<f64> = coords.iter().flatten().copied().collect();
+    penalty.energy(&flat)
+}
+
 /// `force_field` set up for `mol` holding `constraints`, or [`Error::ForceField`] when it has
 /// no type or parameter for one of its atoms.
 pub(crate) fn field(

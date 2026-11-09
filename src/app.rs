@@ -455,7 +455,9 @@ impl OpenDrawApp {
     /// picture is taken after that view is next drawn ([`OpenDrawApp::write_view_image`]), so
     /// it is switched to.
     fn export_view_image(&mut self, view: ViewMode) {
-        let Some(doc) = self.active_doc_mut() else { return };
+        let Some(doc) = self.active_doc_mut() else {
+            return;
+        };
         let (shown, suffix) = match view {
             ViewMode::ThreeD => (doc.three_d.shown_model().is_some(), "3d"),
             ViewMode::Assembly => (

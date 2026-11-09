@@ -229,7 +229,8 @@ pub fn optimize_with(
 /// `scan::energy`).
 pub(crate) use engine::{
     ENERGY_UNIT, Relaxed, SoftCoreStage, assemble, descend, field, fragment_count,
-    model as checked_model, read as read_molfile, relax, sdf_record, shared_builder, soft_core,
+    model as checked_model, read as read_molfile, relax, restrained_builder, restraint_energy,
+    sdf_record, soft_core,
 };
 
 #[cfg(test)]
