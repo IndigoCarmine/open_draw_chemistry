@@ -948,6 +948,47 @@ pub(super) mod tests {
         assert!(m.energy < 5.0, "unrelaxed: E {}", m.energy);
     }
 
+    /// trans-But-2-ene turned about its C=C in the 3D view stays cis through Optimize, and an
+    /// embedding of the edited model (as the ETKDG conformer search does) keeps it cis too.
+    #[test]
+    fn a_double_bond_turned_by_hand_stays_turned() {
+        let mut drawing = chembuider_rs::Molecule::default();
+        let points = [[0.0, 0.0], [1.3, -0.75], [2.6, 0.0], [3.9, -0.75]];
+        let atoms: Vec<_> = points
+            .iter()
+            .map(|&p| drawing.add_atom("C".to_owned(), p, 0))
+            .collect();
+        drawing.add_bond(atoms[0], atoms[1], chembuider_rs::BondOrder::Single);
+        drawing.add_bond(atoms[1], atoms[2], chembuider_rs::BondOrder::Double);
+        drawing.add_bond(atoms[2], atoms[3], chembuider_rs::BondOrder::Single);
+        let mut m =
+            crate::three_d::generate(&drawing, &chembuider_rs::Config::default(), ForceField::Uff)
+                .expect("generate");
+        let torsion = |m: &Model3d| {
+            let c = edit::coords(m);
+            geom::dihedral(c[0], c[1], c[2], c[3])
+        };
+        assert!(torsion(&m).abs() > 160.0, "drawn trans: {}", torsion(&m));
+
+        let mut edit3d = crate::three_d::Edit3d::default();
+        edit3d.picked = vec![1, 2];
+        assert!(edit::rotate_picked(&mut m, &mut edit3d, 180.0));
+        assert!(torsion(&m).abs() < 20.0, "turned: {}", torsion(&m));
+
+        let relaxed = optimize(&m.molfile, ForceField::Uff, OPTIMIZE_STEPS, &[]).unwrap();
+        assert!(
+            torsion(&relaxed).abs() < 20.0,
+            "optimised: {}",
+            torsion(&relaxed)
+        );
+        let embedded = generate(&m.molfile, ForceField::Uff, GENERATE_STEPS).unwrap();
+        assert!(
+            torsion(&embedded).abs() < 20.0,
+            "re-embedded: {}",
+            torsion(&embedded)
+        );
+    }
+
     /// Where the Optimize tests start: acetamide, sodium acetate and ibuprofen as OpenBabel's
     /// builder once placed them.
     const OPTIMIZE_STARTS: [(&str, ForceField, &str); 9] = {
