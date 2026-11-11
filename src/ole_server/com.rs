@@ -629,9 +629,11 @@ pub(crate) unsafe fn read_stream(stg: &IStorage, name: PCWSTR) -> Option<Vec<u8>
 
 // ── Presentation ──
 
-/// The structure's picture (a blank one for an empty object). The caller owns the handle.
+/// The structure's picture, in the app's drawing style so it looks as the canvas does (a
+/// blank one for an empty object). The caller owns the handle.
 fn picture(mol: Option<&Molecule>) -> HENHMETAFILE {
-    if let Some(h) = mol.and_then(chembuider_rs::molecule::image::molecule_to_emf) {
+    let style = super::picture_style();
+    if let Some(h) = mol.and_then(|m| chembuider_rs::molecule::image::molecule_to_emf_styled(m, &style)) {
         return HENHMETAFILE(h as *mut core::ffi::c_void);
     }
     // An empty object: a light grey frame, 2.54 × 1.27 cm, so there is something to

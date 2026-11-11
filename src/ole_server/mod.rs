@@ -31,6 +31,20 @@ use std::time::{Duration, Instant};
 /// is where to see what a container asked for.
 static LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
 
+/// The drawing style of the pictures containers show for embedded objects.
+static PICTURE_STYLE: OnceLock<chembuider_rs::config::StyleConfig> = OnceLock::new();
+
+/// Draw the embedded objects' pictures in `style` (the canvas's, so a container shows what the
+/// editor does). Set once, when the app has read its configuration.
+pub fn set_picture_style(style: chembuider_rs::config::StyleConfig) {
+    let _ = PICTURE_STYLE.set(style);
+}
+
+/// The style set with [`set_picture_style`], the default one before that.
+pub fn picture_style() -> chembuider_rs::config::StyleConfig {
+    PICTURE_STYLE.get().cloned().unwrap_or_default()
+}
+
 /// Log to `path` from now on (appending).
 pub fn open_log(path: &std::path::Path) {
     if let Ok(file) = std::fs::OpenOptions::new()

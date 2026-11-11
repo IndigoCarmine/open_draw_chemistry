@@ -19,6 +19,7 @@
 use std::mem::ManuallyDrop;
 
 use chembuider_rs::Molecule;
+use chembuider_rs::config::StyleConfig;
 use chembuider_rs::molecule::{cdx, image, ole};
 use windows::Win32::Foundation::{
     DATA_S_SAMEFORMATETC, DV_E_FORMATETC, DV_E_TYMED, E_INVALIDARG, E_NOTIMPL, E_POINTER,
@@ -50,11 +51,12 @@ const CF_METAFILEPICT: u16 = 3;
 /// ChemDraw's class id, {41BA6D21-A02E-11CE-8FD9-0020AFD1F20C}.
 const CHEMDRAW_CLSID: GUID = GUID::from_u128(0x41ba6d21_a02e_11ce_8fd9_0020afd1f20c);
 
-/// Put a copy of `mol` on the clipboard: an embeddable ChemDraw object for Office, the pictures,
-/// the CDX for ChemDraw and `app_text` (the widget's own JSON) for pasting back here.
-pub fn set(mol: &Molecule, app_text: &str) -> Result<()> {
+/// Put a copy of `mol` on the clipboard: an embeddable ChemDraw object for Office, the pictures
+/// (the vector one in `style`, the canvas's, so it looks as the canvas does), the CDX for
+/// ChemDraw and `app_text` (the widget's own JSON) for pasting back here.
+pub fn set(mol: &Molecule, style: &StyleConfig, app_text: &str) -> Result<()> {
     ensure_ole()?;
-    let object: IDataObject = DataObject::new(mol, app_text).into();
+    let object: IDataObject = DataObject::new(mol, style, app_text).into();
     // Another program may hold the clipboard open for a moment; OleSetClipboard does not wait.
     let mut tries = 0;
     loop {
@@ -132,13 +134,13 @@ struct DataObject {
 }
 
 impl DataObject {
-    fn new(mol: &Molecule, app_text: &str) -> Self {
+    fn new(mol: &Molecule, style: &StyleConfig, app_text: &str) -> Self {
         let registered =
             |name: &str| unsafe { RegisterClipboardFormatW(&HSTRING::from(name)) } as u16;
         let descriptor = ole::object_descriptor(mol);
         // The picture at the object's size (ChemDraw's scale), so Word and PowerPoint, which
         // size the pasted object from different places, both show it as ChemDraw would.
-        let emf = image::molecule_to_emf(mol).map(|h| {
+        let emf = image::molecule_to_emf_styled(mol, style).map(|h| {
             let emf = Emf(HENHMETAFILE(h as _));
             match descriptor_extent(&descriptor).and_then(|(cx, cy)| with_frame(emf.0, cx, cy)) {
                 Some(scaled) => Emf(scaled),
@@ -464,7 +466,7 @@ mod tests {
     #[test]
     fn offers_embed_source_as_a_chemdraw_storage() {
         unsafe { OleInitialize(None) }.unwrap();
-        let object: IDataObject = DataObject::new(&benzene(), "chembuilder-mol:{}").into();
+        let object: IDataObject = DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
         let format = format_of(&object, "Embed Source");
         assert_eq!(format.tymed, TYMED_ISTORAGE.0 as u32);
         unsafe {
@@ -481,7 +483,7 @@ mod tests {
     #[test]
     fn offers_the_formats_paste_back_and_chemdraw_read() {
         unsafe { OleInitialize(None) }.unwrap();
-        let object: IDataObject = DataObject::new(&benzene(), "chembuilder-mol:{}").into();
+        let object: IDataObject = DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
         for name in [
             "ChemBuilder Molecule",
             "ChemDraw Interchange Format",
@@ -504,7 +506,7 @@ mod tests {
     #[test]
     fn offers_both_metafile_pictures() {
         unsafe { OleInitialize(None) }.unwrap();
-        let object: IDataObject = DataObject::new(&benzene(), "chembuilder-mol:{}").into();
+        let object: IDataObject = DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
         for (format, tymed) in [
             (CF_ENHMETAFILE, TYMED_ENHMF),
             (CF_METAFILEPICT, TYMED_MFPICT),
@@ -533,7 +535,7 @@ mod tests {
         let mut editor = chembuider_rs::ChemStructEditor::default();
         editor.molecule = mol.clone();
         let text = editor.copy_to_string().unwrap();
-        set(&mol, &text).unwrap();
+        set(&mol, &StyleConfig::default(), &text).unwrap();
 
         // The widget's paste reads our own format back from the flushed clipboard.
         let mut target = chembuider_rs::ChemStructEditor::default();
