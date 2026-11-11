@@ -466,7 +466,8 @@ mod tests {
     #[test]
     fn offers_embed_source_as_a_chemdraw_storage() {
         unsafe { OleInitialize(None) }.unwrap();
-        let object: IDataObject = DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
+        let object: IDataObject =
+            DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
         let format = format_of(&object, "Embed Source");
         assert_eq!(format.tymed, TYMED_ISTORAGE.0 as u32);
         unsafe {
@@ -483,7 +484,8 @@ mod tests {
     #[test]
     fn offers_the_formats_paste_back_and_chemdraw_read() {
         unsafe { OleInitialize(None) }.unwrap();
-        let object: IDataObject = DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
+        let object: IDataObject =
+            DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
         for name in [
             "ChemBuilder Molecule",
             "ChemDraw Interchange Format",
@@ -506,7 +508,8 @@ mod tests {
     #[test]
     fn offers_both_metafile_pictures() {
         unsafe { OleInitialize(None) }.unwrap();
-        let object: IDataObject = DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
+        let object: IDataObject =
+            DataObject::new(&benzene(), &StyleConfig::default(), "chembuilder-mol:{}").into();
         for (format, tymed) in [
             (CF_ENHMETAFILE, TYMED_ENHMF),
             (CF_METAFILEPICT, TYMED_MFPICT),
