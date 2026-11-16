@@ -575,6 +575,57 @@ pub(crate) fn assemble(
     }
 }
 
+/// `model` without the atoms flagged in `remove`, and with a hydrogen bonded to each atom of
+/// `caps` (an index into `model`'s atoms, of one that stays) at the position given. The atoms
+/// left keep their order and the new hydrogens follow them; everything else a molfile carries
+/// (bond orders, formal charges) is kept. The energy is the old one: the caller has it
+/// recomputed.
+pub(crate) fn without_atoms(
+    model: &Model3d,
+    remove: &[bool],
+    caps: &[(usize, [f64; 3])],
+) -> Result<Model3d, Error> {
+    use molecule_optimizer_rs::Atom;
+
+    let old = read(&model.molfile)?;
+    if old.num_atoms() != model.atoms.len() || remove.len() != model.atoms.len() {
+        return Err(Error::Unreadable);
+    }
+    // Kekulé, as a molfile is written: aromaticity is perceived again on the atoms left.
+    let old = molecule_optimizer_rs::perception::kekulized_copy(&old).unwrap_or(old);
+    let mut next = Molecule::new();
+    next.name = old.name.clone();
+    next.props = old.props.clone();
+    let mut map: Vec<Option<usize>> = vec![None; remove.len()];
+    for (i, atom) in old.atoms().iter().enumerate() {
+        if !remove[i] {
+            let mut kept = Atom::new(atom.atomic_num);
+            kept.formal_charge = atom.formal_charge;
+            map[i] = Some(next.add_atom(kept, model.atoms[i].pos));
+        }
+    }
+    for bond in old.bonds() {
+        if let (Some(begin), Some(end)) = (map[bond.begin], map[bond.end]) {
+            let added = next.add_bond(begin, end, bond.order);
+            next.bond_mut(added).dir = bond.dir;
+        }
+    }
+    for &(atom, pos) in caps {
+        if let Some(atom) = map.get(atom).copied().flatten() {
+            let hydrogen = next.add_atom(Atom::new(1), pos);
+            next.add_bond(atom, hydrogen, BondOrder::Single);
+        }
+    }
+    if next.num_atoms() == 0 {
+        return Err(Error::Empty);
+    }
+    let coords = next.coords.clone();
+    // Read back as any model's molfile is, so the atoms are perceived as an optimisation or an
+    // export will perceive them.
+    let mol = read(&molblock(&next, &coords))?;
+    Ok(assemble(&mol, &coords, model.force_field, model.energy))
+}
+
 /// A V2000 count field is three digits wide; beyond it a molblock is written as V3000.
 const V2000_MAX: usize = 999;
 
