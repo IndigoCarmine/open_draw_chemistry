@@ -724,6 +724,11 @@ impl OpenDrawApp {
                     self.status = message.to_owned();
                 }
             }
+            Command::RotateSelection => {
+                if let Some(doc) = self.active_doc_mut() {
+                    doc.editor.open_rotate_input();
+                }
+            }
             Command::Bracket(usage) => {
                 if let Some(doc) = self.active_doc_mut() {
                     self.status = crate::ui::palette::bracket_selection(&mut doc.editor, usage);
@@ -1003,6 +1008,7 @@ impl OpenDrawApp {
             can_undo,
             can_redo,
             cleaning: editor.is_some_and(|e| e.is_cleaning()),
+            can_rotate: editor.is_some_and(|e| e.can_rotate_selection()),
             show_properties: self.show_properties,
             check_updates: self.check_updates,
             view: self.view,

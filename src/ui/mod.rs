@@ -132,6 +132,8 @@ pub enum Command {
     About,
     /// Open the 断片の管理 window.
     ManageFragments,
+    /// 回転…: open the editor's angle box, which turns the selection by the angle typed.
+    RotateSelection,
     /// Switch the active document's editor to the arrow tool of this kind.
     ArrowTool(chembuider_rs::molecule::ArrowKind),
     /// Switch the active document's editor to the text tool (reaction conditions).

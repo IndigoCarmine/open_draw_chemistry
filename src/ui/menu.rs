@@ -20,6 +20,8 @@ pub struct MenuState<'a> {
     pub can_undo: bool,
     pub can_redo: bool,
     pub cleaning: bool,
+    /// The drawing has a selection that can be turned (two atoms or more).
+    pub can_rotate: bool,
     pub show_properties: bool,
     /// The update check at startup is on.
     pub check_updates: bool,
@@ -240,6 +242,16 @@ pub fn menu_bar(
                 "",
                 state.has_document,
                 Command::InsertIupacName,
+                out,
+            );
+            ui.separator();
+            // The shortcut is the editor's own (chembuider-rs reads it on the canvas).
+            item(
+                ui,
+                t!("menu.structure.rotate"),
+                "Ctrl+R",
+                state.can_rotate,
+                Command::RotateSelection,
                 out,
             );
             ui.separator();

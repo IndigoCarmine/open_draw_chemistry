@@ -136,6 +136,7 @@ cleanup = "Organizar"
 stop_cleanup = "Parar organização"
 copy_iupac = "Copiar nome IUPAC"
 insert_iupac = "Inserir nome IUPAC como texto"
+rotate = "Girar…"
 bracket_sru = "Colocar entre colchetes (unidade repetitiva)"
 bracket_kind = "Tipo e forma dos colchetes"
 
