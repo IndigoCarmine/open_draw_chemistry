@@ -136,6 +136,7 @@ stop_cleanup = "Detener limpieza"
 copy_iupac = "Copiar nombre IUPAC"
 insert_iupac = "Insertar nombre IUPAC como texto"
 rotate = "Girar…"
+flip = "Voltear sobre el enlace de unión"
 bracket_sru = "Encerrar entre corchetes (unidad repetitiva)"
 bracket_kind = "Tipo y forma de corchetes"
 

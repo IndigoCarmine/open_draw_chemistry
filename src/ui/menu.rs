@@ -22,6 +22,8 @@ pub struct MenuState<'a> {
     pub cleaning: bool,
     /// The drawing has a selection that can be turned (two atoms or more).
     pub can_rotate: bool,
+    /// The drawing's selection can be flipped: exactly one bond leaves it.
+    pub can_flip: bool,
     pub show_properties: bool,
     /// The update check at startup is on.
     pub check_updates: bool,
@@ -252,6 +254,14 @@ pub fn menu_bar(
                 "Ctrl+R",
                 state.can_rotate,
                 Command::RotateSelection,
+                out,
+            );
+            item(
+                ui,
+                t!("menu.structure.flip"),
+                "Ctrl+Shift+F",
+                state.can_flip,
+                Command::FlipSelection,
                 out,
             );
             ui.separator();
