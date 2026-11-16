@@ -6,7 +6,9 @@
 //! In the viewer: drag to orbit, Shift+drag or right/middle drag to pan, wheel to zoom,
 //! double-click empty space to reframe. Click atoms to pick them (up to four: distance, angle,
 //! dihedral), click a bond to pick its two ends, right-click an atom to fix it in place. With a
-//! rotatable bond picked the wheel turns it instead of zooming.
+//! rotatable bond picked the wheel turns it instead of zooming. Ctrl+click an atom (or a bond,
+//! for both ends) or Ctrl+drag a rectangle to select atoms for deletion; Delete removes them, or
+//! the picked atoms when none are selected.
 
 use egui::{Color32, Pos2, RichText, Stroke, vec2};
 use serde::{Deserialize, Serialize};
@@ -32,7 +34,11 @@ const PICK_COLOR: (f32, f32, f32) = (0.98, 0.45, 0.22);
 const ANCHOR_COLOR: (f32, f32, f32) = (0.20, 0.75, 0.98);
 pub(super) const CLASH_COLOR: (f32, f32, f32) = (1.0, 0.12, 0.12);
 const MOVING_COLOR: (f32, f32, f32) = (0.55, 0.62, 0.80);
+/// The atoms selected for deletion.
+const SELECT_COLOR: (f32, f32, f32) = (0.92, 0.35, 0.85);
 
+const SELECT_STROKE: Color32 = Color32::from_rgb(0xE8, 0x6A, 0xD8);
+const SELECT_ON_LIGHT: Color32 = Color32::from_rgb(0x9A, 0x23, 0x8C);
 const PICK_STROKE: Color32 = Color32::from_rgb(0xF5, 0x8A, 0x4F);
 const ANCHOR_STROKE: Color32 = Color32::from_rgb(0x4C, 0xC2, 0xF5);
 pub(super) const CLASH_STROKE: Color32 = Color32::from_rgb(0xFF, 0x4D, 0x4D);
@@ -63,6 +69,10 @@ pub struct View3d {
     /// The value box: the atoms it was filled for, and its text.
     #[serde(skip)]
     value: (Vec<usize>, String),
+    /// The selection rectangle being dragged with Ctrl held: where it started and where the
+    /// pointer is.
+    #[serde(skip)]
+    band: Option<(Pos2, Pos2)>,
 }
 
 impl View3d {
@@ -273,6 +283,7 @@ struct Ink {
     muted: Color32,
     warn: Color32,
     pick: Color32,
+    select: Color32,
     anchor: Color32,
     clash: Color32,
 }
@@ -284,6 +295,7 @@ impl Ink {
                 muted: dark::MUTED,
                 warn: theme::ORANGE_ON_DARK,
                 pick: PICK_STROKE,
+                select: SELECT_STROKE,
                 anchor: ANCHOR_STROKE,
                 clash: CLASH_STROKE,
             }
@@ -292,6 +304,7 @@ impl Ink {
                 muted: theme::light::MUTED,
                 warn: theme::ORANGE_TEXT,
                 pick: theme::ORANGE_TEXT,
+                select: SELECT_ON_LIGHT,
                 anchor: ANCHOR_ON_LIGHT,
                 clash: CLASH_ON_LIGHT,
             }
@@ -314,8 +327,14 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
     viewport.set_style(view.style);
     viewport.set_background(theme::DARK_SURFACE);
     viewport.sync(Some(model));
+    // With Ctrl held a drag draws the selection rectangle instead of turning the view.
+    if !editable {
+        view.band = None;
+    }
+    viewport.claim_drag(editable && (view.band.is_some() || ui.input(|i| i.modifiers.command)));
 
     let picked = job.edit.picked.clone();
+    let selected: Vec<usize> = job.edit.selected.iter().copied().collect();
     let anchor = job.edit.anchor;
     let rotor = editable
         .then(|| edit::picked_rotor(model, &picked))
@@ -333,6 +352,7 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
         exclusive_groups(&[
             (&anchor_list, ANCHOR_COLOR),
             (&picked, PICK_COLOR),
+            (&selected, SELECT_COLOR),
             (&clash_atoms, CLASH_COLOR),
             (&moving, MOVING_COLOR),
         ]),
@@ -373,17 +393,69 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
         &clashes,
         view.numbers,
     );
+    // The rectangle follows the drag; letting go selects the atoms inside it.
+    let mut banded = Vec::new();
+    if let Some(delta) = frame.drag {
+        let (origin, pointer) = ui.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()));
+        view.band = match view.band {
+            Some((start, end)) => Some((start, pointer.unwrap_or(end + delta))),
+            None => origin.map(|start| (start, pointer.unwrap_or(start + delta))),
+        };
+    } else if let Some((start, end)) = view.band.take() {
+        let area = egui::Rect::from_two_pos(start, end);
+        banded = atoms_inside(&model, area, |p| viewport.project(frame.rect, p));
+    }
+    if let Some((start, end)) = view.band {
+        ui.painter_at(frame.rect).rect(
+            egui::Rect::from_two_pos(start, end),
+            0.0,
+            SELECT_STROKE.gamma_multiply(0.15),
+            Stroke::new(1.0, SELECT_STROKE),
+            egui::StrokeKind::Inside,
+        );
+    }
     if editable {
-        react(ui, doc, &frame, rotor);
+        react(ui, doc, &frame, rotor, banded);
     }
 }
 
-/// Act on this frame's clicks and wheel.
-fn react(ui: &egui::Ui, doc: &mut Document, frame: &Frame3d, rotor: Option<(usize, usize)>) {
+/// The atoms of `model` drawn inside `area` of the screen, in front of the camera.
+fn atoms_inside(
+    model: &Model3d,
+    area: egui::Rect,
+    project: impl Fn([f64; 3]) -> Option<Pos2>,
+) -> Vec<usize> {
+    model
+        .atoms
+        .iter()
+        .enumerate()
+        .filter(|(_, atom)| project(atom.pos).is_some_and(|p| area.contains(p)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Act on this frame's clicks and wheel, and on the atoms a selection rectangle took in.
+fn react(
+    ui: &egui::Ui,
+    doc: &mut Document,
+    frame: &Frame3d,
+    rotor: Option<(usize, usize)>,
+    banded: Vec<usize>,
+) {
     let Some((model, edit3d)) = doc.three_d.model_and_edit() else {
         return;
     };
+    edit3d.selected.extend(banded);
+    // With Ctrl a click selects for deletion instead of picking for a measurement.
+    let select = ui.input(|i| i.modifiers.command);
     match frame.primary {
+        Some(Hit::Atom(i)) if select => edit3d.toggle_selected(i),
+        Some(Hit::Bond(b)) if select => {
+            if let Some(bond) = model.bonds.get(b) {
+                edit3d.toggle_selected_bond(bond.begin, bond.end);
+            }
+        }
+        Some(Hit::Nothing) if select => {}
         Some(Hit::Atom(i)) => {
             edit3d.toggle_pick(i);
             edit3d.report = None;
@@ -394,7 +466,10 @@ fn react(ui: &egui::Ui, doc: &mut Document, frame: &Frame3d, rotor: Option<(usiz
                 edit3d.report = None;
             }
         }
-        Some(Hit::Nothing) => edit3d.clear_picks(),
+        Some(Hit::Nothing) => {
+            edit3d.clear_picks();
+            edit3d.selected.clear();
+        }
         None => {}
     }
     match frame.secondary {
@@ -522,20 +597,23 @@ fn overlay(
     }
 }
 
-/// Undo/redo and clearing the selection from the keyboard while the pointer is over the panel.
+/// Undo/redo, deleting the selected atoms and clearing the selection from the keyboard while
+/// the pointer is over the panel.
 fn shortcuts(ui: &egui::Ui, doc: &mut Document) {
     use egui::{Key, KeyboardShortcut, Modifiers};
     if doc.three_d.is_running() {
         return;
     }
-    let (redo, undo, escape) = ui.input_mut(|i| {
+    let (redo, undo, escape, delete) = ui.input_mut(|i| {
         let redo = i.consume_shortcut(&KeyboardShortcut::new(
             Modifiers::COMMAND | Modifiers::SHIFT,
             Key::Z,
         )) || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Y));
         let undo = i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Z));
         let escape = i.consume_key(Modifiers::NONE, Key::Escape);
-        (redo, undo, escape)
+        let delete = i.consume_key(Modifiers::NONE, Key::Delete)
+            || i.consume_key(Modifiers::NONE, Key::Backspace);
+        (redo, undo, escape, delete)
     });
     if let Some((model, edit3d)) = doc.three_d.model_and_edit() {
         if undo {
@@ -544,8 +622,13 @@ fn shortcuts(ui: &egui::Ui, doc: &mut Document) {
         if redo {
             history(model, edit3d, true);
         }
+        if delete {
+            let targets = edit3d.delete_targets();
+            edit::delete_atoms(model, edit3d, &targets);
+        }
         if escape {
             edit3d.clear_picks();
+            edit3d.selected.clear();
         }
     }
 }
@@ -574,6 +657,7 @@ fn tools(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, ink: &Ink) {
     };
     history_row(ui, model, edit3d);
     selection_row(ui, model, edit3d, ink);
+    delete_row(ui, model, edit3d, ink);
     value_row(ui, model, edit3d, &mut view.value, ink);
     if let Some((text, problem)) = &edit3d.report {
         let color = if *problem { ink.warn } else { ink.muted };
@@ -685,6 +769,40 @@ fn selection_row(ui: &mut egui::Ui, model: &Model3d, edit3d: &mut three_d::Edit3
             }
         }
     });
+}
+
+/// The atoms Delete would remove — those selected for it, else the picked ones — with the
+/// buttons that widen them to their whole molecules and delete them.
+fn delete_row(ui: &mut egui::Ui, model: &mut Model3d, edit3d: &mut three_d::Edit3d, ink: &Ink) {
+    let targets = edit3d.delete_targets();
+    if targets.is_empty() {
+        return;
+    }
+    let mut delete = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(tn!("three_d.view.marked", targets.len()))
+                .size(11.0)
+                .color(ink.select),
+        );
+        if ui
+            .small_button(t!("three_d.view.select_molecule"))
+            .on_hover_text(t!("three_d.view.select_molecule_tip"))
+            .clicked()
+        {
+            edit3d.selected = edit::molecules_of(model, targets.iter().copied());
+        }
+        if !edit3d.selected.is_empty() && ui.small_button(t!("three_d.view.clear")).clicked() {
+            edit3d.selected.clear();
+        }
+        delete = ui
+            .small_button(t!("three_d.view.delete"))
+            .on_hover_text(t!("three_d.view.delete_tip"))
+            .clicked();
+    });
+    if delete {
+        edit::delete_atoms(model, edit3d, &targets);
+    }
 }
 
 /// The measurement over the picked atoms, the box to set it, and the bond-turning buttons.
@@ -1177,6 +1295,31 @@ fn muted(text: &str) -> RichText {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rectangle_takes_in_the_atoms_drawn_inside_it() {
+        let model = Model3d {
+            atoms: [0.0, 1.0, 2.0, 3.0]
+                .into_iter()
+                .map(|x| three_d::Atom3d {
+                    element: "C".to_owned(),
+                    pos: [x, 0.0, 0.0],
+                })
+                .collect(),
+            bonds: Vec::new(),
+            force_field: ForceField::default(),
+            energy: 0.0,
+            energy_unit: String::new(),
+            formula: "C4".to_owned(),
+            molfile: String::new(),
+        };
+        // Ten points to the ångström; the atom at x = 2 is behind the camera.
+        let project = |p: [f64; 3]| (p[0] != 2.0).then(|| egui::pos2(p[0] as f32 * 10.0, 5.0));
+        let area = egui::Rect::from_two_pos(egui::pos2(25.0, 10.0), egui::pos2(5.0, 0.0));
+        assert_eq!(atoms_inside(&model, area, project), vec![1]);
+        let all = egui::Rect::from_two_pos(egui::pos2(-5.0, 0.0), egui::pos2(35.0, 10.0));
+        assert_eq!(atoms_inside(&model, all, project), vec![0, 1, 3]);
+    }
 
     #[test]
     fn typed_values_accept_full_width_input() {
