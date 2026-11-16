@@ -38,7 +38,7 @@ pub fn copy(editor: &ChemStructEditor, ctx: &egui::Context) -> bool {
         let Some(text) = editor.copy_to_string() else {
             return false;
         };
-        if clipboard::set(&editor.molecule, &text).is_ok() {
+        if clipboard::set(&editor.molecule, &editor.config.style, &text).is_ok() {
             return true;
         }
         // OLE unavailable (e.g. the thread is not an OLE apartment): the widget's own copy still

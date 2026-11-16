@@ -170,6 +170,8 @@ impl OpenDrawApp {
         // User shortcuts from the working directory when present; fragments are the built-in
         // ones plus the user's, from their config directory.
         app.config = Config::load();
+        // Embedded objects' pictures are drawn as the canvas draws.
+        crate::ole_server::set_picture_style(app.config.style.clone());
         app.reload_fragments();
         for file in &files {
             app.open_path(file);
