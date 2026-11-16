@@ -16,6 +16,14 @@ cancel = "Cancel"
 # A placeholder shown on a menu item whose feature is not built yet.
 coming_soon = "Coming soon"
 
+[fatal]
+# The message box shown when the app cannot open its window. {app} is the app's name.
+startup = "{app} could not start."
+# Added when no graphics device could be used. Keep the API names as they are.
+graphics = "No usable graphics device was found. The app draws with Direct3D 12, Vulkan or OpenGL: update the graphics driver, then start the app again."
+# {error} is the technical reason (in English).
+details = "Details: {error}"
+
 [language]
 # The 表示 (View) menu's language submenu and the tooltip of the toolbar's globe button.
 # Translators: keep the English word too, so the menu can be found by someone who cannot read

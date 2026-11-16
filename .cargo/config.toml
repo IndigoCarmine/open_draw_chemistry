@@ -1,0 +1,9 @@
+# Link the C runtime into the executable on Windows (/MT) instead of loading VCRUNTIME140.dll.
+# That DLL is not part of Windows, and a DLL in the import table that is missing stops the
+# process before `main`, so the app could not even say what was wrong (see `src/fatal.rs` for
+# the failures it can report). What is left in the import table ships with Windows 10 and later.
+#
+# The Windows packages still copy the Visual C++ runtime beside the executable
+# (scripts/stage-windows.sh); it is no longer loaded.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

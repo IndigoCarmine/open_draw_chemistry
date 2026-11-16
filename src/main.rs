@@ -4,9 +4,12 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use open_draw_chemistry::ole_server::{self, script::Script};
 use open_draw_chemistry::{APP_NAME, OpenDrawApp, acauda};
+
+mod fatal;
 
 /// The window/taskbar icon, embedded at compile time — the source tree is not
 /// present on an end user's machine, so it cannot be loaded from disk.
@@ -42,7 +45,20 @@ fn native_options() -> eframe::NativeOptions {
     }
 }
 
-fn main() -> eframe::Result<()> {
+/// A failed start gets an error screen of its own (see `fatal`): the window that would have
+/// shown it never opened.
+fn main() -> ExitCode {
+    fatal::install_panic_hook();
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            fatal::startup_failed(&error);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> eframe::Result<()> {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
     // Registration writes translated verbs to the registry: use the OS language for them (the
