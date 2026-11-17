@@ -702,6 +702,10 @@ redo_none = "Nothing to redo"
 # {label} names the step, e.g. "Change bond length".
 redo_tip = "Redo: {label} (Ctrl+Y)"
 pick_hint = "Click atoms to select them (up to 4) · click a bond to select both ends · right-click an atom to fix it · Ctrl+click or Ctrl+drag to select atoms to delete"
+# Shown when the 3D model has several molecules (not bonded to each other).
+move_hint = "Shift+drag a molecule to move it · Alt+drag to turn it"
+# Shown when a drag tries to move the molecule that holds the fixed atom.
+molecule_fixed = "The molecule holding the fixed atom stays where it is; right-click the atom to release it"
 # Label of the row for deleting atoms: {n} atoms would be deleted.
 marked = { one = "{n} atom to delete", other = "{n} atoms to delete" }
 # Small button: extend the atoms to delete to the whole molecules they belong to.
@@ -803,6 +807,7 @@ undo_bond_angle = "Change bond angle"
 undo_dihedral = "Change dihedral"
 undo_rotate = "Rotate bond"
 undo_delete = "Delete atoms"
+undo_move_molecule = "Move molecule"
 # Status after setting a value.
 value_set = "Set"
 # {degrees} is a signed number such as +15.
@@ -813,6 +818,8 @@ distance_already = "Already {distance} Å"
 # {achieved}, {near} and {far} are numbers in Å.
 distance_unreachable = "Couldn't reach it: {achieved} Å (reachable by turning bonds: {near}–{far} Å)"
 distance_set = "Set to {distance} Å"
+# Status after dragging one molecule of the 3D model to another place.
+molecule_moved = "Moved the molecule"
 # Status after deleting atoms from the 3D model.
 deleted = { one = "Deleted {n} atom", other = "Deleted {n} atoms" }
 # {text} is the previous status message; {n} hydrogens were added.

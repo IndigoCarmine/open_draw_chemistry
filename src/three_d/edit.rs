@@ -290,6 +290,17 @@ impl Edit3d {
         self.revision += 1;
     }
 
+    /// Move `model`'s atoms again within the step [`Edit3d::apply`] last began, without another
+    /// history entry: a drag in the viewer is many small moves and one step.
+    fn adjust(&mut self, model: &mut Model3d, coords: &[Vec3]) {
+        if coords.len() != model.atoms.len() {
+            return;
+        }
+        set_coords(model, coords);
+        self.energy_stale = true;
+        self.revision += 1;
+    }
+
     /// Replace `model` by `next` — the same structure with atoms taken out or added — as one
     /// undoable step called `label`. `map` gives each old atom's index in `next` (`None`: it
     /// is gone); the picks, the fixed atom and the restraints follow it, and those naming an
@@ -703,6 +714,92 @@ pub fn molecules_of(model: &Model3d, atoms: impl IntoIterator<Item = usize>) -> 
         }
     }
     found
+}
+
+/// The molecule holding `atom`, when the model has another one to move it against: `None` for
+/// a model that is one molecule (and for an atom it does not have).
+pub fn separate_molecule(model: &Model3d, atom: usize) -> Option<Vec<usize>> {
+    let molecule = molecules_of(model, [atom]);
+    (!molecule.is_empty() && molecule.len() < model.atoms.len())
+        .then(|| molecule.into_iter().collect())
+}
+
+/// What a drag in the viewer does to the molecule it holds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Motion {
+    /// Shift it by this much (Å).
+    Move(Vec3),
+    /// Turn it about its centroid by this rotation matrix (rows).
+    Turn([Vec3; 3]),
+}
+
+/// One drag of a molecule in the viewer: the atoms it moves, and its place in the history.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoleculeDrag {
+    atoms: Vec<usize>,
+    /// The edit revision this drag's last move left. While it is still the current one the
+    /// next move joins the same history step; after anything else (an undo, say) it begins
+    /// a new one.
+    step: Option<u64>,
+}
+
+impl MoleculeDrag {
+    /// A drag of `atoms` (a molecule of the model, see [`separate_molecule`]).
+    pub fn new(atoms: Vec<usize>) -> Self {
+        Self { atoms, step: None }
+    }
+
+    pub fn atoms(&self) -> &[usize] {
+        &self.atoms
+    }
+}
+
+/// Move the molecule `drag` holds by `motion`, leaving every other atom where it is. All the
+/// moves of one drag make one undoable step. Returns whether the geometry changed.
+pub fn drag_molecule(
+    model: &mut Model3d,
+    edit: &mut Edit3d,
+    drag: &mut MoleculeDrag,
+    motion: Motion,
+) -> bool {
+    let mut next = coords(model);
+    if drag.atoms.is_empty() || drag.atoms.iter().any(|&a| a >= next.len()) {
+        return false;
+    }
+    match motion {
+        Motion::Move(by) => {
+            for &a in &drag.atoms {
+                next[a] = geom::add(next[a], by);
+            }
+        }
+        Motion::Turn(rotation) => {
+            let sum = drag
+                .atoms
+                .iter()
+                .fold([0.0; 3], |sum, &a| geom::add(sum, next[a]));
+            let centre = geom::scale(sum, 1.0 / drag.atoms.len() as f64);
+            for &a in &drag.atoms {
+                let v = geom::sub(next[a], centre);
+                next[a] = geom::add(centre, rotation.map(|row| geom::dot(row, v)));
+            }
+        }
+    }
+    if drag.step == Some(edit.revision) {
+        edit.adjust(model, &next);
+    } else {
+        edit.apply(model, next, t!("three_d.edit.undo_move_molecule"));
+    }
+    drag.step = Some(edit.revision);
+    edit.report = None;
+    true
+}
+
+/// The drag `drag` ended: report it, with the clashes the molecule's new place makes.
+pub fn finish_molecule_drag(model: &Model3d, edit: &mut Edit3d, drag: &MoleculeDrag) {
+    if drag.step.is_some() {
+        let text = clash_note(model, t!("three_d.edit.molecule_moved"));
+        edit.report = Some((text, false));
+    }
 }
 
 /// Delete `atoms` from the model as one undoable step (see [`Removal`] for the hydrogens that
@@ -1402,6 +1499,232 @@ mod tests {
             assert_consistent(&m);
         }
         assert!(!edit.can_redo());
+    }
+
+    #[test]
+    fn only_a_model_of_several_molecules_has_one_to_move() {
+        // One molecule: nothing to move it against, whichever atom is grabbed.
+        let single = model();
+        for atom in 0..single.atoms.len() {
+            assert_eq!(separate_molecule(&single, atom), None);
+        }
+        let pair = ethanol_and_water();
+        assert_eq!(separate_molecule(&pair, 10), Some(vec![9, 10, 11]));
+        assert_eq!(separate_molecule(&pair, 4).map(|m| m.len()), Some(9));
+        assert_eq!(separate_molecule(&pair, 99), None);
+        // Deleting the water leaves one molecule again.
+        let mut rest = pair.clone();
+        assert!(delete_atoms(&mut rest, &mut Edit3d::default(), &[9]));
+        assert_eq!(rest.atoms.len(), 9);
+        assert_eq!(separate_molecule(&rest, 0), None);
+    }
+
+    /// Pentane as the 3D view generates it: C0–C4 in a chain, then their hydrogens.
+    fn pentane() -> Model3d {
+        let drawn = include_str!("../../tests/data/drawn/pentane.mol");
+        let m = crate::three_d::generate_from_molfile(drawn, ForceField::Uff).expect("pentane");
+        assert_eq!(m.formula, "C5H12");
+        assert!(m.atoms[..5].iter().all(|a| a.element == "C"));
+        m
+    }
+
+    /// The molecules of `m`, each as its sorted atoms.
+    fn molecules(m: &Model3d) -> BTreeSet<Vec<usize>> {
+        (0..m.atoms.len())
+            .map(|a| molecules_of(m, [a]).into_iter().collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_molecule_cut_in_two_by_a_deletion_is_two_molecules() {
+        let mut m = pentane();
+        let whole = m.clone();
+        let mut edit = Edit3d::default();
+        assert_eq!(molecules(&m).len(), 1);
+        assert_eq!(separate_molecule(&m, 0), None);
+
+        // The middle carbon goes: an ethane on each side of the gap.
+        assert!(delete_atoms(&mut m, &mut edit, &[2]));
+        assert_consistent(&m);
+        assert_eq!(m.formula, "C4H12");
+        let parts = molecules(&m);
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        let left = separate_molecule(&m, 0).expect("the left ethane is a molecule to move");
+        let right = separate_molecule(&m, 3).expect("the right one too");
+        assert_eq!(left.len(), 8);
+        assert_eq!(right.len(), 8);
+        assert!(left.contains(&1) && right.contains(&2));
+        assert!(left.iter().all(|a| !right.contains(a)));
+        // Whichever atom it is taken by, hydrogens and the new ones included.
+        for atom in 0..m.atoms.len() {
+            let found = separate_molecule(&m, atom).expect("every atom has a molecule");
+            assert!(found == left || found == right, "atom {atom}");
+        }
+        // "Whole molecule" widens a selection to one of them only.
+        assert_eq!(molecules_of(&m, [0]).len(), 8);
+        // The force fields see two molecules too, and still take the model.
+        let read = crate::three_d::read_molfile(&m.molfile).expect("reads");
+        assert_eq!(crate::three_d::engine::fragment_count(&read), 2);
+        for ff in ForceField::ALL {
+            assert!(crate::three_d::energy(&m, ff).is_ok(), "{ff}");
+        }
+
+        // One of them is dragged away; the other stays.
+        let split = coords(&m);
+        let mut drag = MoleculeDrag::new(right.clone());
+        let by = Motion::Move([0.0, 0.0, 3.0]);
+        assert!(drag_molecule(&mut m, &mut edit, &mut drag, by));
+        for (i, (now, was)) in coords(&m).iter().zip(&split).enumerate() {
+            let expected = if right.contains(&i) { 3.0 } else { 0.0 };
+            assert!(
+                geom::distance(geom::sub(*now, *was), [0.0, 0.0, expected]) < 1e-12,
+                "atom {i}"
+            );
+        }
+        assert_consistent(&m);
+        let dragged = m.clone();
+
+        // Undo the drag, then the deletion: one molecule again, with nothing to take hold of.
+        assert!(edit.undo(&mut m).is_some());
+        assert_eq!(coords(&m), split);
+        assert!(separate_molecule(&m, 0).is_some());
+        assert!(edit.undo(&mut m).is_some());
+        assert_eq!(m, whole);
+        assert_eq!(separate_molecule(&m, 0), None);
+        // Redo cuts it again.
+        assert!(edit.redo(&mut m).is_some());
+        assert_eq!(separate_molecule(&m, 0), Some(left));
+        assert_eq!(separate_molecule(&m, 3), Some(right));
+        assert!(edit.redo(&mut m).is_some());
+        assert_eq!(m, dragged);
+    }
+
+    #[test]
+    fn a_deletion_that_cuts_nothing_off_leaves_one_molecule() {
+        // The end of a chain.
+        let mut m = pentane();
+        assert!(delete_atoms(&mut m, &mut Edit3d::default(), &[4]));
+        assert_eq!(m.formula, "C4H10");
+        assert_eq!(molecules(&m).len(), 1);
+        assert_eq!(separate_molecule(&m, 0), None);
+        // A ring opened: still one chain.
+        let drawn = include_str!("../../tests/data/drawn/benzene.mol");
+        let mut ring = crate::three_d::generate_from_molfile(drawn, ForceField::Uff).unwrap();
+        assert!(delete_atoms(&mut ring, &mut Edit3d::default(), &[0]));
+        assert_consistent(&ring);
+        assert_eq!(molecules(&ring).len(), 1);
+        assert_eq!(separate_molecule(&ring, 0), None);
+    }
+
+    #[test]
+    fn a_dragged_molecule_moves_alone_and_is_undone_as_one_step() {
+        let mut m = ethanol_and_water();
+        let original = coords(&m);
+        let mut edit = Edit3d::default();
+        let mut drag = MoleculeDrag::new(separate_molecule(&m, 10).unwrap());
+        assert_eq!(drag.atoms(), [9, 10, 11]);
+        // Three frames of one drag.
+        for by in [[0.5, 0.0, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, -2.0]] {
+            assert!(drag_molecule(
+                &mut m,
+                &mut edit,
+                &mut drag,
+                Motion::Move(by)
+            ));
+        }
+        let moved = coords(&m);
+        for (i, (now, was)) in moved.iter().zip(&original).enumerate() {
+            let shift = geom::sub(*now, *was);
+            let expected = if i >= 9 { [1.0, 1.0, -2.0] } else { [0.0; 3] };
+            assert!(
+                geom::distance(shift, expected) < 1e-12,
+                "atom {i}: {shift:?}"
+            );
+        }
+        assert_consistent(&m);
+        assert!(edit.energy_stale);
+        finish_molecule_drag(&m, &mut edit, &drag);
+        assert!(edit.report.is_some());
+
+        // One step back takes the whole drag back, and one forward redoes it.
+        assert_eq!(
+            edit.undo(&mut m).as_deref(),
+            Some(t!("three_d.edit.undo_move_molecule"))
+        );
+        assert_eq!(coords(&m), original);
+        assert_consistent(&m);
+        assert!(!edit.can_undo());
+        assert!(edit.redo(&mut m).is_some());
+        assert_eq!(coords(&m), moved);
+
+        // A second drag is a second step.
+        let mut again = MoleculeDrag::new(separate_molecule(&m, 0).unwrap());
+        let up = Motion::Move([0.0, 3.0, 0.0]);
+        assert!(drag_molecule(&mut m, &mut edit, &mut again, up));
+        assert!(edit.undo(&mut m).is_some());
+        assert_eq!(coords(&m), moved);
+        assert!(edit.undo(&mut m).is_some());
+        assert_eq!(coords(&m), original);
+    }
+
+    #[test]
+    fn a_drag_interrupted_by_an_undo_begins_a_new_step() {
+        let mut m = ethanol_and_water();
+        let original = coords(&m);
+        let mut edit = Edit3d::default();
+        let mut drag = MoleculeDrag::new(vec![9, 10, 11]);
+        let by = Motion::Move([1.0, 0.0, 0.0]);
+        assert!(drag_molecule(&mut m, &mut edit, &mut drag, by));
+        edit.undo(&mut m);
+        // The drag goes on: what it moves now can be undone too.
+        assert!(drag_molecule(&mut m, &mut edit, &mut drag, by));
+        assert!(drag_molecule(&mut m, &mut edit, &mut drag, by));
+        assert!((m.atoms[9].pos[0] - original[9][0] - 2.0).abs() < 1e-12);
+        assert!(edit.undo(&mut m).is_some());
+        assert_eq!(coords(&m), original);
+        assert!(!edit.can_undo());
+
+        // Atoms the model does not have are not moved, and nothing is recorded.
+        let mut stray = MoleculeDrag::new(vec![11, 12]);
+        assert!(!drag_molecule(&mut m, &mut edit, &mut stray, by));
+        let mut none = MoleculeDrag::new(Vec::new());
+        assert!(!drag_molecule(&mut m, &mut edit, &mut none, by));
+        assert_eq!(coords(&m), original);
+        assert!(!edit.can_undo());
+        edit.report = None;
+        finish_molecule_drag(&m, &mut edit, &stray);
+        assert_eq!(edit.report, None);
+    }
+
+    #[test]
+    fn a_turned_molecule_keeps_its_shape_and_its_centroid() {
+        let mut m = ethanol_and_water();
+        let original = coords(&m);
+        let mut edit = Edit3d::default();
+        let water = [9, 10, 11];
+        let centroid = |c: &[Vec3]| {
+            let sum = water.iter().fold([0.0; 3], |s, &a| geom::add(s, c[a]));
+            geom::scale(sum, 1.0 / 3.0)
+        };
+        // A quarter turn about z: x → y.
+        let quarter = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let mut drag = MoleculeDrag::new(water.to_vec());
+        let turn = Motion::Turn(quarter);
+        assert!(drag_molecule(&mut m, &mut edit, &mut drag, turn));
+        let turned = coords(&m);
+        assert!(geom::distance(centroid(&turned), centroid(&original)) < 1e-12);
+        for (a, b) in [(9, 10), (9, 11), (10, 11)] {
+            let now = geom::distance(turned[a], turned[b]);
+            let was = geom::distance(original[a], original[b]);
+            assert!((now - was).abs() < 1e-12);
+        }
+        let arm = |c: &[Vec3]| geom::sub(c[10], centroid(c));
+        let (now, was) = (arm(&turned), arm(&original));
+        assert!(geom::distance(now, [-was[1], was[0], was[2]]) < 1e-12);
+        assert_eq!(turned[..9], original[..9], "the ethanol stays");
+        assert_consistent(&m);
+        assert!(edit.undo(&mut m).is_some());
+        assert_eq!(coords(&m), original);
     }
 
     #[test]

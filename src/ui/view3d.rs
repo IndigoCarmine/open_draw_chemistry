@@ -8,7 +8,8 @@
 //! dihedral), click a bond to pick its two ends, right-click an atom to fix it in place. With a
 //! rotatable bond picked the wheel turns it instead of zooming. Ctrl+click an atom (or a bond,
 //! for both ends) or Ctrl+drag a rectangle to select atoms for deletion; Delete removes them, or
-//! the picked atoms when none are selected.
+//! the picked atoms when none are selected. In a model of several molecules, Shift+drag one to
+//! move it against the others and Alt+drag it to turn it, as in the assembly view.
 
 use egui::{Color32, Pos2, RichText, Stroke, vec2};
 use serde::{Deserialize, Serialize};
@@ -16,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use super::Command;
 use super::interactions::{self as contacts, ShowInteractions};
 use super::viewport3d::{Frame3d, Hit, Style3d, Viewport3d, exclusive_groups};
+use crate::assembly::place::{self, ScreenBasis};
 use crate::document::Document;
 use crate::theme::{self, dark};
-use crate::three_d::edit::{self, Measure, Target};
+use crate::three_d::edit::{self, Measure, MoleculeDrag, Motion, Target};
 use crate::three_d::geom::{self, Clash, Goal};
 use crate::three_d::interactions::{self, Interactions};
 use crate::three_d::{self, Constraint, Export3d, ForceField, JobState, Model3d};
@@ -73,6 +75,56 @@ pub struct View3d {
     /// pointer is.
     #[serde(skip)]
     band: Option<(Pos2, Pos2)>,
+    /// What was under the pointer when the primary button went down, or is now while it is
+    /// up: where a drag starts.
+    #[serde(skip)]
+    hover: Option<Hit>,
+    /// The molecule being dragged with Shift or Alt held.
+    #[serde(skip)]
+    grab: Option<Grab>,
+}
+
+/// A molecule taken hold of in the viewer.
+struct Grab {
+    /// The atom it was taken by: the drag is scaled at its depth, so it stays under the pointer.
+    handle: usize,
+    drag: MoleculeDrag,
+    /// It holds the fixed atom, so it stays where it is.
+    held: bool,
+}
+
+/// The molecule a primary drag starting on `hover` would take hold of, with the atom it is
+/// taken by: one of several molecules of `model`, with Shift or Alt held and Ctrl (which
+/// selects) not. `None` leaves the drag to the camera or the selection rectangle, as it always
+/// is for a model of one molecule.
+fn grab_reach(
+    model: &Model3d,
+    hover: Option<Hit>,
+    modifiers: egui::Modifiers,
+) -> Option<(usize, Vec<usize>)> {
+    if modifiers.command || !(modifiers.shift || modifiers.alt) {
+        return None;
+    }
+    let handle = match hover? {
+        Hit::Atom(atom) => atom,
+        Hit::Bond(bond) => model.bonds.get(bond)?.begin,
+        Hit::Nothing => return None,
+    };
+    Some((handle, edit::separate_molecule(model, handle)?))
+}
+
+/// What a drag of `delta` points does to the molecule held, seen through `basis`: it follows
+/// the pointer in the plane of the screen, or with `turn` (Alt) turns like a trackball.
+fn drag_motion(basis: &ScreenBasis, delta: egui::Vec2, turn: bool) -> Option<Motion> {
+    let delta = [f64::from(delta.x), f64::from(delta.y)];
+    if delta == [0.0, 0.0] {
+        return None;
+    }
+    Some(if turn {
+        Motion::Turn(place::drag_rotation(basis, delta))
+    } else {
+        Motion::Move(place::drag_translation(basis, delta))
+    })
 }
 
 impl View3d {
@@ -327,15 +379,38 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
     viewport.set_style(view.style);
     viewport.set_background(theme::DARK_SURFACE);
     viewport.sync(Some(model));
-    // With Ctrl held a drag draws the selection rectangle instead of turning the view.
+    // With Ctrl held a drag draws the selection rectangle instead of turning the view; with
+    // Shift or Alt, one that starts on a molecule among several moves that molecule.
     if !editable {
         view.band = None;
+        view.grab = None;
     }
-    viewport.claim_drag(editable && (view.band.is_some() || ui.input(|i| i.modifiers.command)));
+    let modifiers = ui.input(|i| i.modifiers);
+    let reach = (editable && view.band.is_none() && view.grab.is_none())
+        .then(|| grab_reach(model, view.hover, modifiers))
+        .flatten();
+    viewport.claim_drag(
+        editable
+            && (view.band.is_some() || view.grab.is_some() || modifiers.command || reach.is_some()),
+    );
 
     let picked = job.edit.picked.clone();
     let selected: Vec<usize> = job.edit.selected.iter().copied().collect();
     let anchor = job.edit.anchor;
+    // A molecule holding the fixed atom is not moved.
+    let held = matches!((&reach, anchor), (Some((_, atoms)), Some(a)) if atoms.contains(&a));
+    // The molecule in hand, or the one a drag from here would take: shown as what moves.
+    let carried: Vec<usize> = match (&view.grab, &reach) {
+        (Some(grab), _) if !grab.held => grab.drag.atoms().to_vec(),
+        (None, Some((_, atoms))) if !held => atoms.clone(),
+        _ => Vec::new(),
+    };
+    let cursor = match (&view.grab, &reach) {
+        (Some(grab), _) if !grab.held => Some(egui::CursorIcon::Grabbing),
+        (None, Some(_)) if !held => Some(egui::CursorIcon::Grab),
+        (None, None) => None,
+        _ => Some(egui::CursorIcon::NotAllowed),
+    };
     let rotor = editable
         .then(|| edit::picked_rotor(model, &picked))
         .flatten();
@@ -355,6 +430,7 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
             (&selected, SELECT_COLOR),
             (&clash_atoms, CLASH_COLOR),
             (&moving, MOVING_COLOR),
+            (&carried, MOVING_COLOR),
         ]),
         rotor.map(|(b, c)| vec![(b, c)]).unwrap_or_default(),
     );
@@ -393,17 +469,47 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
         &clashes,
         view.numbers,
     );
-    // The rectangle follows the drag; letting go selects the atoms inside it.
+    let (down, pressed) = ui.input(|i| (i.pointer.primary_down(), i.pointer.primary_pressed()));
+    if !down || pressed {
+        view.hover = frame.hovered;
+    }
+    if let Some(cursor) = cursor {
+        ui.ctx().set_cursor_icon(cursor);
+    }
+    // A drag carries the molecule it took hold of; otherwise the rectangle follows it, and
+    // letting go selects the atoms inside it.
     let mut banded = Vec::new();
+    let mut motion = None;
+    let mut released = None;
     if let Some(delta) = frame.drag {
-        let (origin, pointer) = ui.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()));
-        view.band = match view.band {
-            Some((start, end)) => Some((start, pointer.unwrap_or(end + delta))),
-            None => origin.map(|start| (start, pointer.unwrap_or(start + delta))),
-        };
-    } else if let Some((start, end)) = view.band.take() {
-        let area = egui::Rect::from_two_pos(start, end);
-        banded = atoms_inside(&model, area, |p| viewport.project(frame.rect, p));
+        if view.grab.is_none()
+            && let Some((handle, atoms)) = reach
+        {
+            view.grab = Some(Grab {
+                handle,
+                drag: MoleculeDrag::new(atoms),
+                held,
+            });
+        }
+        if let Some(grab) = &view.grab {
+            motion = model.atoms.get(grab.handle).and_then(|atom| {
+                let basis = viewport.screen_basis(frame.rect, atom.pos);
+                drag_motion(&basis, delta, modifiers.alt)
+            });
+        } else {
+            let (origin, pointer) =
+                ui.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()));
+            view.band = match view.band {
+                Some((start, end)) => Some((start, pointer.unwrap_or(end + delta))),
+                None => origin.map(|start| (start, pointer.unwrap_or(start + delta))),
+            };
+        }
+    } else {
+        released = view.grab.take();
+        if let Some((start, end)) = view.band.take() {
+            let area = egui::Rect::from_two_pos(start, end);
+            banded = atoms_inside(&model, area, |p| viewport.project(frame.rect, p));
+        }
     }
     if let Some((start, end)) = view.band {
         ui.painter_at(frame.rect).rect(
@@ -415,7 +521,31 @@ fn viewer(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, render_state
         );
     }
     if editable {
+        carry(doc, view.grab.as_mut(), motion, released);
         react(ui, doc, &frame, rotor, banded);
+    }
+}
+
+/// Move the molecule in hand by this frame's `motion` (or say why it stays), and close the
+/// drag that was `released`.
+fn carry(
+    doc: &mut Document,
+    grab: Option<&mut Grab>,
+    motion: Option<Motion>,
+    released: Option<Grab>,
+) {
+    let Some((model, edit3d)) = doc.three_d.model_and_edit() else {
+        return;
+    };
+    if let (Some(grab), Some(motion)) = (grab, motion) {
+        if grab.held {
+            edit3d.report = Some((t!("three_d.view.molecule_fixed").to_owned(), true));
+        } else {
+            edit::drag_molecule(model, edit3d, &mut grab.drag, motion);
+        }
+    }
+    if let Some(grab) = released {
+        edit::finish_molecule_drag(model, edit3d, &grab.drag);
     }
 }
 
@@ -657,6 +787,9 @@ fn tools(ui: &mut egui::Ui, doc: &mut Document, view: &mut View3d, ink: &Ink) {
     };
     history_row(ui, model, edit3d);
     selection_row(ui, model, edit3d, ink);
+    if edit::separate_molecule(model, 0).is_some() {
+        ui.label(ink.muted(t!("three_d.view.move_hint")));
+    }
     delete_row(ui, model, edit3d, ink);
     value_row(ui, model, edit3d, &mut view.value, ink);
     if let Some((text, problem)) = &edit3d.report {
@@ -1295,6 +1428,342 @@ fn muted(text: &str) -> RichText {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Atoms 0–1 bonded (and, with `second`, 2–3 as another molecule).
+    fn molecules(second: bool) -> Model3d {
+        let count: usize = if second { 4 } else { 2 };
+        Model3d {
+            atoms: (0..count)
+                .map(|i| three_d::Atom3d {
+                    element: "C".to_owned(),
+                    pos: [i as f64 * 1.5, 0.0, 0.0],
+                })
+                .collect(),
+            bonds: (0..count / 2)
+                .map(|i| three_d::Bond3d {
+                    begin: 2 * i,
+                    end: 2 * i + 1,
+                    order: 1,
+                })
+                .collect(),
+            force_field: ForceField::default(),
+            energy: 0.0,
+            energy_unit: String::new(),
+            formula: String::new(),
+            molfile: String::new(),
+        }
+    }
+
+    fn held_keys() -> Vec<egui::Modifiers> {
+        use egui::Modifiers;
+        vec![
+            Modifiers::NONE,
+            Modifiers::SHIFT,
+            Modifiers::ALT,
+            Modifiers::COMMAND,
+            Modifiers::SHIFT | Modifiers::ALT,
+            Modifiers::SHIFT | Modifiers::COMMAND,
+            Modifiers::ALT | Modifiers::COMMAND,
+        ]
+    }
+
+    /// A model of one molecule never hands a drag to the molecule under it, whatever is held:
+    /// its drags stay the camera's and the selection rectangle's.
+    #[test]
+    fn a_single_molecule_is_never_taken_hold_of() {
+        let single = molecules(false);
+        for modifiers in held_keys() {
+            for hover in [
+                None,
+                Some(Hit::Nothing),
+                Some(Hit::Atom(0)),
+                Some(Hit::Atom(1)),
+                Some(Hit::Bond(0)),
+            ] {
+                assert_eq!(grab_reach(&single, hover, modifiers), None);
+            }
+        }
+    }
+
+    #[test]
+    fn shift_or_alt_takes_hold_of_the_molecule_under_the_pointer() {
+        use egui::Modifiers;
+        let pair = molecules(true);
+        for modifiers in held_keys() {
+            let grabs = !modifiers.command && (modifiers.shift || modifiers.alt);
+            assert_eq!(
+                grab_reach(&pair, Some(Hit::Atom(3)), modifiers),
+                grabs.then(|| (3, vec![2, 3])),
+                "{modifiers:?}"
+            );
+            // Empty space, and no pointer over the view, leave the drag alone.
+            assert_eq!(grab_reach(&pair, Some(Hit::Nothing), modifiers), None);
+            assert_eq!(grab_reach(&pair, None, modifiers), None);
+        }
+        // A bond is a handle too, by its first atom.
+        assert_eq!(
+            grab_reach(&pair, Some(Hit::Bond(0)), Modifiers::SHIFT),
+            Some((0, vec![0, 1]))
+        );
+        assert_eq!(
+            grab_reach(&pair, Some(Hit::Bond(7)), Modifiers::SHIFT),
+            None
+        );
+        assert_eq!(grab_reach(&pair, Some(Hit::Atom(9)), Modifiers::ALT), None);
+    }
+
+    /// Pentane as the 3D view generates it (C0–C4 in a chain, then the hydrogens).
+    fn pentane() -> Model3d {
+        let drawn = include_str!("../../tests/data/drawn/pentane.mol");
+        three_d::generate_from_molfile(drawn, ForceField::Uff).expect("pentane")
+    }
+
+    /// A molecule a deletion cut in two is taken hold of as either half; before the deletion
+    /// and after undoing it there is nothing to take hold of.
+    #[test]
+    fn the_halves_of_a_molecule_cut_in_two_are_taken_hold_of() {
+        use egui::Modifiers;
+        let mut model = pentane();
+        let mut edit3d = three_d::Edit3d::default();
+        let hold = |model: &Model3d, hover| grab_reach(model, Some(hover), Modifiers::SHIFT);
+        assert_eq!(hold(&model, Hit::Atom(0)), None);
+
+        assert!(edit::delete_atoms(&mut model, &mut edit3d, &[2]));
+        let (handle, left) = hold(&model, Hit::Atom(0)).expect("the left half");
+        assert_eq!((handle, left.len()), (0, 8));
+        let (_, right) = hold(&model, Hit::Atom(3)).expect("the right half");
+        assert_eq!(right.len(), 8);
+        assert!(left.iter().all(|a| !right.contains(a)));
+        // By any of its atoms (the hydrogens put on the cut bonds too) and any of its bonds.
+        for atom in 0..model.atoms.len() {
+            let (_, held) = hold(&model, Hit::Atom(atom)).expect("a half");
+            assert!(held == left || held == right, "atom {atom}");
+        }
+        for bond in 0..model.bonds.len() {
+            let (handle, held) = hold(&model, Hit::Bond(bond)).expect("a half");
+            assert!(held.contains(&handle) && held.len() == 8, "bond {bond}");
+        }
+
+        assert!(edit3d.undo(&mut model).is_some());
+        assert_eq!(hold(&model, Hit::Atom(0)), None);
+        assert!(edit3d.redo(&mut model).is_some());
+        assert_eq!(hold(&model, Hit::Atom(0)), Some((0, left)));
+    }
+
+    /// The viewer on a real GPU target, fed pointer and key events a frame at a time.
+    struct Rig {
+        ctx: egui::Context,
+        render_state: RenderState,
+        view: View3d,
+        doc: Document,
+        time: f64,
+    }
+
+    impl Rig {
+        const SCREEN: egui::Rect = egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(800.0, 600.0));
+
+        /// `None` on a machine without a GPU.
+        fn showing(model: Model3d) -> Option<Rig> {
+            fn block_on<F: std::future::Future>(future: F) -> F::Output {
+                let mut future = std::pin::pin!(future);
+                let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+                loop {
+                    if let std::task::Poll::Ready(out) = future.as_mut().poll(&mut context) {
+                        return out;
+                    }
+                    std::thread::yield_now();
+                }
+            }
+            let render_state = block_on(RenderState::create(
+                &eframe::egui_wgpu::WgpuConfiguration::default(),
+                &eframe::wgpu::Instance::default(),
+                None,
+                eframe::egui_wgpu::RendererOptions::default(),
+            ))
+            .ok()?;
+            let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+            doc.three_d = three_d::Job::with_model(model, &doc.editor.molecule);
+            let mut rig = Rig {
+                ctx: egui::Context::default(),
+                render_state,
+                view: View3d::default(),
+                doc,
+                time: 0.0,
+            };
+            rig.frame(Vec::new(), egui::Modifiers::NONE);
+            Some(rig)
+        }
+
+        /// One frame of the viewer (and of the job's polling, as the app does).
+        fn frame(&mut self, events: Vec<egui::Event>, modifiers: egui::Modifiers) {
+            self.time += 0.05;
+            let raw = egui::RawInput {
+                screen_rect: Some(Self::SCREEN),
+                time: Some(self.time),
+                events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                    .chain(events)
+                    .collect(),
+                ..Default::default()
+            };
+            let (doc, view, render_state) = (&mut self.doc, &mut self.view, &self.render_state);
+            let mut output = self.ctx.run_ui(raw, |ui| {
+                viewer_area(ui, "test", Some(doc), view, Some(render_state));
+            });
+            output.textures_delta.clear();
+            self.doc.three_d.poll();
+        }
+
+        fn model(&self) -> &Model3d {
+            self.doc.three_d.model().expect("a model")
+        }
+
+        /// Where `atom` is drawn.
+        fn at(&self, atom: usize) -> Pos2 {
+            let viewport = self.view.viewport.as_ref().expect("shown");
+            viewport
+                .project(Self::SCREEN, self.model().atoms[atom].pos)
+                .expect("in front of the camera")
+        }
+
+        fn point(&mut self, pos: Pos2, modifiers: egui::Modifiers) {
+            self.frame(vec![egui::Event::PointerMoved(pos)], modifiers);
+            self.frame(Vec::new(), modifiers);
+        }
+
+        fn button(&mut self, pos: Pos2, pressed: bool, modifiers: egui::Modifiers) {
+            let event = egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+            };
+            self.frame(vec![event], modifiers);
+        }
+
+        fn click(&mut self, atom: usize, modifiers: egui::Modifiers) {
+            let pos = self.at(atom);
+            self.point(pos, modifiers);
+            self.button(pos, true, modifiers);
+            self.button(pos, false, modifiers);
+            self.frame(Vec::new(), egui::Modifiers::NONE);
+        }
+
+        fn key(&mut self, key: egui::Key) {
+            let event = egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            };
+            self.frame(vec![event], egui::Modifiers::NONE);
+            self.frame(Vec::new(), egui::Modifiers::NONE);
+        }
+
+        /// Drag from `atom` with `modifiers` held; the atoms that moved.
+        fn drag(&mut self, atom: usize, modifiers: egui::Modifiers) -> Vec<usize> {
+            let before = edit::coords(self.model());
+            let from = self.at(atom);
+            self.point(from, modifiers);
+            self.button(from, true, modifiers);
+            for step in 1..=6 {
+                self.point(from + vec2(8.0 * step as f32, 3.0 * step as f32), modifiers);
+            }
+            self.button(from + vec2(48.0, 18.0), false, modifiers);
+            self.frame(Vec::new(), egui::Modifiers::NONE);
+            let after = edit::coords(self.model());
+            assert_eq!(before.len(), after.len());
+            (0..after.len())
+                .filter(|&i| before[i] != after[i])
+                .collect()
+        }
+    }
+
+    /// The whole path through the viewer: a molecule is cut in two with Ctrl+click and Delete,
+    /// and each half then follows a Shift+drag (and turns with Alt) while the other stays —
+    /// also after an optimisation, and not after the deletion is undone.
+    #[test]
+    #[ignore = "draws on a GPU: run with --ignored"]
+    fn a_molecule_cut_in_two_in_the_viewer_is_dragged_by_its_halves() {
+        use egui::{Key, Modifiers};
+        let Some(mut rig) = Rig::showing(pentane()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let ctrl = Modifiers::CTRL | Modifiers::COMMAND;
+        // One molecule: Shift+drag is the camera's, nothing moves.
+        assert_eq!(rig.drag(0, Modifiers::SHIFT), Vec::<usize>::new());
+
+        rig.click(2, ctrl);
+        assert_eq!(
+            rig.doc.three_d.edit.selected.iter().collect::<Vec<_>>(),
+            [&2]
+        );
+        rig.key(Key::Delete);
+        assert_eq!(rig.model().formula, "C4H12");
+        let half = |rig: &Rig, atom| edit::separate_molecule(rig.model(), atom).expect("a half");
+        for (atom, modifiers) in [
+            (0, Modifiers::SHIFT),
+            (3, Modifiers::SHIFT),
+            (1, Modifiers::ALT),
+            (2, Modifiers::ALT),
+        ] {
+            assert_eq!(rig.drag(atom, modifiers), half(&rig, atom), "atom {atom}");
+        }
+
+        // An optimisation keeps them two.
+        rig.doc.three_d.optimize();
+        while rig.doc.three_d.is_running() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            rig.frame(Vec::new(), Modifiers::NONE);
+        }
+        assert_eq!(rig.drag(0, Modifiers::SHIFT), half(&rig, 0));
+
+        // The half holding the fixed atom stays; the other still moves.
+        rig.doc.three_d.edit.anchor = Some(0);
+        assert_eq!(rig.drag(1, Modifiers::SHIFT), Vec::<usize>::new());
+        assert_eq!(rig.drag(3, Modifiers::SHIFT), half(&rig, 3));
+        rig.doc.three_d.edit.anchor = None;
+
+        // Undone back to one molecule, there is nothing to take hold of; redone, there is.
+        while rig.model().formula != "C5H12" {
+            let (model, edit3d) = rig.doc.three_d.model_and_edit().unwrap();
+            edit3d.undo(model).expect("the deletion is in the history");
+        }
+        rig.frame(Vec::new(), Modifiers::NONE);
+        assert_eq!(rig.drag(0, Modifiers::SHIFT), Vec::<usize>::new());
+        let (model, edit3d) = rig.doc.three_d.model_and_edit().unwrap();
+        edit3d.redo(model).expect("redo");
+        rig.frame(Vec::new(), Modifiers::NONE);
+        assert_eq!(rig.drag(0, Modifiers::SHIFT), half(&rig, 0));
+    }
+
+    #[test]
+    fn a_drag_moves_the_molecule_with_the_pointer_or_turns_it() {
+        // Looking down −z: twenty points to the ångström.
+        let basis = ScreenBasis {
+            right: [1.0, 0.0, 0.0],
+            up: [0.0, 1.0, 0.0],
+            toward_viewer: [0.0, 0.0, 1.0],
+            angstrom_per_point: 0.05,
+        };
+        // Right and down on the screen (y grows downward) is +x and −y in the scene.
+        let Some(Motion::Move(by)) = drag_motion(&basis, vec2(20.0, 10.0), false) else {
+            panic!("a move");
+        };
+        assert!(geom::distance(by, [1.0, -0.5, 0.0]) < 1e-12, "{by:?}");
+        // A drag to the right swings the side facing the viewer to the right.
+        let Some(Motion::Turn(rotation)) = drag_motion(&basis, vec2(60.0, 0.0), true) else {
+            panic!("a turn");
+        };
+        let near = rotation.map(|row| geom::dot(row, [0.0, 0.0, 1.0]));
+        let degrees = 60.0 * place::DEGREES_PER_POINT;
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        assert!(geom::distance(near, [sin, 0.0, cos]) < 1e-12, "{near:?}");
+        // A pointer that has not moved moves nothing.
+        assert_eq!(drag_motion(&basis, vec2(0.0, 0.0), false), None);
+        assert_eq!(drag_motion(&basis, vec2(0.0, 0.0), true), None);
+    }
 
     #[test]
     fn a_rectangle_takes_in_the_atoms_drawn_inside_it() {
