@@ -272,6 +272,7 @@ label_separator = ", "
 [properties]
 collapse = "패널 접기"
 expand = "{title} 패널 열기"
+select_hint = "구조를 선택하면 분석합니다"
 
 [properties.title]
 analysis = "분석"

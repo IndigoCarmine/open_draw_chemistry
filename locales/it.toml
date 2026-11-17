@@ -262,6 +262,7 @@ label_separator = ", "
 [properties]
 collapse = "Comprimi pannello"
 expand = "Apri il pannello {title}"
+select_hint = "Seleziona una struttura per analizzarla"
 
 [properties.title]
 analysis = "Analisi"

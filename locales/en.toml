@@ -400,6 +400,8 @@ label_separator = ", "
 collapse = "Collapse panel"
 # Tooltip of the collapsed panel. {title}: the panel title
 expand = "Open the {title} panel"
+# Shown in the analysis panel while nothing is selected (nothing is analysed then)
+select_hint = "Select a structure to analyse it"
 
 [properties.title]
 # Panel titles; also shown vertically, one letter per line, in the collapsed strip

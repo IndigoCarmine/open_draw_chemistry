@@ -297,6 +297,7 @@ label_separator = "、"
 [properties]
 collapse = "パネルを畳む"
 expand = "{title}パネルを開く"
+select_hint = "構造を選択すると解析します"
 
 [properties.title]
 analysis = "解析"

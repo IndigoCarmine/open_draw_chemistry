@@ -272,6 +272,7 @@ label_separator = "、"
 [properties]
 collapse = "摺疊面板"
 expand = "開啟{title}面板"
+select_hint = "選取結構後進行分析"
 
 [properties.title]
 analysis = "分析"
