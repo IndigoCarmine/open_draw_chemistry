@@ -4,6 +4,11 @@
 cancel = "キャンセル"
 coming_soon = "準備中"
 
+[fatal]
+startup = "{app} を起動できませんでした。"
+graphics = "使用できるグラフィックスデバイスが見つかりませんでした。このアプリは Direct3D 12、Vulkan、OpenGL のいずれかで描画します。グラフィックスドライバーを更新してから、もう一度起動してください。"
+details = "詳細: {error}"
+
 [language]
 menu = "言語 (Language)"
 tooltip = "言語 (Language)"
