@@ -4,15 +4,22 @@
 # reaction table) although Expand draws nothing for it.
 #
 # One [[group]] per abbreviation:
-#   name     the usual spelling. Case variants are matched without being listed (`AmPhos`,
-#            `COD`), so list only other spellings under `aliases`. No brackets, spaces or `·`.
+#   name     the usual spelling. No brackets, spaces or `·`.
+#   aliases  other spellings in real use. Names are matched exactly as written, case included,
+#            so a spelling counts only if it is listed here (`cod` lists `COD`, `TMEDA` lists
+#            `tmeda`). List only spellings the literature uses, and none that is an element
+#            symbol, a fragment's name or another group's spelling. A spelling whose letters
+#            all read as element symbols (`COD`, `DBU`, `DPPF`) is taken for the group only
+#            where it stands alone — a whole label or everything inside one pair of brackets —
+#            so `Ni(COD)2` is the diene and `CH3COD` still acetaldehyde-d.
 #   formula  the atoms of the group as it is written in a compound, elements only: an anionic
 #            ligand is the group without its charge (acac = C5H7O2, Cp = C5H5).
 #   note     what it stands for, for whoever checks the formula.
 #
 # Not needed here: anything that reads from elements and fragments already — OAc, OTf, OTs,
 # OMe, PPh3, PCy3, P(tBu)3, NEt3, MeCN, Et2O — and abbreviations with a structure, which
-# belong in `assets/fragments/` (THF, DMF, DCM, Tol).
+# belong in `assets/fragments/` (THF, DMF, DCM, Tol). `thf` and `dmf` are here because a
+# fragment has one spelling, and as ligands the two are written in lower case.
 #
 # `cargo test` checks every entry against an independently computed molecular weight
 # (tests/formula_labels.rs): add the new entry there too.
@@ -21,57 +28,67 @@
 
 [[group]]
 name = "amphos"
-aliases = ["APhos"]
+aliases = ["AmPhos", "Amphos", "APhos"]
 formula = "C16H28NP"
 note = "di-tert-butyl(4-dimethylaminophenyl)phosphine, (tBu)2P-C6H4-NMe2"
 
 [[group]]
 name = "dppm"
+aliases = ["DPPM"]
 formula = "C25H22P2"
 note = "bis(diphenylphosphino)methane, Ph2P-CH2-PPh2"
 
 [[group]]
 name = "dppe"
+aliases = ["DPPE"]
 formula = "C26H24P2"
 note = "1,2-bis(diphenylphosphino)ethane, Ph2P-(CH2)2-PPh2"
 
 [[group]]
 name = "dppp"
+aliases = ["DPPP"]
 formula = "C27H26P2"
 note = "1,3-bis(diphenylphosphino)propane, Ph2P-(CH2)3-PPh2"
 
 [[group]]
 name = "dppb"
+aliases = ["DPPB"]
 formula = "C28H28P2"
 note = "1,4-bis(diphenylphosphino)butane, Ph2P-(CH2)4-PPh2"
 
 [[group]]
 name = "dppf"
+aliases = ["DPPF"]
 formula = "C34H28FeP2"
 note = "1,1'-bis(diphenylphosphino)ferrocene, Fe(C5H4PPh2)2"
 
 [[group]]
 name = "BINAP"
+aliases = ["binap", "Binap"]
 formula = "C44H32P2"
 note = "2,2'-bis(diphenylphosphino)-1,1'-binaphthyl, (C10H6PPh2)2"
 
 [[group]]
 name = "Xantphos"
+aliases = ["XantPhos", "xantphos"]
 formula = "C39H32OP2"
 note = "4,5-bis(diphenylphosphino)-9,9-dimethylxanthene"
 
 [[group]]
 name = "XPhos"
+aliases = ["Xphos", "X-Phos"]
 formula = "C33H49P"
 note = "2-dicyclohexylphosphino-2',4',6'-triisopropylbiphenyl"
 
 [[group]]
 name = "SPhos"
+aliases = ["Sphos", "S-Phos"]
 formula = "C26H35O2P"
 note = "2-dicyclohexylphosphino-2',6'-dimethoxybiphenyl"
 
 [[group]]
 name = "RuPhos"
+aliases = ["Ruphos"]
 formula = "C30H43O2P"
 note = "2-dicyclohexylphosphino-2',6'-diisopropoxybiphenyl"
 
@@ -79,21 +96,25 @@ note = "2-dicyclohexylphosphino-2',6'-diisopropoxybiphenyl"
 
 [[group]]
 name = "dba"
+aliases = ["DBA"]
 formula = "C17H14O"
 note = "dibenzylideneacetone, (PhCH=CH)2CO"
 
 [[group]]
 name = "cod"
+aliases = ["COD"]
 formula = "C8H12"
 note = "1,5-cyclooctadiene"
 
 [[group]]
 name = "coe"
+aliases = ["COE"]
 formula = "C8H14"
 note = "cyclooctene"
 
 [[group]]
 name = "nbd"
+aliases = ["NBD"]
 formula = "C7H8"
 note = "norbornadiene (bicyclo[2.2.1]hepta-2,5-diene)"
 
@@ -121,17 +142,19 @@ note = "pinacolato, OCMe2CMe2O (B2pin2, HBpin)"
 
 [[group]]
 name = "TMEDA"
+aliases = ["tmeda"]
 formula = "C6H16N2"
 note = "N,N,N',N'-tetramethylethylenediamine, Me2N(CH2)2NMe2"
 
 [[group]]
 name = "py"
+aliases = ["Py"]
 formula = "C5H5N"
 note = "pyridine"
 
 [[group]]
 name = "bpy"
-aliases = ["bipy"]
+aliases = ["bipy", "Bpy"]
 formula = "C10H8N2"
 note = "2,2'-bipyridine"
 
@@ -167,12 +190,24 @@ formula = "C6H18NSi2"
 note = "bis(trimethylsilyl)amide, N(SiMe3)2 (LiHMDS, NaHMDS, KHMDS)"
 
 [[group]]
+name = "thf"
+formula = "C4H8O"
+note = "tetrahydrofuran as a ligand, ZnCl2(thf)2 (the fragment THF, in lower case)"
+
+[[group]]
+name = "dmf"
+formula = "C3H7NO"
+note = "N,N-dimethylformamide as a ligand (the fragment DMF, in lower case)"
+
+[[group]]
 name = "DMSO"
+aliases = ["dmso"]
 formula = "C2H6OS"
 note = "dimethyl sulfoxide"
 
 [[group]]
 name = "DME"
+aliases = ["dme"]
 formula = "C4H10O2"
 note = "1,2-dimethoxyethane"
 

@@ -140,21 +140,67 @@ fn complex_labels_have_their_composition_and_weight() {
         ("ZnCl2(THF)2", "C8H16Cl2O2Zn", "280.49"),
         ("Pd(MeCN)2Cl2", "C4H6Cl2N2Pd", "259.43"),
         ("AcCl", "C2H3ClO", "78.50"),
-        // Written in another case.
+        // Other spellings the groups list.
         ("PdCl2(AmPhos)2", "C32H56Cl2N2P2Pd", "708.08"),
         ("Ni(COD)2", "C16H24Ni", "275.06"),
         ("Pd(DPPF)Cl2", "C34H28Cl2FeP2Pd", "731.71"),
         ("ZnCl2(thf)2", "C8H16Cl2O2Zn", "280.49"),
+        ("NiBr2(dme)", "C4H10Br2NiO2", "308.62"),
+        // Brackets of any kind, nested to any depth.
+        ("((tmeda)Zn(OH)(OTf))3", "C21H51F9N6O12S3Zn3", "1042.97"),
+        ("((TMEDA)Zn(OH)(OTf))3", "C21H51F9N6O12S3Zn3", "1042.97"),
+        ("[(tmeda)Zn(OH)(OTf)]3", "C21H51F9N6O12S3Zn3", "1042.97"),
+        ("{[(tmeda)Zn(OH)(OTf)]}3", "C21H51F9N6O12S3Zn3", "1042.97"),
+        ("((tmeda)Zn(OH)(OTf))_3", "C21H51F9N6O12S3Zn3", "1042.97"),
+        ("(Pd(dppf)Cl2)2", "C68H56Cl4Fe2P4Pd2", "1463.42"),
+        ("((cod)IrCl)2", "C16H24Cl2Ir2", "671.71"),
+        // Full-width brackets and digits, as an input method types them.
+        (
+            "\u{ff08}\u{ff08}tmeda\u{ff09}Zn\u{ff08}OH\u{ff09}\u{ff08}OTf\u{ff09}\u{ff09}\u{ff13}",
+            "C21H51F9N6O12S3Zn3",
+            "1042.97",
+        ),
+        (
+            "\u{ff3b}Ir\u{ff08}cod\u{ff09}Cl\u{ff3d}\u{ff12}",
+            "C16H24Cl2Ir2",
+            "671.71",
+        ),
     ] {
         assert_eq!(formula(label).plain(), plain, "{label}");
         assert_eq!(weight(label), mw, "{label}");
     }
 }
 
-/// An abbreviation is never taken for element symbols or the other way round.
+/// An abbreviation is never taken for element symbols or the other way round, and case is
+/// part of a name: only the spellings a group lists are read.
 #[test]
 fn abbreviations_and_elements_are_told_apart() {
     app_config();
+    // Not listed spellings: no group, so no weight, and the status bar names them.
+    for (label, unknown) in [
+        ("Ni(Cod)2", "Cod"),
+        ("Pd(Dppf)Cl2", "Dppf"),
+        ("ZnCl2(Thf)2", "Thf"),
+        ("((Tmeda)Zn(OH)(OTf))3", "Tmeda"),
+        ("Pd(PHEN)Cl2", "PHEN"),
+    ] {
+        assert_eq!(weight(label), "none", "{label}");
+        assert_eq!(
+            MolecularFormula::of_label(label),
+            Err(LabelFormulaError::UnknownGroup(unknown.to_owned())),
+            "{label}"
+        );
+    }
+    assert_eq!(weight("Cod"), "none");
+    assert_eq!(weight("boc"), "none");
+    // Cobalt and carbon monoxide, never `cod`.
+    assert_eq!(formula("Co").plain(), "Co");
+    assert_eq!(formula("CO").plain(), "CO");
+    // `COD` is cyclooctadiene where it stands alone, and its letters inside a longer formula.
+    assert_eq!(formula("COD").plain(), "C8H12");
+    assert_eq!(formula("[Rh(COD)Cl]2").plain(), "C16H24Cl2Rh2");
+    assert_eq!(formula("CH3COD").plain(), "C2H3DO");
+    assert_eq!(formula("DBU").plain(), "C9H16N2");
     // Cobalt stays cobalt next to `cod`, and carbonyl stays C and O.
     assert_eq!(formula("CoCl2").plain(), "Cl2Co");
     assert_eq!(formula("Co(cod)2").plain(), "C16H24Co");
@@ -166,6 +212,7 @@ fn abbreviations_and_elements_are_told_apart() {
     // `iPr` (isopropyl) and `IPr` (the carbene) differ only in case.
     assert_eq!(formula("Ti(OiPr)4").plain(), "C12H28O4Ti");
     assert_eq!(formula("Pd(IPr)Cl2").plain(), "C27H36Cl2N2Pd");
+    assert_eq!(formula("IPrCuCl").plain(), "C27H36ClCuN2");
 }
 
 /// A group that is not known leaves the label without a weight — never a partial one — and
@@ -185,6 +232,31 @@ fn an_unknown_group_gives_no_weight_and_is_named() {
     assert!(message.contains("Unknown group “TEMDA”"), "{message}");
     assert_eq!(weight("Pd(xyzphos)Cl2"), "none");
     assert_eq!(weight("Qq"), "none");
+}
+
+/// Brackets that do not match: no formula, no weight — never that of the part that reads —
+/// and the status bar says it is the brackets.
+#[test]
+fn unbalanced_brackets_give_no_weight_and_are_reported() {
+    app_config();
+    let _lang = open_draw_chemistry::i18n::ScopedLanguage::new(open_draw_chemistry::i18n::Lang::En);
+    for label in [
+        "((tmeda)Zn(OH)(OTf)3",
+        "(tmeda)Zn(OH)(OTf))3",
+        "[(tmeda)Zn(OH)(OTf))3",
+        "Pd(dppf",
+        "\u{ff08}\u{ff08}tmeda\u{ff09}Zn\u{ff08}OH\u{ff09}\u{ff08}OTf\u{ff09}\u{ff13}",
+    ] {
+        assert_eq!(weight(label), "none", "{label}");
+        assert_eq!(formula(label).unknown_elements(), [label], "{label}");
+        assert_eq!(
+            MolecularFormula::of_label(label),
+            Err(LabelFormulaError::UnbalancedBrackets),
+            "{label}"
+        );
+        let message = fragments::not_expanded_message(label);
+        assert!(message.contains("brackets"), "{label}: {message}");
+    }
 }
 
 /// Expand draws no structure for a salt or a complex: the label stays, and the status bar says
@@ -209,6 +281,14 @@ fn expand_keeps_formula_labels_and_says_so() {
         ),
         (
             "[(TMEDA)Zn(OH)(OTf)]3",
+            "is a formula (C21H51F9N6O12S3Zn3, 1042.97 g/mol)",
+        ),
+        (
+            "((tmeda)Zn(OH)(OTf))3",
+            "is a formula (C21H51F9N6O12S3Zn3, 1042.97 g/mol)",
+        ),
+        (
+            "\u{ff08}\u{ff08}tmeda\u{ff09}Zn\u{ff08}OH\u{ff09}\u{ff08}OTf\u{ff09}\u{ff09}\u{ff13}",
             "is a formula (C21H51F9N6O12S3Zn3, 1042.97 g/mol)",
         ),
         ("Qq", "No structure for the label “Qq”"),
@@ -259,6 +339,8 @@ fn the_formula_groups_are_valid_and_weigh_what_they_should() {
         ("DBU", "C9H16N2", "152.24"),
         ("DABCO", "C6H12N2", "112.18"),
         ("HMDS", "C6H18NSi2", "160.39"),
+        ("thf", "C4H8O", "72.11"),
+        ("dmf", "C3H7NO", "73.09"),
         ("DMSO", "C2H6OS", "78.13"),
         ("DME", "C4H10O2", "90.12"),
         ("IPr", "C27H36N2", "388.60"),
@@ -271,7 +353,17 @@ fn the_formula_groups_are_valid_and_weigh_what_they_should() {
         names, listed,
         "every entry of the file reads and is checked here"
     );
+    // Every spelling (name or alias) is one group's only, no element's symbol and no fragment's
+    // name or spelling; those that read as element symbols are the ones known to.
+    let config = app_config();
+    let fragment_spellings: std::collections::BTreeSet<String> =
+        chembuider_rs::reaction::fragment_groups(&config.fragments)
+            .into_iter()
+            .flat_map(|g| std::iter::once(g.name).chain(g.aliases))
+            .chain(config.fragments.iter().map(|d| d.name.clone()))
+            .collect();
     let mut spellings = std::collections::BTreeSet::new();
+    let mut spell_elements = Vec::new();
     for (group, (name, plain, mw)) in groups.iter().zip(expected) {
         assert_eq!(group.formula.plain(), plain, "{name}");
         assert_eq!(
@@ -281,20 +373,37 @@ fn the_formula_groups_are_valid_and_weigh_what_they_should() {
         );
         for spelling in std::iter::once(&group.name).chain(&group.aliases) {
             assert!(
-                spellings.insert(spelling.to_lowercase()),
+                spellings.insert(spelling.clone()),
                 "{spelling} is listed twice"
             );
-            // Whatever its case, the name must not be an element's symbol.
-            let mut symbol = spelling.to_lowercase();
-            symbol[..1].make_ascii_uppercase();
             assert!(
-                chembuider_rs::molecule::elements::atomic_number(&symbol).is_none(),
+                chembuider_rs::molecule::elements::atomic_number(spelling).is_none(),
                 "{spelling} is an element"
+            );
+            assert!(
+                !fragment_spellings.contains(spelling),
+                "{spelling} is a fragment"
+            );
+            // (`Pr` in a label is propyl, so `IPr` is not iodine and praseodymium.)
+            if MolecularFormula::parse(spelling).is_some() && !spelling.contains("Pr") {
+                spell_elements.push(spelling.as_str());
+            }
+            // Alone and in brackets, the spelling is the group.
+            assert_eq!(formula(spelling).plain(), plain, "{spelling}");
+            assert_eq!(
+                formula(&format!("Pd({spelling})Cl2")).weight(),
+                formula(&format!("Pd({name})Cl2")).weight(),
+                "{spelling}"
             );
         }
     }
+    spell_elements.sort_unstable();
+    assert_eq!(
+        spell_elements,
+        ["COD", "DBU", "DPPB", "DPPF", "DPPP", "NBD"],
+        "spellings that also read as element symbols: groups only where they stand alone"
+    );
     // A fragment the app lists is found under its own name, not shadowed by a group.
-    app_config();
     assert_eq!(formula("THF").plain(), "C4H8O");
     assert_eq!(formula("DMF").plain(), "C3H7NO");
     assert_eq!(formula("DCM").plain(), "CH2Cl2");

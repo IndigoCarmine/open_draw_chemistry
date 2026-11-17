@@ -67,6 +67,7 @@ label_not_expanded = "No structure for the label “{label}”: it was not expan
 label_is_formula = "“{label}” is a formula ({formula}, {weight} g/mol): it is kept as a label and not drawn as a structure"
 # {group} is the part of the formula that is no element and no known abbreviation.
 label_unknown_group = "Unknown group “{group}” in the label “{label}”: it has no formula or weight, and was not expanded"
+label_unbalanced = "The brackets in the label “{label}” do not match: it has no formula or weight, and was not expanded"
 # {label} is the running 3D job's message, {note} a remark on how polymers are built.
 running_with_note = "{label} ({note})"
 assembly_shown = "Switched to the assembly view"

@@ -128,7 +128,7 @@ pub fn install_formula_groups(fragments: &[FragmentDef]) {
 
 /// What to tell the user when Expand left `label` as it was: that it is a formula, with its
 /// composition and weight (salts and complexes are kept as formulas, not drawn); which group
-/// in it is unknown; or that it stands for no structure.
+/// in it is unknown; that its brackets do not match; or that it stands for no structure.
 pub fn not_expanded_message(label: &str) -> String {
     match MolecularFormula::of_label(label) {
         Ok(formula) => match formula.weight() {
@@ -146,6 +146,9 @@ pub fn not_expanded_message(label: &str) -> String {
                 label = label,
                 group = group
             )
+        }
+        Err(LabelFormulaError::UnbalancedBrackets) => {
+            t!("app.status.label_unbalanced", label = label)
         }
         Err(LabelFormulaError::NotAFormula) => t!("app.status.label_not_expanded", label = label),
     }

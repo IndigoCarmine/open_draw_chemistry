@@ -52,8 +52,16 @@ analysis window and the reaction table (equivalents, moles, masses) use. The gro
 formula may name are the fragments above (each as the substituent it expands into) and the
 formula-only entries of [`assets/formula_groups.toml`](../assets/formula_groups.toml): name,
 other spellings, formula. To add a ligand, add a `[[group]]` there and its expected weight to
-`tests/formula_labels.rs`. A formula with a group that is not known has no weight, and the
-unknown group is named.
+`tests/formula_labels.rs`.
+
+Names are matched exactly as written, case included: `tmeda` and `COD` are read because
+`TMEDA` and `cod` list them under `aliases`; a spelling that is not listed (`Cod`) is not a
+group. Element symbols and group names are read the longest first (`Co` is cobalt, `CO` carbon
+and oxygen), and a spelling whose letters all read as elements (`COD`, `DBU`) is taken for the
+group only where it stands alone, as a whole label or inside its own brackets. Round, square
+and curly brackets nest to any depth; full-width brackets and digits read as ASCII. A formula
+with a group that is not known, or with brackets that do not match, has no weight, and the
+status bar says which.
 
 ## Cutting a release
 
