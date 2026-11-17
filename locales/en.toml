@@ -688,7 +688,15 @@ redo = "↷ Redo"
 redo_none = "Nothing to redo"
 # {label} names the step, e.g. "Change bond length".
 redo_tip = "Redo: {label} (Ctrl+Y)"
-pick_hint = "Click atoms to select them (up to 4) · click a bond to select both ends · right-click an atom to fix it"
+pick_hint = "Click atoms to select them (up to 4) · click a bond to select both ends · right-click an atom to fix it · Ctrl+click or Ctrl+drag to select atoms to delete"
+# Label of the row for deleting atoms: {n} atoms would be deleted.
+marked = { one = "{n} atom to delete", other = "{n} atoms to delete" }
+# Small button: extend the atoms to delete to the whole molecules they belong to.
+select_molecule = "Whole molecule"
+select_molecule_tip = "Select every atom of the molecules these atoms belong to"
+# Small button: delete the atoms selected in the 3D model.
+delete = "Delete"
+delete_tip = "Delete these atoms and the hydrogens on them; a bond that is cut gets a hydrogen (Delete)"
 # Label before the list of selected atoms.
 selection = "Selection"
 # Small button: clear the selection or the fixed atom.
@@ -781,6 +789,7 @@ undo_distance = "Change distance"
 undo_bond_angle = "Change bond angle"
 undo_dihedral = "Change dihedral"
 undo_rotate = "Rotate bond"
+undo_delete = "Delete atoms"
 # Status after setting a value.
 value_set = "Set"
 # {degrees} is a signed number such as +15.
@@ -791,6 +800,11 @@ distance_already = "Already {distance} Å"
 # {achieved}, {near} and {far} are numbers in Å.
 distance_unreachable = "Couldn't reach it: {achieved} Å (reachable by turning bonds: {near}–{far} Å)"
 distance_set = "Set to {distance} Å"
+# Status after deleting atoms from the 3D model.
+deleted = { one = "Deleted {n} atom", other = "Deleted {n} atoms" }
+# {text} is the previous status message; {n} hydrogens were added.
+capped = { one = "{text}; {n} hydrogen added where a bond was cut", other = "{text}; {n} hydrogens added where bonds were cut" }
+delete_all = "A model can't be left without atoms"
 # {text} is the previous status message; {a} and {b} are atom names, {distance} a number in Å.
 clash_note = { one = "{text} ({n} atom clash: {a}···{b} {distance} Å)", other = "{text} ({n} atom clashes: {a}···{b} {distance} Å)" }
 

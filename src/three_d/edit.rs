@@ -1,11 +1,15 @@
 //! Editing a 3D model by hand: what is picked in the viewer, the restraints the next
 //! optimisation keeps, and the undo/redo history of the geometry.
 //!
-//! Edits only move atoms; the atoms, bonds and their order never change, so a history step is
-//! a coordinate snapshot. Each edit is written into both [`Model3d::atoms`] and
-//! [`Model3d::molfile`] (see [`set_coords`]), so optimising and exporting start from what is on
-//! screen. The arithmetic is in [`super::geom`].
+//! Most edits only move atoms, so their history step is a coordinate snapshot. Each is written
+//! into both [`Model3d::atoms`] and [`Model3d::molfile`] (see [`set_coords`]), so optimising
+//! and exporting start from what is on screen. The arithmetic is in [`super::geom`].
+//!
+//! Deleting atoms ([`delete_atoms`]) is the one edit that changes the structure: its history
+//! step holds the whole model, and what named atoms by index (the picks, the fixed atom, the
+//! restraints) is renumbered or let go.
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use super::Model3d;
@@ -71,6 +75,20 @@ impl Constraint {
             && list.iter().enumerate().all(|(n, a)| !list[..n].contains(a))
     }
 
+    /// The restraint after the atoms are renumbered by `map` (old index → new, `None` for an
+    /// atom that is gone), or `None` when one of its atoms is gone.
+    pub fn remapped(&self, map: &[Option<usize>]) -> Option<Constraint> {
+        let at = |i: usize| map.get(i).copied().flatten();
+        Some(match *self {
+            Constraint::Fix(a) => Constraint::Fix(at(a)?),
+            Constraint::Distance([a, b], v) => Constraint::Distance([at(a)?, at(b)?], v),
+            Constraint::Angle([a, b, c], v) => Constraint::Angle([at(a)?, at(b)?, at(c)?], v),
+            Constraint::Torsion([a, b, c, d], v) => {
+                Constraint::Torsion([at(a)?, at(b)?, at(c)?, at(d)?], v)
+            }
+        })
+    }
+
     /// What the restrained quantity measures in `coords`.
     pub fn measure(&self, coords: &[Vec3]) -> Option<f64> {
         if !self.is_valid_for(coords.len()) {
@@ -111,6 +129,18 @@ struct Snapshot {
     coords: Vec<Vec3>,
     energy: f64,
     energy_stale: bool,
+    /// For a step that changed the atoms themselves: everything it replaced.
+    structure: Option<Box<Structure>>,
+}
+
+/// The model and what names its atoms by index, on one side of an edit that changed the atoms.
+#[derive(Debug, Clone, PartialEq)]
+struct Structure {
+    model: Model3d,
+    picked: Vec<usize>,
+    selected: BTreeSet<usize>,
+    anchor: Option<usize>,
+    constraints: Vec<Constraint>,
 }
 
 /// The editing state of one document's 3D model.
@@ -118,6 +148,8 @@ struct Snapshot {
 pub struct Edit3d {
     /// Atoms picked in the viewer, oldest first; at most [`MAX_PICKED`].
     pub picked: Vec<usize>,
+    /// Atoms selected to be deleted (Ctrl+click, Ctrl+drag): any number, in no order.
+    pub selected: BTreeSet<usize>,
     /// An atom that must not move: edits move whichever side does not hold it.
     pub anchor: Option<usize>,
     /// Restraints for the next optimisation.
@@ -140,6 +172,7 @@ impl Default for Edit3d {
     fn default() -> Self {
         Self {
             picked: Vec::new(),
+            selected: BTreeSet::new(),
             anchor: None,
             constraints: Vec::new(),
             use_constraints: true,
@@ -191,6 +224,34 @@ impl Edit3d {
         self.picked.clear();
     }
 
+    /// Add `atom` to the atoms selected for deletion, or take it out.
+    pub fn toggle_selected(&mut self, atom: usize) {
+        if !self.selected.remove(&atom) {
+            self.selected.insert(atom);
+        }
+    }
+
+    /// Select both ends of a bond, or deselect them when both already are.
+    pub fn toggle_selected_bond(&mut self, a: usize, b: usize) {
+        if self.selected.contains(&a) && self.selected.contains(&b) {
+            self.selected.remove(&a);
+            self.selected.remove(&b);
+        } else {
+            self.selected.extend([a, b]);
+        }
+    }
+
+    /// What deleting acts on: the atoms selected for it, or without any the picked ones.
+    pub fn delete_targets(&self) -> Vec<usize> {
+        if self.selected.is_empty() {
+            let mut picked = self.picked.clone();
+            picked.sort_unstable();
+            picked
+        } else {
+            self.selected.iter().copied().collect()
+        }
+    }
+
     /// Make `atom` the anchor, or clear it when it already is.
     pub fn toggle_anchor(&mut self, atom: usize) {
         self.anchor = if self.anchor == Some(atom) {
@@ -229,6 +290,57 @@ impl Edit3d {
         self.revision += 1;
     }
 
+    /// Replace `model` by `next` — the same structure with atoms taken out or added — as one
+    /// undoable step called `label`. `map` gives each old atom's index in `next` (`None`: it
+    /// is gone); the picks, the fixed atom and the restraints follow it, and those naming an
+    /// atom that is gone are dropped.
+    pub fn restructure(
+        &mut self,
+        model: &mut Model3d,
+        next: Model3d,
+        map: &[Option<usize>],
+        label: &str,
+    ) {
+        let step = self.structural_snapshot(model, label);
+        self.push_undo(step);
+        self.redo.clear();
+        *model = next;
+        let at = |i: usize| map.get(i).copied().flatten();
+        self.picked = self.picked.iter().filter_map(|&i| at(i)).collect();
+        self.selected = self.selected.iter().filter_map(|&i| at(i)).collect();
+        self.anchor = self.anchor.and_then(at);
+        self.constraints = self
+            .constraints
+            .iter()
+            .filter_map(|c| c.remapped(map))
+            .collect();
+        self.energy_stale = true;
+        self.revision += 1;
+    }
+
+    /// The state now, as the other side of `step` in the history: with the whole structure
+    /// when `step` replaces it.
+    fn counterpart(&self, model: &Model3d, step: &Snapshot) -> Snapshot {
+        if step.structure.is_some() {
+            self.structural_snapshot(model, &step.label)
+        } else {
+            snapshot(model, &step.label, self.energy_stale)
+        }
+    }
+
+    fn structural_snapshot(&self, model: &Model3d, label: &str) -> Snapshot {
+        Snapshot {
+            structure: Some(Box::new(Structure {
+                model: model.clone(),
+                picked: self.picked.clone(),
+                selected: self.selected.clone(),
+                anchor: self.anchor,
+                constraints: self.constraints.clone(),
+            })),
+            ..snapshot(model, label, self.energy_stale)
+        }
+    }
+
     /// `model` was replaced by `next` — an optimisation of the same atoms. Record it as an
     /// undoable step (the reference app dropped the history here instead), or start over when
     /// the atoms differ.
@@ -253,8 +365,8 @@ impl Edit3d {
     pub fn undo(&mut self, model: &mut Model3d) -> Option<String> {
         let step = self.undo.pop()?;
         let label = step.label.clone();
-        self.redo
-            .push(snapshot(model, &step.label, self.energy_stale));
+        let back = self.counterpart(model, &step);
+        self.redo.push(back);
         self.restore(model, step);
         Some(label)
     }
@@ -262,13 +374,24 @@ impl Edit3d {
     pub fn redo(&mut self, model: &mut Model3d) -> Option<String> {
         let step = self.redo.pop()?;
         let label = step.label.clone();
-        self.push_undo(snapshot(model, &step.label, self.energy_stale));
+        let back = self.counterpart(model, &step);
+        self.push_undo(back);
         self.restore(model, step);
         Some(label)
     }
 
     fn restore(&mut self, model: &mut Model3d, step: Snapshot) {
-        set_coords(model, &step.coords);
+        match step.structure {
+            Some(structure) => {
+                let structure = *structure;
+                *model = structure.model;
+                self.picked = structure.picked;
+                self.selected = structure.selected;
+                self.anchor = structure.anchor;
+                self.constraints = structure.constraints;
+            }
+            None => set_coords(model, &step.coords),
+        }
         model.energy = step.energy;
         self.energy_stale = step.energy_stale;
         self.revision += 1;
@@ -471,6 +594,148 @@ pub fn solve(model: &mut Model3d, edit: &mut Edit3d, a: usize, b: usize, goal: g
     }
 }
 
+/// What deleting some atoms takes out of a model, and the hydrogens it puts in.
+///
+/// As deleting an atom of the drawing leaves its neighbours' hydrogens filled in, the 3D model
+/// stays a whole molecule: the hydrogens on a deleted atom go with it, and each bond cut
+/// between a deleted atom and one that stays is closed by a hydrogen on the one that stays,
+/// along the old bond. A hydrogen deleted by itself is not put back.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Removal {
+    /// Per atom of the model: whether it goes.
+    pub remove: Vec<bool>,
+    /// The new hydrogens: the atom (one that stays) each is bonded to, and its position.
+    pub caps: Vec<(usize, Vec3)>,
+}
+
+impl Removal {
+    /// What deleting `atoms` of `model` comes to. Indices outside the model are ignored.
+    pub fn of(model: &Model3d, atoms: &[usize]) -> Removal {
+        let n = model.atoms.len();
+        let graph = graph(model);
+        let hydrogen = |i: usize| model.atoms[i].element == "H";
+        let mut chosen = vec![false; n];
+        for &atom in atoms {
+            if atom < n {
+                chosen[atom] = true;
+            }
+        }
+        let mut remove = chosen.clone();
+        for h in (0..n).filter(|&i| hydrogen(i)) {
+            let near = graph.neighbors(h);
+            if !near.is_empty() && near.iter().all(|&x| chosen[x] && !hydrogen(x)) {
+                remove[h] = true;
+            }
+        }
+        let mut caps = Vec::new();
+        for bond in &model.bonds {
+            if bond.begin >= n || bond.end >= n {
+                continue;
+            }
+            let (kept, gone) = match (remove[bond.begin], remove[bond.end]) {
+                (false, true) => (bond.begin, bond.end),
+                (true, false) => (bond.end, bond.begin),
+                _ => continue,
+            };
+            if hydrogen(kept) || hydrogen(gone) {
+                continue;
+            }
+            let from = model.atoms[kept].pos;
+            if let Some(along) = geom::unit(geom::sub(model.atoms[gone].pos, from)) {
+                let length = hydrogen_bond_length(&model.atoms[kept].element);
+                caps.push((kept, geom::add(from, geom::scale(along, length))));
+            }
+        }
+        Removal { remove, caps }
+    }
+
+    /// How many atoms go.
+    pub fn removed(&self) -> usize {
+        self.remove.iter().filter(|&&gone| gone).count()
+    }
+
+    /// Each atom's index among those left (`None` for one that goes).
+    pub fn map(&self) -> Vec<Option<usize>> {
+        let mut next = 0;
+        self.remove
+            .iter()
+            .map(|&gone| {
+                (!gone).then(|| {
+                    next += 1;
+                    next - 1
+                })
+            })
+            .collect()
+    }
+}
+
+/// A typical X–H bond length in Å, for a hydrogen put on an atom of `element`.
+fn hydrogen_bond_length(element: &str) -> f64 {
+    match element {
+        "C" => 1.09,
+        "N" => 1.01,
+        "O" => 0.96,
+        "B" => 1.19,
+        "Si" => 1.48,
+        "P" => 1.42,
+        "S" => 1.34,
+        _ => 1.10,
+    }
+}
+
+/// Every atom of the molecules (connected through bonds) holding one of `atoms`.
+pub fn molecules_of(model: &Model3d, atoms: impl IntoIterator<Item = usize>) -> BTreeSet<usize> {
+    let graph = graph(model);
+    let mut found = BTreeSet::new();
+    let mut stack: Vec<usize> = atoms
+        .into_iter()
+        .filter(|&a| a < model.atoms.len())
+        .collect();
+    while let Some(atom) = stack.pop() {
+        if found.insert(atom) {
+            stack.extend(
+                graph
+                    .neighbors(atom)
+                    .iter()
+                    .copied()
+                    .filter(|n| !found.contains(n)),
+            );
+        }
+    }
+    found
+}
+
+/// Delete `atoms` from the model as one undoable step (see [`Removal`] for the hydrogens that
+/// go and come with them). Reports how it went in [`Edit3d::report`] and returns whether the
+/// model changed; a model is never emptied.
+pub fn delete_atoms(model: &mut Model3d, edit: &mut Edit3d, atoms: &[usize]) -> bool {
+    let removal = Removal::of(model, atoms);
+    let removed = removal.removed();
+    if removed == 0 {
+        return false;
+    }
+    if removed == model.atoms.len() {
+        edit.report = Some((t!("three_d.edit.delete_all").to_owned(), true));
+        return false;
+    }
+    match super::engine::without_atoms(model, &removal.remove, &removal.caps) {
+        Ok(next) => {
+            let label = t!("three_d.edit.undo_delete");
+            edit.restructure(model, next, &removal.map(), label);
+            let mut text = tn!("three_d.edit.deleted", removed);
+            if !removal.caps.is_empty() {
+                text = tn!("three_d.edit.capped", removal.caps.len(), text = text);
+            }
+            edit.report = Some((text, false));
+            true
+        }
+        Err(e) => {
+            edit.report = Some((e.to_string(), true));
+            false
+        }
+    }
+}
+
 /// `text`, with a warning appended when the geometry now has clashes.
 fn clash_note(model: &Model3d, text: &str) -> String {
     let elements: Vec<&str> = model.atoms.iter().map(|a| a.element.as_str()).collect();
@@ -502,6 +767,7 @@ fn snapshot(model: &Model3d, label: &str, energy_stale: bool) -> Snapshot {
         coords: coords(model),
         energy: model.energy,
         energy_stale,
+        structure: None,
     }
 }
 
@@ -903,6 +1169,259 @@ mod tests {
         m.bonds[0].order = 3;
         edit.picked = vec![0, 1];
         assert_eq!(picked_rotor(&m, &edit.picked), None);
+    }
+
+    /// Ethanol with its hydrogens and, apart from it, a water molecule:
+    /// C0 C1 O2, H3–H5 on C0, H6 H7 on C1, H8 on O2; O9 with H10 H11.
+    fn ethanol_and_water() -> Model3d {
+        let atoms: Vec<Atom3d> = [
+            ("C", [0.0, 0.0, 0.0]),
+            ("C", [1.52, 0.0, 0.0]),
+            ("O", [2.0, 1.35, 0.0]),
+            ("H", [-0.4, 1.0, 0.0]),
+            ("H", [-0.4, -0.5, 0.9]),
+            ("H", [-0.4, -0.5, -0.9]),
+            ("H", [1.9, -0.5, 0.9]),
+            ("H", [1.9, -0.5, -0.9]),
+            ("H", [2.95, 1.3, 0.0]),
+            ("O", [6.0, 0.0, 0.0]),
+            ("H", [6.96, 0.0, 0.0]),
+            ("H", [5.76, 0.93, 0.0]),
+        ]
+        .into_iter()
+        .map(|(element, pos)| Atom3d {
+            element: element.to_owned(),
+            pos,
+        })
+        .collect();
+        let bonds: Vec<Bond3d> = [
+            (0, 1),
+            (1, 2),
+            (0, 3),
+            (0, 4),
+            (0, 5),
+            (1, 6),
+            (1, 7),
+            (2, 8),
+            (9, 10),
+            (9, 11),
+        ]
+        .into_iter()
+        .map(|(begin, end)| Bond3d {
+            begin,
+            end,
+            order: 1,
+        })
+        .collect();
+        let mol = crate::three_d::read_molfile(&crate::scan::energy::molfile(&atoms, &bonds))
+            .expect("molfile");
+        crate::three_d::assemble(&mol, &mol.coords, ForceField::Uff, 1.0)
+    }
+
+    /// The model is whole: every bond joins two of its atoms, and its molfile, formula and
+    /// atom list say the same thing.
+    fn assert_consistent(m: &Model3d) {
+        let n = m.atoms.len();
+        assert!(
+            m.bonds
+                .iter()
+                .all(|b| b.begin < n && b.end < n && b.begin != b.end)
+        );
+        let read = crate::three_d::read_molfile(&m.molfile).expect("the molfile reads");
+        assert_eq!(read.num_atoms(), n);
+        assert_eq!(read.num_bonds(), m.bonds.len());
+        for (atom, (read, pos)) in m.atoms.iter().zip(read.atoms().iter().zip(&read.coords)) {
+            assert_eq!(atom.element, read.symbol());
+            assert!(geom::distance(atom.pos, *pos) < 1e-3);
+        }
+        assert_eq!(m.formula, crate::three_d::engine::formula(&m.atoms));
+    }
+
+    #[test]
+    fn deleting_an_atom_takes_its_hydrogens_and_caps_the_cut_bond() {
+        let mut m = ethanol_and_water();
+        assert_eq!(m.formula, "C2H8O2");
+        let before = m.clone();
+        let mut edit = Edit3d {
+            picked: vec![8, 2, 1, 0],
+            anchor: Some(9),
+            constraints: vec![
+                Constraint::Torsion([8, 2, 1, 0], 60.0),
+                Constraint::Distance([0, 9], 6.0),
+                Constraint::Fix(10),
+                Constraint::Fix(2),
+            ],
+            ..Edit3d::default()
+        };
+        edit.selected.insert(2);
+        let state = edit.clone();
+
+        // The hydroxyl goes: O2 and, with it, H8. C1 gets a hydrogen where the oxygen was.
+        assert!(delete_atoms(&mut m, &mut edit, &[2]));
+        assert_consistent(&m);
+        assert_eq!(m.atoms.len(), 11);
+        assert_eq!(m.formula, "C2H8O", "ethane and water");
+        let cap = m.atoms.len() - 1;
+        assert_eq!(m.atoms[cap].element, "H");
+        assert_eq!(bond_order(&m, 1, cap), 1);
+        assert!((m.distance(1, cap) - 1.09).abs() < 1e-3);
+        let towards_oxygen = geom::unit(geom::sub(before.atoms[2].pos, before.atoms[1].pos));
+        let towards_cap = geom::unit(geom::sub(m.atoms[cap].pos, m.atoms[1].pos));
+        assert!(geom::distance(towards_oxygen.unwrap(), towards_cap.unwrap()) < 1e-3);
+        // The atoms left keep their places and their order; those after the gap move down.
+        assert_eq!(m.atoms[..2], before.atoms[..2]);
+        assert_eq!(m.atoms[2..7], before.atoms[3..8]);
+        assert_eq!(m.atoms[7..10], before.atoms[9..12]);
+        // What named the deleted atoms is let go, the rest is renumbered.
+        assert_eq!(edit.picked, vec![1, 0]);
+        assert!(edit.selected.is_empty());
+        assert_eq!(edit.anchor, Some(7));
+        assert_eq!(
+            edit.constraints,
+            vec![Constraint::Distance([0, 7], 6.0), Constraint::Fix(8)]
+        );
+        assert!(
+            edit.constraints
+                .iter()
+                .all(|c| c.is_valid_for(m.atoms.len()))
+        );
+        assert!(edit.energy_stale);
+        assert_eq!(edit.undo_label(), Some(t!("three_d.edit.undo_delete")));
+        assert!(edit.report.as_ref().is_some_and(|(_, problem)| !*problem));
+        // The force field still takes it.
+        assert!(crate::three_d::energy(&m, ForceField::Uff).is_ok());
+        assert!(crate::three_d::energy(&m, ForceField::Mmff94).is_ok());
+
+        // One undo puts everything back, one redo deletes again.
+        let after = m.clone();
+        let after_state = (edit.picked.clone(), edit.anchor, edit.constraints.clone());
+        assert!(edit.undo(&mut m).is_some());
+        assert_eq!(m, before);
+        assert_eq!(edit.picked, state.picked);
+        assert_eq!(edit.selected, state.selected);
+        assert_eq!(edit.anchor, state.anchor);
+        assert_eq!(edit.constraints, state.constraints);
+        assert!(!edit.energy_stale && !edit.can_undo());
+        assert!(edit.redo(&mut m).is_some());
+        assert_eq!(m, after);
+        assert_eq!(
+            (edit.picked.clone(), edit.anchor, edit.constraints.clone()),
+            after_state
+        );
+        assert!(edit.energy_stale);
+    }
+
+    #[test]
+    fn a_whole_molecule_is_deleted_without_a_trace() {
+        let mut m = ethanol_and_water();
+        let mut edit = Edit3d::default();
+        // One atom of the water names all of it, and nothing of the ethanol.
+        let water = molecules_of(&m, [10]);
+        assert_eq!(water, BTreeSet::from([9, 10, 11]));
+        assert_eq!(molecules_of(&m, [4, 99]).len(), 9);
+        edit.selected = water;
+        let targets = edit.delete_targets();
+        assert!(delete_atoms(&mut m, &mut edit, &targets));
+        assert_consistent(&m);
+        assert_eq!(m.formula, "C2H6O");
+        assert_eq!(m.atoms.len(), 9, "no hydrogen is added: no bond was cut");
+        assert_eq!(m.bonds.len(), 8);
+    }
+
+    #[test]
+    fn a_hydrogen_deleted_by_itself_is_not_put_back() {
+        let mut m = ethanol_and_water();
+        let mut edit = Edit3d {
+            picked: vec![8, 3],
+            ..Edit3d::default()
+        };
+        // Without a selection, deleting acts on the picked atoms.
+        let targets = edit.delete_targets();
+        assert_eq!(targets, vec![3, 8]);
+        assert!(delete_atoms(&mut m, &mut edit, &targets));
+        assert_consistent(&m);
+        assert_eq!(m.formula, "C2H6O2");
+        assert_eq!(m.atoms.len(), 10);
+        assert!(edit.picked.is_empty());
+        // The open valences are left as they are: an optimisation keeps the same atoms, so it
+        // stays one step of the same history.
+        for ff in ForceField::ALL {
+            assert!(crate::three_d::energy(&m, ff).is_ok(), "{ff}");
+            let relaxed = crate::three_d::optimize(&m, ff).expect("optimises");
+            assert_eq!(relaxed.formula, "C2H6O2", "{ff}");
+        }
+    }
+
+    #[test]
+    fn deleting_nothing_or_everything_changes_nothing() {
+        let mut m = ethanol_and_water();
+        let before = m.clone();
+        let mut edit = Edit3d::default();
+        assert!(!delete_atoms(&mut m, &mut edit, &[]));
+        assert!(!delete_atoms(&mut m, &mut edit, &[99]));
+        assert_eq!(edit.report, None);
+        let all: Vec<usize> = (0..m.atoms.len()).collect();
+        assert!(!delete_atoms(&mut m, &mut edit, &all));
+        assert!(edit.report.as_ref().is_some_and(|(_, problem)| *problem));
+        // The heavy atoms alone are everything too: their hydrogens go with them.
+        assert!(!delete_atoms(&mut m, &mut edit, &[0, 1, 2, 9]));
+        assert_eq!(m, before);
+        assert!(!edit.can_undo());
+    }
+
+    #[test]
+    fn a_deletion_sits_in_the_history_between_the_moves() {
+        let mut m = ethanol_and_water();
+        let original = m.clone();
+        let mut edit = Edit3d::default();
+        // A move, the deletion of the water, another move.
+        let stretched = geom::set_bond_length(&coords(&m), &graph(&m), 0, 1, 1.6, None).unwrap();
+        edit.apply(&mut m, stretched, "move");
+        let moved = m.clone();
+        assert!(delete_atoms(&mut m, &mut edit, &[9]));
+        let deleted = m.clone();
+        let turned = geom::rotate_bond(&coords(&m), &graph(&m), 0, 1, 30.0, None).unwrap();
+        edit.apply(&mut m, turned, "turn");
+        let last = m.clone();
+        assert_eq!(m.atoms.len(), 9);
+
+        // Back through all three, each step restoring the structure it belongs to.
+        assert_eq!(edit.undo(&mut m).as_deref(), Some("turn"));
+        assert_eq!(m, deleted);
+        assert!(edit.undo(&mut m).is_some());
+        assert_eq!(m, moved);
+        assert_consistent(&m);
+        assert_eq!(edit.undo(&mut m).as_deref(), Some("move"));
+        assert_eq!(coords(&m), coords(&original));
+        assert_eq!(m.atoms.len(), 12);
+        // And forward again.
+        for expected in [&moved, &deleted, &last] {
+            assert!(edit.redo(&mut m).is_some());
+            assert_eq!(coords(&m), coords(expected));
+            assert_eq!(m.bonds, expected.bonds);
+            assert_consistent(&m);
+        }
+        assert!(!edit.can_redo());
+    }
+
+    #[test]
+    fn selecting_for_deletion_toggles_atoms_and_bonds() {
+        let mut edit = Edit3d::default();
+        edit.toggle_selected(4);
+        edit.toggle_selected(2);
+        edit.toggle_selected(4);
+        assert_eq!(edit.selected, BTreeSet::from([2]));
+        edit.toggle_selected_bond(2, 3);
+        assert_eq!(edit.selected, BTreeSet::from([2, 3]));
+        edit.toggle_selected_bond(3, 2);
+        assert!(edit.selected.is_empty());
+        // The selection wins over the picks; a reset forgets it.
+        edit.picked = vec![7, 5];
+        assert_eq!(edit.delete_targets(), vec![5, 7]);
+        edit.toggle_selected(1);
+        assert_eq!(edit.delete_targets(), vec![1]);
+        edit.reset();
+        assert!(edit.delete_targets().is_empty());
     }
 
     #[test]
