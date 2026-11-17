@@ -1,6 +1,6 @@
 [package]
 name = "open_draw_chemistry"
-version = "0.6.3"
+version = "0.7.0"
 edition = "2024"
 # Raised from edition 2024's 1.85 by the egui-winit fork in [patch.crates-io].
 rust-version = "1.95"
@@ -50,7 +50,7 @@ acauda-embed = { git = "https://github.com/IndigoCarmine/acauda-embed", rev = "9
 # MMFF94/94s energies and minimisation, and the ETKDG embedding that builds 3D models from the
 # drawing; also reading 3D files and laying a read structure out in 2D (`src/three_d/read.rs`).
 # Pure Rust (ports of RDKit's, BSD-3-Clause). Pinned to a tag: not on crates.io.
-molecule_optimizer_rs = { git = "https://github.com/IndigoCarmine/molecule_optimizer_rs", tag = "v0.2.0" }
+molecule_optimizer_rs = { git = "https://github.com/IndigoCarmine/molecule_optimizer_rs", tag = "v0.2.1" }
 
 # Only used to decode the embedded window icon, so the heavy default codecs are off.
 image = { version = "0.25.10", default-features = false, features = ["png"] }

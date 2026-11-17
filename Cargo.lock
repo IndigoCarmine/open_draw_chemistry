@@ -2334,8 +2334,8 @@ dependencies = [
 
 [[package]]
 name = "molecule_optimizer_rs"
-version = "0.2.0"
-source = "git+https://github.com/IndigoCarmine/molecule_optimizer_rs?tag=v0.2.0#a9286783796528fa081a3e49c02a9f42cf15bffa"
+version = "0.2.1"
+source = "git+https://github.com/IndigoCarmine/molecule_optimizer_rs?tag=v0.2.1#cd04cdece224304421fcc7ddd8612a888fdd6ada"
 dependencies = [
  "arc-swap",
  "futures",
@@ -2910,7 +2910,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "open_draw_chemistry"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "acauda-embed",
  "chembuider-rs",
