@@ -2565,7 +2565,6 @@ mod tests {
         };
         h.frame(vec![escape], &mut show);
         h.frame(Vec::new(), &mut show);
-        drop(show);
         out
     }
 
@@ -2592,7 +2591,6 @@ mod tests {
         h.click_at(corner, egui::PointerButton::Secondary, &mut show);
         h.hover(t!("format.fill_ring"), &mut show);
         h.click(t!("format.fill"), &mut show);
-        drop(show);
         let fill = ui::appearance::Appearance::default().ring_fill.rgba;
         assert_eq!(out, [Command::FillRing(fill)]);
     }
@@ -2624,7 +2622,6 @@ mod tests {
         h.hover(t!("format.fill_ring"), &mut show);
         assert!(!h.labels().iter().any(|l| l == t!("format.fill")));
         h.click(t!("format.clear_fill"), &mut show);
-        drop(show);
         assert!(out.is_empty(), "{out:?}");
         assert!(app.docs[0].editor.molecule.ring_fills.is_empty());
     }

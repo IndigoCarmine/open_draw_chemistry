@@ -1130,12 +1130,12 @@ mod tests {
         // One water dimer split by the box's face: the bond goes to the image.
         let mut sys = water_dimer(0.0);
         let cube = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
-        for k in 0..3 {
-            sys.positions[k] = add(sys.positions[k], [8.5, 5.0, 5.0]);
+        for p in &mut sys.positions[0..3] {
+            *p = add(*p, [8.5, 5.0, 5.0]);
         }
-        for k in 3..6 {
+        for p in &mut sys.positions[3..6] {
             // 8.5 + 2.9 = 11.4 → 1.4, across the face.
-            sys.positions[k] = add(sys.positions[k], [8.5 - 10.0, 5.0, 5.0]);
+            *p = add(*p, [8.5 - 10.0, 5.0, 5.0]);
         }
         assert!(sys.find().hbonds.is_empty());
         let options = Options {
