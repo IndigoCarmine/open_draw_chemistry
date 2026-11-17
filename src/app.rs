@@ -28,6 +28,21 @@ mod ole;
 /// How many files "Open Recent" remembers.
 const MAX_RECENT: usize = 10;
 
+/// The UI scale on top of the OS's own (egui's zoom factor) until the user changes it with
+/// Ctrl + / Ctrl - : slightly roomier than egui's default.
+const DEFAULT_UI_ZOOM: f32 = 1.1;
+/// The range a remembered UI scale is kept to, so a bad state file cannot make the UI unusable.
+const UI_ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=4.0;
+
+/// `zoom` when it is usable as a UI scale, else the default.
+fn sanitized_ui_zoom(zoom: f32) -> f32 {
+    if zoom.is_finite() {
+        zoom.clamp(*UI_ZOOM_RANGE.start(), *UI_ZOOM_RANGE.end())
+    } else {
+        DEFAULT_UI_ZOOM
+    }
+}
+
 /// A request to close something that has unsaved changes, waiting on the user's answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingClose {
@@ -58,6 +73,9 @@ pub struct OpenDrawApp {
     language: Option<Lang>,
     /// Look for a newer release at startup.
     check_updates: bool,
+    /// The UI scale relative to the OS's scale factor (egui's zoom factor), as the user last
+    /// left it.
+    ui_zoom: f32,
     /// The language the fonts were last set up for (see [`crate::i18n::fonts`]).
     #[serde(skip)]
     fonts_for: Option<Lang>,
@@ -130,6 +148,7 @@ impl Default for OpenDrawApp {
             appearance: Default::default(),
             language: None,
             check_updates: true,
+            ui_zoom: DEFAULT_UI_ZOOM,
             fonts_for: None,
             docs: Vec::new(),
             active: 0,
@@ -158,14 +177,16 @@ impl Default for OpenDrawApp {
 impl OpenDrawApp {
     /// Builds the app, restoring persisted state, and opens `files` (or an empty document).
     pub fn new(cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
-        // Slightly roomier than the default; tweak to taste.
-        cc.egui_ctx.set_pixels_per_point(1.1);
         theme::apply(&cc.egui_ctx);
 
         let mut app: Self = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
             .unwrap_or_default();
+        // A zoom factor multiplies the OS's scale factor. (`set_pixels_per_point` would replace
+        // it instead, leaving the UI tiny on a display scaled to 150% or 200%.)
+        app.ui_zoom = sanitized_ui_zoom(app.ui_zoom);
+        cc.egui_ctx.set_zoom_factor(app.ui_zoom);
         app.apply_language(app.language.unwrap_or_else(Lang::system));
         // User shortcuts from the working directory when present; fragments are the built-in
         // ones plus the user's, from their config directory.
@@ -1488,6 +1509,9 @@ impl eframe::App for OpenDrawApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Cloning a Context is cheap (it is an Arc) and frees up `ui` for the panels below.
         let ctx = ui.ctx().clone();
+        // Remember the UI scale the user set with Ctrl + / Ctrl - for the next launch. (Read
+        // here, inside a pass: before the first one it is still what egui itself remembered.)
+        self.ui_zoom = ctx.zoom_factor();
         let mut commands = Vec::new();
 
         let lang = crate::i18n::language();
@@ -2116,6 +2140,27 @@ mod tests {
         assert_eq!(restored.recent, vec![PathBuf::from("x.cdxml")]);
         assert!(!restored.show_properties);
         assert!(restored.docs.is_empty(), "documents are not persisted");
+    }
+
+    /// The UI scale is relative to the OS's: remembered, defaulted for older state files and
+    /// kept usable whatever a state file says.
+    #[test]
+    fn the_ui_zoom_is_remembered_and_kept_sane() {
+        let app = OpenDrawApp {
+            ui_zoom: 1.5,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&app).expect("serialize");
+        let restored: OpenDrawApp = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.ui_zoom, 1.5);
+
+        let old: OpenDrawApp = serde_json::from_str("{}").expect("deserialize");
+        assert_eq!(old.ui_zoom, DEFAULT_UI_ZOOM);
+
+        assert_eq!(sanitized_ui_zoom(0.0), 0.5);
+        assert_eq!(sanitized_ui_zoom(100.0), 4.0);
+        assert_eq!(sanitized_ui_zoom(f32::NAN), DEFAULT_UI_ZOOM);
+        assert_eq!(sanitized_ui_zoom(1.25), 1.25);
     }
 
     /// The 3D menu's generate → (poll) → optimise path, and the panel drawing the result.
