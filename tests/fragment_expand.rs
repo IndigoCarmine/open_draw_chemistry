@@ -268,6 +268,118 @@ fn condensed_labels_expand_to_the_right_structure() {
     }
 }
 
+/// The fragments of the app's own database (`assets/fragments/`) are in the list the editor
+/// gets, and a label of each expands on a lone atom into its whole structure.
+#[test]
+fn the_app_fragments_are_listed_and_expand() {
+    let config = app_config(&empty_dir("app"));
+    let bundled = open_draw_chemistry::fragments::app_fragments();
+    for name in ["THF", "DMF", "DCM", "Tol"] {
+        assert!(bundled.iter().any(|d| d.name == name), "{name} is bundled");
+    }
+    for def in &bundled {
+        assert!(
+            config.fragments.iter().any(|d| d.name == def.name),
+            "{} is listed",
+            def.name
+        );
+        let mut doc = one_carbon(&config);
+        let atom = doc.editor.hotspot_atom.unwrap();
+        doc.editor.molecule.atom_by_id_mut(atom).unwrap().element = def.name.clone();
+        let doc = expanded(doc);
+        check_expanded(&doc, def).unwrap_or_else(|e| panic!("{}: {e}", def.name));
+    }
+}
+
+/// The SMILES of `doc`'s molecule.
+fn smiles(doc: &Document) -> String {
+    chembuider_rs::molecule::smiles::to_smiles(&doc.editor.molecule)
+}
+
+/// Whether `doc`'s molecule is the one `spec` spells: bonds such as `C0-O1` or `C0=O1` between
+/// atoms named element + index.
+fn is_molecule(doc: &Document, spec: &str) -> bool {
+    let mut want = chembuider_rs::Molecule::default();
+    let mut ids = std::collections::BTreeMap::new();
+    for bond in spec.split_whitespace() {
+        let at = bond.find(['-', '=']).expect("a bond");
+        let order = match &bond[at..=at] {
+            "=" => chembuider_rs::BondOrder::Double,
+            _ => chembuider_rs::BondOrder::Single,
+        };
+        let [a, b] = [&bond[..at], &bond[at + 1..]].map(|name| {
+            *ids.entry(name.to_owned()).or_insert_with(|| {
+                let element = name.trim_end_matches(|c: char| c.is_ascii_digit());
+                want.add_atom(element.to_owned(), [0.0, 0.0], 0)
+            })
+        });
+        want.add_bond(a, b, order);
+    }
+    chembuider_rs::molecule::canonical::is_isomorphic(&doc.editor.molecule, &want)
+}
+
+/// A solvent label standing alone is the whole neutral molecule; `Tol` is the *p*-tolyl group,
+/// joined through the ring carbon opposite its methyl.
+#[test]
+fn the_solvent_and_tolyl_labels_expand_to_the_right_structure() {
+    let config = app_config(&empty_dir("solvents"));
+    for (label, want) in [
+        ("THF", "O0-C1 C1-C2 C2-C3 C3-C4 C4-O0"),
+        ("DMF", "O0=C1 C1-N2 N2-C3 N2-C4"),
+        ("DCM", "Cl0-C1 C1-Cl2"),
+        ("Tol", "C1=C2 C2-C3 C3=C4 C4-C5 C5=C6 C6-C1 C4-C7"),
+    ] {
+        let mut doc = one_carbon(&config);
+        let atom = doc.editor.hotspot_atom.unwrap();
+        doc.editor.molecule.atom_by_id_mut(atom).unwrap().element = label.to_owned();
+        let doc = expanded(doc);
+        assert!(is_molecule(&doc, want), "{label} alone: {}", smiles(&doc));
+        assert!(
+            doc.editor.molecule.atoms.iter().all(|a| a.charge == 0),
+            "{label}: no charges"
+        );
+    }
+
+    // On the end of a bond: p-xylene's skeleton from a methyl carbon and `Tol`.
+    let doc = expanded(labelled_chain_end(&config, "Tol"));
+    assert!(
+        is_molecule(&doc, "C0-C1 C1=C2 C2-C3 C3=C4 C4-C5 C5=C6 C6-C1 C4-C7"),
+        "{}",
+        smiles(&doc)
+    );
+
+    // The solvents join through O (THF, DMF) or Cl (DCM), which have no valence left for a
+    // bond: on the end of one the label is kept, rather than drawn as an oxonium or with a
+    // divalent chlorine.
+    for label in ["THF", "DMF", "DCM"] {
+        let before = labelled_chain_end(&config, label);
+        let mol = before.editor.molecule.clone();
+        let doc = expanded(before);
+        assert_eq!(doc.editor.molecule, mol, "{label} on a bond is kept");
+    }
+}
+
+/// A user's file named like an app fragment is the one a label expands into.
+#[test]
+fn a_user_fragment_overrides_the_app_one_in_the_editor() {
+    let dir = empty_dir("user-over-app");
+    let mine = FragmentDef {
+        name: "THF".to_owned(),
+        atoms: vec![chembuider_rs::config::FragAtomDef {
+            element: "S".to_owned(),
+            pos: [0.0, 0.0],
+            charge: 0,
+        }],
+        bonds: Vec::new(),
+        attach_idx: 0,
+    };
+    FragmentStore::at(&dir).save(&mine).unwrap();
+    let config = app_config(&dir);
+    let doc = expanded(labelled_chain_end(&config, "THF"));
+    assert_eq!(composition(&doc).0, ["C", "S"]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A label that stands for no structure is left as it is, and the editor says which label it
 /// was, for the status bar: nothing is expanded on a guess.
 #[test]

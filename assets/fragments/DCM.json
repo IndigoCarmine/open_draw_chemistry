@@ -1,0 +1,42 @@
+{
+  "name": "DCM",
+  "atoms": [
+    {
+      "element": "Cl",
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "charge": 0
+    },
+    {
+      "element": "C",
+      "pos": [
+        1.5,
+        0.0
+      ],
+      "charge": 0
+    },
+    {
+      "element": "Cl",
+      "pos": [
+        2.25,
+        1.299
+      ],
+      "charge": 0
+    }
+  ],
+  "bonds": [
+    {
+      "begin": 0,
+      "end": 1,
+      "order": "Single"
+    },
+    {
+      "begin": 1,
+      "end": 2,
+      "order": "Single"
+    }
+  ],
+  "attach_idx": 0
+}

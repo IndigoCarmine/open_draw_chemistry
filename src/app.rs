@@ -1267,6 +1267,8 @@ impl OpenDrawApp {
         for doc in &mut self.docs {
             doc.editor.config.fragments = self.config.fragments.clone();
         }
+        // Formulas and weights read labels with the same names (and the formula-only ligands).
+        fragments::install_formula_groups(&self.config.fragments);
     }
 
     fn fragment_window(&mut self, ctx: &egui::Context) {
@@ -1756,7 +1758,7 @@ impl eframe::App for OpenDrawApp {
             .get_mut(self.active)
             .and_then(|doc| doc.editor.unexpanded_label.take())
         {
-            self.status = t!("app.status.label_not_expanded", label = label);
+            self.status = fragments::not_expanded_message(&label);
         }
         for command in commands {
             self.run(&ctx, command);

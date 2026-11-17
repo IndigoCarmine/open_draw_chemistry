@@ -32,6 +32,9 @@ nothing_to_copy = "Нечего копировать"
 pasted = "Вставлено"
 no_structure_on_clipboard = "В буфере обмена нет структуры"
 label_not_expanded = "Для метки «{label}» нет структуры: она не развёрнута"
+label_is_formula = "«{label}» — это формула ({formula}, {weight} г/моль): она остаётся меткой и не рисуется как структура"
+label_unknown_group = "Неизвестная группа «{group}» в метке «{label}»: нет формулы и массы, метка не развёрнута"
+label_unbalanced = "Скобки в метке «{label}» не согласованы: нет формулы и массы, метка не развёрнута"
 running_with_note = "{label} ({note})"
 assembly_shown = "Открыт вид ансамбля"
 no_model_for_monomer = "Нет 3D-модели для мономера. Сначала создайте её командой «Создать 3D из 2D» в меню 3D"
@@ -179,6 +182,7 @@ stop_cleanup = "Остановить упорядочивание"
 
 [fragments.source]
 builtin = "Встроенный"
+app = "Из приложения"
 user = "Пользовательский"
 user_override = "Пользовательский (заменяет встроенный)"
 

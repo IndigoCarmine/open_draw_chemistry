@@ -35,6 +35,9 @@ nothing_to_copy = "No hay nada que copiar"
 pasted = "Pegado"
 no_structure_on_clipboard = "No hay ninguna estructura en el portapapeles"
 label_not_expanded = "No hay estructura para la etiqueta «{label}»: no se ha expandido"
+label_is_formula = "«{label}» es una fórmula ({formula}, {weight} g/mol): se mantiene como etiqueta y no se dibuja como estructura"
+label_unknown_group = "Grupo desconocido «{group}» en la etiqueta «{label}»: no tiene fórmula ni masa, y no se ha expandido"
+label_unbalanced = "Los paréntesis de la etiqueta «{label}» no coinciden: no tiene fórmula ni masa, y no se ha expandido"
 running_with_note = "{label} ({note})"
 assembly_shown = "Se cambió a la vista de ensamblaje"
 no_model_for_monomer = "No hay ningún modelo 3D para usar como monómero. Crea uno primero con “Generar 3D desde 2D” en el menú 3D"
@@ -182,6 +185,7 @@ stop_cleanup = "Detener limpieza"
 
 [fragments.source]
 builtin = "Integrado"
+app = "Incluido en la aplicación"
 user = "Usuario"
 user_override = "Usuario (sustituye al integrado)"
 

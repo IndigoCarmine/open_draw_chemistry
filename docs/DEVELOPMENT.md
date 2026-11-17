@@ -31,6 +31,38 @@ cargo run -- path/to/file.cdx     # the file is optional
 The Windows packages carry the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`,
 `vcruntime140_1.dll`) app-local, so they run on a clean Windows without `vc_redist.x64.exe`.
 
+## Label abbreviations (fragments)
+
+A label such as `Ph` or `THF` expands into a structure (`x`) when a fragment of that name
+exists. Fragments come from three places, a later one replacing an earlier one of the same name:
+those built into chembuider-rs, the app's own database in [`assets/fragments/`](../assets/fragments),
+and the user's files (Manage Fragments).
+
+To add an abbreviation to the app, add `assets/fragments/<name>.json` — nothing else; `build.rs`
+compiles every file there into the binary. The format is chembuider-rs's `FragmentDef` (what
+Manage Fragments saves): `atoms` (element, position with bonds 1.5 long, charge), `bonds`
+(indices into `atoms`, `Single`/`Double`/`Triple`) and `attach_idx`, the atom the label's own
+bonds go to. Hydrogens are implicit. `cargo test` checks that every file parses, is named like
+its fragment and expands.
+
+A label can also be a formula that is never drawn — a salt (`K2CO3`) or a complex written with
+ligand abbreviations (`PdCl2(amphos)2`, `[(TMEDA)Zn(OH)(OTf)]3`, `Pd(dppf)Cl2·CH2Cl2`). Expand
+keeps it as a label, but it has a formula and a molecular weight, which the status bar, the
+analysis window and the reaction table (equivalents, moles, masses) use. The groups such a
+formula may name are the fragments above (each as the substituent it expands into) and the
+formula-only entries of [`assets/formula_groups.toml`](../assets/formula_groups.toml): name,
+other spellings, formula. To add a ligand, add a `[[group]]` there and its expected weight to
+`tests/formula_labels.rs`.
+
+Names are matched exactly as written, case included: `tmeda` and `COD` are read because
+`TMEDA` and `cod` list them under `aliases`; a spelling that is not listed (`Cod`) is not a
+group. Element symbols and group names are read the longest first (`Co` is cobalt, `CO` carbon
+and oxygen), and a spelling whose letters all read as elements (`COD`, `DBU`) is taken for the
+group only where it stands alone, as a whole label or inside its own brackets. Round, square
+and curly brackets nest to any depth; full-width brackets and digits read as ASCII. A formula
+with a group that is not known, or with brackets that do not match, has no weight, and the
+status bar says which.
+
 ## Cutting a release
 
 ```bash

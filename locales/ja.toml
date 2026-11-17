@@ -36,6 +36,9 @@ nothing_to_copy = "コピーするものがありません"
 pasted = "貼り付けました"
 no_structure_on_clipboard = "クリップボードに構造がありません"
 label_not_expanded = "ラベル「{label}」は展開できません（対応する構造がありません）"
+label_is_formula = "「{label}」は組成式です（{formula}、{weight} g/mol）。構造には展開せず、ラベルのまま扱います"
+label_unknown_group = "ラベル「{label}」の「{group}」は未知の基です。組成式・分子量を計算できず、展開もしていません"
+label_unbalanced = "ラベル「{label}」の括弧が対応していません。組成式・分子量を計算できず、展開もしていません"
 running_with_note = "{label}（{note}）"
 assembly_shown = "集合体画面に切り替えました"
 no_model_for_monomer = "単量体にする 3D モデルがありません。先に「3D」メニューの「2D から 3D を生成」で 3D モデルを作成してください"
@@ -217,6 +220,7 @@ stop_cleanup = "クリーンアップを停止"
 
 [fragments.source]
 builtin = "組み込み"
+app = "アプリ同梱"
 user = "ユーザー"
 user_override = "ユーザー（組み込みを置換）"
 
