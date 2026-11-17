@@ -97,10 +97,23 @@ impl FragmentStore {
 
     /// Every valid fragment file in the directory, sorted by file name. A file that does not
     /// parse, or that the library's loader would refuse (bad indices, a name that is not a
-    /// plain file name), is skipped like the library skips it.
+    /// plain file name), is skipped like the library skips it, with a warning on stderr: its
+    /// fragment is otherwise just missing, and a label of its name does not expand.
     fn user_files(&self) -> Vec<UserFile> {
-        let Some(entries) = self.dir().and_then(|d| std::fs::read_dir(d).ok()) else {
+        let Some(dir) = self.dir() else {
             return Vec::new();
+        };
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            // Not there until the first save.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+            Err(e) => {
+                eprintln!(
+                    "warn: cannot read the fragment folder {}: {e}",
+                    dir.display()
+                );
+                return Vec::new();
+            }
         };
         let mut paths: Vec<PathBuf> = entries
             .flatten()
@@ -110,11 +123,12 @@ impl FragmentStore {
         paths.sort();
         paths
             .into_iter()
-            .filter_map(|path| {
-                let text = std::fs::read_to_string(&path).ok()?;
-                let def: FragmentDef = serde_json::from_str(&text).ok()?;
-                (def.validate().is_ok() && Fragment::validate_name(&def.name).is_ok())
-                    .then_some(UserFile { def, path })
+            .filter_map(|path| match read_def(&path) {
+                Ok(def) => Some(UserFile { def, path }),
+                Err(e) => {
+                    eprintln!("warn: skipped the fragment file {}: {e}", path.display());
+                    None
+                }
             })
             .collect()
     }
@@ -241,6 +255,15 @@ impl FragmentStore {
         write_def(&file.path, &def)?;
         std::fs::rename(&file.path, &target).map_err(|e| t!("fragments.error.rename", error = e))
     }
+}
+
+/// The fragment in the file `path`, if it is one the library's loader would take.
+fn read_def(path: &Path) -> Result<FragmentDef, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let def: FragmentDef = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    def.validate()?;
+    Fragment::validate_name(&def.name)?;
+    Ok(def)
 }
 
 fn write_def(path: &Path, def: &FragmentDef) -> Result<(), String> {
