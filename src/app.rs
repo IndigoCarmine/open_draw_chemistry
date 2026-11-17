@@ -1738,6 +1738,14 @@ impl eframe::App for OpenDrawApp {
         ) {
             self.status = message;
         }
+        // `x` on a label that stands for no structure changes nothing; say so.
+        if let Some(label) = self
+            .docs
+            .get_mut(self.active)
+            .and_then(|doc| doc.editor.unexpanded_label.take())
+        {
+            self.status = t!("app.status.label_not_expanded", label = label);
+        }
         for command in commands {
             self.run(&ctx, command);
         }
