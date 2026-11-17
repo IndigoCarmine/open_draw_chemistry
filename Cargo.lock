@@ -698,7 +698,7 @@ dependencies = [
 [[package]]
 name = "chembuider-rs"
 version = "0.4.4"
-source = "git+https://github.com/IndigoCarmine/chembuider-rs?rev=c02f69a22cd2a7392aebe0ca8f612332a06f1538#c02f69a22cd2a7392aebe0ca8f612332a06f1538"
+source = "git+https://github.com/IndigoCarmine/chembuider-rs?rev=f1a27160e8d4f376d576cf964ff7d57a27d618b5#f1a27160e8d4f376d576cf964ff7d57a27d618b5"
 dependencies = [
  "cdx-file-rs",
  "cfb",
@@ -2910,7 +2910,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "open_draw_chemistry"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "acauda-embed",
  "chembuider-rs",
