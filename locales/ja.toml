@@ -170,6 +170,8 @@ cleanup = "クリーンアップ"
 stop_cleanup = "クリーンアップを停止"
 copy_iupac = "IUPAC 名をコピー"
 insert_iupac = "IUPAC 名をテキストとして挿入"
+rotate = "回転…"
+flip = "結合を軸に反転"
 bracket_sru = "括弧で囲む（繰り返し単位）"
 bracket_kind = "括弧の種類と形"
 

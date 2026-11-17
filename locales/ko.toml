@@ -144,6 +144,8 @@ cleanup = "정리"
 stop_cleanup = "정리 중지"
 copy_iupac = "IUPAC 이름 복사"
 insert_iupac = "IUPAC 이름을 텍스트로 삽입"
+rotate = "회전…"
+flip = "연결 결합을 축으로 뒤집기"
 bracket_sru = "괄호로 묶기(반복 단위)"
 bracket_kind = "괄호 종류와 모양"
 

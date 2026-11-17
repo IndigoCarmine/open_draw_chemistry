@@ -133,6 +133,8 @@ cleanup = "Bereinigen"
 stop_cleanup = "Bereinigen stoppen"
 copy_iupac = "IUPAC-Namen kopieren"
 insert_iupac = "IUPAC-Namen als Text einfügen"
+rotate = "Drehen…"
+flip = "An der Verbindungsbindung spiegeln"
 bracket_sru = "In Klammern setzen (Wiederholeinheit)"
 bracket_kind = "Klammertyp und -form"
 

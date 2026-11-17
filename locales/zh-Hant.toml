@@ -144,6 +144,8 @@ cleanup = "整理"
 stop_cleanup = "停止整理"
 copy_iupac = "複製 IUPAC 名稱"
 insert_iupac = "將 IUPAC 名稱插入為文字"
+rotate = "旋轉…"
+flip = "以連接鍵為軸翻轉"
 bracket_sru = "加上括號（重複單元）"
 bracket_kind = "括號類型與形狀"
 

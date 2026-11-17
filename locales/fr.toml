@@ -133,6 +133,8 @@ cleanup = "Nettoyer"
 stop_cleanup = "Arrêter le nettoyage"
 copy_iupac = "Copier le nom IUPAC"
 insert_iupac = "Insérer le nom IUPAC comme texte"
+rotate = "Faire pivoter…"
+flip = "Retourner autour de la liaison de jonction"
 bracket_sru = "Mettre entre crochets (motif de répétition)"
 bracket_kind = "Type et forme des crochets"
 
