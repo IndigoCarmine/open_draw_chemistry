@@ -685,7 +685,6 @@ pub(crate) mod tests {
         h.hover(t!("format.fill_ring"), &mut show);
         h.click("#16A34A", &mut show);
         h.click(t!("format.fill"), &mut show);
-        drop(show);
         assert_eq!(out, [Command::FillRing([22, 163, 74, 90])]);
         assert_eq!(appearance.ring_fill.rgba, [22, 163, 74, 90]);
     }
@@ -775,7 +774,6 @@ pub(crate) mod tests {
         }
         let labels = h.labels();
         h.click(last, &mut show);
-        drop(show);
         (out, labels)
     }
 

@@ -1179,7 +1179,7 @@ mod tests {
             let angle = x[1].atan2(x[0]).to_degrees();
             let expected = 30.0 * i as f64;
             let diff = (angle - expected).rem_euclid(360.0);
-            assert!(diff < 1e-6 || diff > 360.0 - 1e-6, "twist {angle}");
+            assert!(diff.min(360.0 - diff) < 1e-6, "twist {angle}");
         }
         // Consecutive layers are `slip` apart sideways.
         for w in ts.windows(2) {
