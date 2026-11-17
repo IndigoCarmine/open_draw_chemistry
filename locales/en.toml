@@ -233,6 +233,11 @@ cleanup = "Clean up"
 stop_cleanup = "Stop cleanup"
 copy_iupac = "Copy IUPAC name"
 insert_iupac = "Insert IUPAC name as text"
+# Opens a small box by the selection to type an angle; the selection is turned by it.
+rotate = "Rotate…"
+# Mirrors the selected part of a structure in the line of the one bond that joins it to
+# the rest (available when exactly one bond leaves the selection).
+flip = "Flip over the connecting bond"
 # Puts the selection in polymer brackets as a structural repeating unit.
 bracket_sru = "Enclose in brackets (repeating unit)"
 # Submenu: bracket type and shape.

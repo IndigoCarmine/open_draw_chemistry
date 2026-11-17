@@ -135,6 +135,8 @@ cleanup = "Riordina"
 stop_cleanup = "Interrompi riordino"
 copy_iupac = "Copia nome IUPAC"
 insert_iupac = "Inserisci nome IUPAC come testo"
+rotate = "Ruota…"
+flip = "Capovolgi rispetto al legame di giunzione"
 bracket_sru = "Racchiudi tra parentesi (unità ripetitiva)"
 bracket_kind = "Tipo e forma delle parentesi"
 
