@@ -45,6 +45,16 @@ Manage Fragments saves): `atoms` (element, position with bonds 1.5 long, charge)
 bonds go to. Hydrogens are implicit. `cargo test` checks that every file parses, is named like
 its fragment and expands.
 
+A label can also be a formula that is never drawn — a salt (`K2CO3`) or a complex written with
+ligand abbreviations (`PdCl2(amphos)2`, `[(TMEDA)Zn(OH)(OTf)]3`, `Pd(dppf)Cl2·CH2Cl2`). Expand
+keeps it as a label, but it has a formula and a molecular weight, which the status bar, the
+analysis window and the reaction table (equivalents, moles, masses) use. The groups such a
+formula may name are the fragments above (each as the substituent it expands into) and the
+formula-only entries of [`assets/formula_groups.toml`](../assets/formula_groups.toml): name,
+other spellings, formula. To add a ligand, add a `[[group]]` there and its expected weight to
+`tests/formula_labels.rs`. A formula with a group that is not known has no weight, and the
+unknown group is named.
+
 ## Cutting a release
 
 ```bash

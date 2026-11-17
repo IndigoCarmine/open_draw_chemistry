@@ -10,12 +10,18 @@
 //! Between the two sits the app's own database ([`app_fragments`]): the files of
 //! `assets/fragments/` in this repository, compiled into the binary. By name, a fragment of
 //! the library is replaced by the app's, and either by the user's.
+//!
+//! A label can also be a formula written with abbreviations that are never drawn — the ligands
+//! of `PdCl2(amphos)2`. Those are the app's formula-only groups ([`formula_only_groups`],
+//! `assets/formula_groups.toml`); together with the fragments they are what the library reads
+//! a label's formula and molecular weight with ([`install_formula_groups`]).
 
 use std::path::{Path, PathBuf};
 
 use chembuider_rs::ChemStructEditor;
 use chembuider_rs::config::{Config, FragAtomDef, FragBondDef, FragmentDef};
 use chembuider_rs::molecule::fragment::Fragment;
+use chembuider_rs::reaction::{FormulaGroup, LabelFormulaError, MolecularFormula};
 
 /// Where a listed fragment comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +68,87 @@ pub fn app_fragments() -> Vec<FragmentDef> {
             }
         })
         .collect()
+}
+
+/// `assets/formula_groups.toml`: the abbreviations with a formula and no structure.
+const FORMULA_GROUPS: &str = include_str!("../assets/formula_groups.toml");
+
+#[derive(serde::Deserialize)]
+struct FormulaGroupFile {
+    group: Vec<FormulaGroupEntry>,
+}
+
+/// One `[[group]]` of `assets/formula_groups.toml` (its `note` is for readers of the file).
+#[derive(serde::Deserialize)]
+struct FormulaGroupEntry {
+    name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+    formula: String,
+}
+
+/// The app's formula-only groups: ligands and reagents a label may name (`dppf`, `cod`,
+/// `TMEDA`) that have a formula but no structure to expand into. An entry that does not read
+/// is skipped with a warning (a test keeps one from being committed).
+pub fn formula_only_groups() -> Vec<FormulaGroup> {
+    let file: FormulaGroupFile = match toml::from_str(FORMULA_GROUPS) {
+        Ok(file) => file,
+        Err(e) => {
+            eprintln!("warn: assets/formula_groups.toml does not parse: {e}");
+            return Vec::new();
+        }
+    };
+    file.group
+        .iter()
+        .filter_map(|entry| {
+            let aliases: Vec<&str> = entry.aliases.iter().map(String::as_str).collect();
+            let group = FormulaGroup::written(&entry.name, &aliases, &entry.formula);
+            if group.is_none() {
+                eprintln!("warn: skipped the formula group {}", entry.name);
+            }
+            group
+        })
+        .collect()
+}
+
+/// The groups a label's formula is read with: the formula-only ones, then `fragments` (the
+/// layered list, [`FragmentStore::fragments`]) as the substituents they expand into — so a
+/// fragment, the user's included, has a name both of them use.
+pub fn formula_groups(fragments: &[FragmentDef]) -> Vec<FormulaGroup> {
+    let mut groups = formula_only_groups();
+    groups.extend(chembuider_rs::reaction::fragment_groups(fragments));
+    groups
+}
+
+/// Make [`formula_groups`] of `fragments` the groups every formula and molecular weight in
+/// the process is read with (the status bar, the analysis window, the reaction table).
+pub fn install_formula_groups(fragments: &[FragmentDef]) {
+    chembuider_rs::reaction::set_formula_groups(formula_groups(fragments));
+}
+
+/// What to tell the user when Expand left `label` as it was: that it is a formula, with its
+/// composition and weight (salts and complexes are kept as formulas, not drawn); which group
+/// in it is unknown; or that it stands for no structure.
+pub fn not_expanded_message(label: &str) -> String {
+    match MolecularFormula::of_label(label) {
+        Ok(formula) => match formula.weight() {
+            Some(weight) => t!(
+                "app.status.label_is_formula",
+                label = label,
+                formula = formula.plain(),
+                weight = format!("{weight:.2}")
+            ),
+            None => t!("app.status.label_not_expanded", label = label),
+        },
+        Err(LabelFormulaError::UnknownGroup(group)) => {
+            t!(
+                "app.status.label_unknown_group",
+                label = label,
+                group = group
+            )
+        }
+        Err(LabelFormulaError::NotAFormula) => t!("app.status.label_not_expanded", label = label),
+    }
 }
 
 /// One fragment as the manager lists it.
