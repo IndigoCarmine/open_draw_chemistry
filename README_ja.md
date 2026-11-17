@@ -13,7 +13,7 @@
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust)
 
-**[🌐 ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)** · [English](README.md) · [ダウンロード](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest) · [開発ガイド](docs/DEVELOPMENT_ja.md)
+**[🌐 ホームページ](https://indigocarmine.github.io/open_draw_chemistry-site/)** · [English](README.md) · [ダウンロード](https://github.com/IndigoCarmine/open_draw_chemistry/releases/latest) · [キー操作の一覧](docs/KEYS_ja.md) · [開発ガイド](docs/DEVELOPMENT_ja.md)
 
 </div>
 
