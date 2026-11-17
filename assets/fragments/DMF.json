@@ -1,0 +1,68 @@
+{
+  "name": "DMF",
+  "atoms": [
+    {
+      "element": "O",
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "charge": 0
+    },
+    {
+      "element": "C",
+      "pos": [
+        1.5,
+        0.0
+      ],
+      "charge": 0
+    },
+    {
+      "element": "N",
+      "pos": [
+        2.25,
+        1.299
+      ],
+      "charge": 0
+    },
+    {
+      "element": "C",
+      "pos": [
+        3.75,
+        1.299
+      ],
+      "charge": 0
+    },
+    {
+      "element": "C",
+      "pos": [
+        1.5,
+        2.598
+      ],
+      "charge": 0
+    }
+  ],
+  "bonds": [
+    {
+      "begin": 0,
+      "end": 1,
+      "order": "Double"
+    },
+    {
+      "begin": 1,
+      "end": 2,
+      "order": "Single"
+    },
+    {
+      "begin": 2,
+      "end": 3,
+      "order": "Single"
+    },
+    {
+      "begin": 2,
+      "end": 4,
+      "order": "Single"
+    }
+  ],
+  "attach_idx": 0
+}

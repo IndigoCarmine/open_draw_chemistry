@@ -182,6 +182,7 @@ stop_cleanup = "Interrompi riordino"
 
 [fragments.source]
 builtin = "Predefinito"
+app = "Incluso nell’app"
 user = "Utente"
 user_override = "Utente (sostituisce il predefinito)"
 

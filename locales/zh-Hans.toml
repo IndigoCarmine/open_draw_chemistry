@@ -187,6 +187,7 @@ stop_cleanup = "停止整理"
 
 [fragments.source]
 builtin = "内置"
+app = "应用自带"
 user = "用户"
 user_override = "用户（替换内置）"
 

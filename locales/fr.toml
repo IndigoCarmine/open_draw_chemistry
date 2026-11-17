@@ -179,6 +179,7 @@ stop_cleanup = "Arrêter le nettoyage"
 
 [fragments.source]
 builtin = "Intégré"
+app = "Fourni avec l’application"
 user = "Utilisateur"
 user_override = "Utilisateur (remplace l'intégré)"
 

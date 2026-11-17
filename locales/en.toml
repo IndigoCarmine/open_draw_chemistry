@@ -292,6 +292,7 @@ stop_cleanup = "Stop cleanup"
 [fragments.source]
 # Where a listed fragment comes from (shown after its atom count)
 builtin = "Built-in"
+app = "Bundled with the app"
 user = "User"
 user_override = "User (replaces built-in)"
 

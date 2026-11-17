@@ -190,6 +190,7 @@ stop_cleanup = "정리 중지"
 
 [fragments.source]
 builtin = "기본 제공"
+app = "앱 제공"
 user = "사용자"
 user_override = "사용자(기본 제공 대체)"
 

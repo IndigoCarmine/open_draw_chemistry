@@ -217,6 +217,7 @@ stop_cleanup = "クリーンアップを停止"
 
 [fragments.source]
 builtin = "組み込み"
+app = "アプリ同梱"
 user = "ユーザー"
 user_override = "ユーザー（組み込みを置換）"
 

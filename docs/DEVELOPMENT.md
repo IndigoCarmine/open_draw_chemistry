@@ -31,6 +31,20 @@ cargo run -- path/to/file.cdx     # the file is optional
 The Windows packages carry the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`,
 `vcruntime140_1.dll`) app-local, so they run on a clean Windows without `vc_redist.x64.exe`.
 
+## Label abbreviations (fragments)
+
+A label such as `Ph` or `THF` expands into a structure (`x`) when a fragment of that name
+exists. Fragments come from three places, a later one replacing an earlier one of the same name:
+those built into chembuider-rs, the app's own database in [`assets/fragments/`](../assets/fragments),
+and the user's files (Manage Fragments).
+
+To add an abbreviation to the app, add `assets/fragments/<name>.json` — nothing else; `build.rs`
+compiles every file there into the binary. The format is chembuider-rs's `FragmentDef` (what
+Manage Fragments saves): `atoms` (element, position with bonds 1.5 long, charge), `bonds`
+(indices into `atoms`, `Single`/`Double`/`Triple`) and `attach_idx`, the atom the label's own
+bonds go to. Hydrogens are implicit. `cargo test` checks that every file parses, is named like
+its fragment and expands.
+
 ## Cutting a release
 
 ```bash

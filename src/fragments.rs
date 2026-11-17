@@ -6,6 +6,10 @@
 //! per-user directory instead ([`default_dir`]), one `<name>.json` per fragment in the
 //! library's own [`FragmentDef`] format, and lays them over the built-in ones by name, as the
 //! library's loader does.
+//!
+//! Between the two sits the app's own database ([`app_fragments`]): the files of
+//! `assets/fragments/` in this repository, compiled into the binary. By name, a fragment of
+//! the library is replaced by the app's, and either by the user's.
 
 use std::path::{Path, PathBuf};
 
@@ -18,9 +22,11 @@ use chembuider_rs::molecule::fragment::Fragment;
 pub enum Source {
     /// Compiled into chembuider-rs; read-only.
     Builtin,
+    /// Compiled into the app from `assets/fragments/`; read-only.
+    App,
     /// A file in the user's fragment directory.
     User,
-    /// A user file named like a built-in fragment, which it replaces.
+    /// A user file named like a built-in or app fragment, which it replaces.
     UserOverride,
 }
 
@@ -28,14 +34,34 @@ impl Source {
     pub fn label(self) -> &'static str {
         match self {
             Source::Builtin => t!("fragments.source.builtin"),
+            Source::App => t!("fragments.source.app"),
             Source::User => t!("fragments.source.user"),
             Source::UserOverride => t!("fragments.source.user_override"),
         }
     }
 
     pub fn is_user(self) -> bool {
-        self != Source::Builtin
+        matches!(self, Source::User | Source::UserOverride)
     }
+}
+
+// `APP_FRAGMENT_FILES`: (file name, contents) of every `assets/fragments/*.json`, sorted by
+// file name; written by `build.rs`.
+include!(concat!(env!("OUT_DIR"), "/app_fragments.rs"));
+
+/// The app's own fragments: the files of `assets/fragments/`, compiled in. A file that is not
+/// a valid fragment is skipped with a warning (a test keeps one from being committed).
+pub fn app_fragments() -> Vec<FragmentDef> {
+    APP_FRAGMENT_FILES
+        .iter()
+        .filter_map(|(file, text)| match parse_def(text) {
+            Ok(def) => Some(def),
+            Err(e) => {
+                eprintln!("warn: skipped the bundled fragment {file}: {e}");
+                None
+            }
+        })
+        .collect()
 }
 
 /// One fragment as the manager lists it.
@@ -138,8 +164,8 @@ impl FragmentStore {
         self.user_files().into_iter().map(|f| f.def).collect()
     }
 
-    /// The built-in fragments with the user's laid over them by name: what the editor's
-    /// [`Config::fragments`] should hold.
+    /// The built-in fragments with the app's and then the user's laid over them by name: what
+    /// the editor's [`Config::fragments`] should hold.
     pub fn fragments(&self) -> Vec<FragmentDef> {
         self.entries().into_iter().map(|e| e.def).collect()
     }
@@ -154,11 +180,21 @@ impl FragmentStore {
                 source: Source::Builtin,
             })
             .collect();
+        for def in app_fragments() {
+            let entry = Entry {
+                def,
+                source: Source::App,
+            };
+            match entries.iter_mut().find(|e| e.def.name == entry.def.name) {
+                Some(slot) => *slot = entry,
+                None => entries.push(entry),
+            }
+        }
         for def in self.user_fragments() {
             match entries.iter_mut().find(|e| e.def.name == def.name) {
                 Some(slot) => {
                     // A later file with the same name wins, as in the library's merge.
-                    if slot.source == Source::Builtin {
+                    if !slot.source.is_user() {
                         slot.source = Source::UserOverride;
                     }
                     slot.def = def;
@@ -211,7 +247,7 @@ impl FragmentStore {
         Ok(path)
     }
 
-    /// Delete the user fragment `name`. A built-in it overrode comes back.
+    /// Delete the user fragment `name`. A built-in or app fragment it overrode comes back.
     pub fn delete(&self, name: &str) -> Result<(), String> {
         let path = self
             .file_of(name)
@@ -260,7 +296,12 @@ impl FragmentStore {
 /// The fragment in the file `path`, if it is one the library's loader would take.
 fn read_def(path: &Path) -> Result<FragmentDef, String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let def: FragmentDef = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    parse_def(&text)
+}
+
+/// The fragment the JSON `text` holds, if it is one the library's loader would take.
+fn parse_def(text: &str) -> Result<FragmentDef, String> {
+    let def: FragmentDef = serde_json::from_str(text).map_err(|e| e.to_string())?;
     def.validate()?;
     Fragment::validate_name(&def.name)?;
     Ok(def)
@@ -476,6 +517,49 @@ mod tests {
 
         store.delete("OH").unwrap();
         assert_eq!(builtin_atoms(&store), Some(before));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn every_bundled_file_is_a_fragment_named_like_its_file() {
+        assert!(!APP_FRAGMENT_FILES.is_empty());
+        for (file, text) in APP_FRAGMENT_FILES {
+            let def = parse_def(text).unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert_eq!(format!("{}.json", def.name), *file);
+        }
+        // Each file is listed once, whatever the library has under the same name.
+        let store = FragmentStore::at(temp_dir("bundled"));
+        for def in app_fragments() {
+            let listed: Vec<Entry> = store
+                .entries()
+                .into_iter()
+                .filter(|e| e.def.name == def.name)
+                .collect();
+            assert_eq!(listed.len(), 1, "{}", def.name);
+            assert_eq!(listed[0].source, Source::App, "{}", def.name);
+        }
+    }
+
+    #[test]
+    fn a_user_fragment_overrides_the_app_one_until_deleted() {
+        let dir = temp_dir("override-app");
+        let store = FragmentStore::at(&dir);
+        let listed = |store: &FragmentStore| {
+            store
+                .entries()
+                .into_iter()
+                .find(|e| e.def.name == "THF")
+                .map(|e| (e.source, e.def.atoms.len()))
+        };
+        assert_eq!(listed(&store), Some((Source::App, 5)));
+        store.save(&two_atoms("THF")).unwrap();
+        assert_eq!(listed(&store), Some((Source::UserOverride, 2)));
+        assert_eq!(
+            store.fragments().iter().filter(|d| d.name == "THF").count(),
+            1
+        );
+        store.delete("THF").unwrap();
+        assert_eq!(listed(&store), Some((Source::App, 5)));
         std::fs::remove_dir_all(&dir).ok();
     }
 

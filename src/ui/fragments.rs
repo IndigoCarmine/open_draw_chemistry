@@ -122,7 +122,9 @@ impl FragmentManager {
                     ui.colored_label(ui.visuals().error_fg_color, e);
                 } else if let Some(e) = cx.entries.iter().find(|e| e.def.name == name) {
                     let note = match e.source {
-                        Source::Builtin => t!("fragments.manager.replaces_builtin", name = name),
+                        Source::Builtin | Source::App => {
+                            t!("fragments.manager.replaces_builtin", name = name)
+                        }
                         _ => t!("fragments.manager.overwrites_user", name = name),
                     };
                     ui.colored_label(ui.visuals().warn_fg_color, note);

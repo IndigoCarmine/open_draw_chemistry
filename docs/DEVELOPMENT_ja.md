@@ -31,6 +31,20 @@ cargo run -- path/to/file.cdx     # ファイルの指定は省略可
 Windows 版は Visual C++ ランタイム（`msvcp140.dll`・`vcruntime140.dll`・`vcruntime140_1.dll`）を
 アプリと同じフォルダに同梱しているので、`vc_redist.x64.exe` を入れていないまっさらな Windows でも動きます。
 
+## ラベルの略号（フラグメント）
+
+`Ph` や `THF` のようなラベルは、同じ名前のフラグメントがあれば `x` で構造に展開されます。
+フラグメントの出どころは 3 つで、同じ名前なら後のものが優先されます: chembuider-rs の組み込み、
+このアプリのデータベース [`assets/fragments/`](../assets/fragments)、利用者のファイル
+（「断片の管理」）。
+
+アプリに略号を追加するには `assets/fragments/<名前>.json` を置くだけです。`build.rs` がこの
+フォルダのファイルをすべてバイナリに埋め込みます。形式は chembuider-rs の `FragmentDef`
+（「断片の管理」が保存するものと同じ）で、`atoms`（元素、結合長 1.5 の座標、電荷）、
+`bonds`（`atoms` の番号と `Single`/`Double`/`Triple`）、`attach_idx`（ラベルの結合がつながる原子）
+からなります。水素は書きません。`cargo test` が、各ファイルが読めること、名前がファイル名と
+一致すること、展開できることを確認します。
+
 ## リリースする
 
 ```bash
