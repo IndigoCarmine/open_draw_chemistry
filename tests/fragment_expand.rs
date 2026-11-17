@@ -204,3 +204,84 @@ fn a_label_finished_by_clicking_away_expands_on_x() {
     frame(&ctx, &mut doc, Vec::new());
     check_expanded(&doc, def).unwrap();
 }
+
+/// A carbon bonded to one other carbon, the keyboard aimed at the far one, which is labelled
+/// `label`.
+fn labelled_chain_end(config: &Config, label: &str) -> Document {
+    let mut doc = Document::new(config, 1);
+    let mol = &mut doc.editor.molecule;
+    let first = mol.add_atom("C".to_owned(), [0.0, 0.0], 0);
+    let end = mol.add_atom(label.to_owned(), [1.5, 0.0], 0);
+    mol.add_bond(first, end, chembuider_rs::BondOrder::Single);
+    doc.editor.hotspot_atom = Some(end);
+    doc
+}
+
+/// `doc` after `x` is pressed on its labelled atom.
+fn expanded(mut doc: Document) -> Document {
+    let ctx = egui::Context::default();
+    frame(&ctx, &mut doc, Vec::new());
+    frame(&ctx, &mut doc, stroke(egui::Key::X, Some('x')));
+    frame(&ctx, &mut doc, Vec::new());
+    doc
+}
+
+/// The elements of the atoms and the orders of the bonds, each sorted.
+fn composition(doc: &Document) -> (Vec<String>, Vec<i16>) {
+    let mol = &doc.editor.molecule;
+    let mut elements: Vec<String> = mol.atoms.iter().map(|a| a.element.clone()).collect();
+    let mut orders: Vec<i16> = mol.bonds.iter().map(|b| b.order.valence()).collect();
+    elements.sort_unstable();
+    orders.sort_unstable();
+    (elements, orders)
+}
+
+/// Condensed formulas expand with the bonds their valences demand: `CN` is a nitrile, `CHO` an
+/// aldehyde and `COOH` a carboxylic acid, not chains of single bonds; the abbreviations that
+/// are not fragments of their own (`OTf`, `NHBoc`, …) are read from the names they are made of.
+#[test]
+fn condensed_labels_expand_to_the_right_structure() {
+    let config = app_config(&empty_dir("condensed"));
+    for (label, elements, orders) in [
+        ("CN", "C C N", vec![1, 3]),
+        ("CHO", "C C O", vec![1, 2]),
+        ("COOH", "C C O O", vec![1, 1, 2]),
+        ("CO2H", "C C O O", vec![1, 1, 2]),
+        ("CH3", "C C", vec![1]),
+        ("CCl3", "C C Cl Cl Cl", vec![1, 1, 1, 1]),
+        ("CO2Et", "C C C C O O", vec![1, 1, 1, 1, 2]),
+        ("NMe2", "C C C N", vec![1, 1, 1]),
+        ("SiMe3", "C C C C Si", vec![1, 1, 1, 1]),
+        ("OMs", "C C O O O S", vec![1, 1, 1, 2, 2]),
+        ("OAc", "C C C O O", vec![1, 1, 1, 2]),
+        ("HOOC", "C C O O", vec![1, 1, 2]),
+        ("NC", "C C N", vec![1, 3]),
+        ("t-Bu", "C C C C C", vec![1, 1, 1, 1]),
+        ("Ms", "C C O O S", vec![1, 1, 2, 2]),
+        ("Bn", "C C C C C C C C", vec![1, 1, 1, 1, 1, 2, 2, 2]),
+        ("ph", "C C C C C C C", vec![1, 1, 1, 1, 2, 2, 2]),
+    ] {
+        let doc = expanded(labelled_chain_end(&config, label));
+        let want: Vec<String> = elements.split(' ').map(str::to_owned).collect();
+        assert_eq!(composition(&doc), (want, orders), "{label}");
+        assert_eq!(doc.editor.unexpanded_label, None, "{label}");
+    }
+}
+
+/// A label that stands for no structure is left as it is, and the editor says which label it
+/// was, for the status bar: nothing is expanded on a guess.
+#[test]
+fn a_label_with_no_structure_is_left_alone_and_reported() {
+    let config = app_config(&empty_dir("unread"));
+    for label in ["Qq", "CO2", "AcCl", "PPh3", "BOC", "CO"] {
+        let before = labelled_chain_end(&config, label);
+        let mol = before.editor.molecule.clone();
+        let doc = expanded(before);
+        assert_eq!(doc.editor.molecule, mol, "{label}: nothing changes");
+        assert_eq!(doc.editor.unexpanded_label.as_deref(), Some(label));
+        assert!(doc.editor.undo_stack.is_empty(), "{label}: nothing to undo");
+    }
+    // A plain element is not a label to expand, so there is nothing to report.
+    let doc = expanded(labelled_chain_end(&config, "N"));
+    assert_eq!(doc.editor.unexpanded_label, None);
+}
