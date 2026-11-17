@@ -1655,15 +1655,10 @@ impl eframe::App for OpenDrawApp {
                                         &mut commands,
                                     );
                                 } else {
-                                    // The panel reports a click on its copy button; the status bar
-                                    // is not told here.
-                                    let _ = self.analysis.ui(
+                                    // Of the selection only: nothing is analysed without one.
+                                    ui::properties::analysis(
                                         ui,
-                                        &doc.editor.molecule,
-                                        &doc.editor.selected_atoms,
-                                    );
-                                    ui::smiles_row::show(
-                                        ui,
+                                        &mut self.analysis,
                                         &doc.editor.molecule,
                                         &doc.editor.selected_atoms,
                                         &self.config,

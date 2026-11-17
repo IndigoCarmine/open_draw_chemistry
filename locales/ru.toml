@@ -263,6 +263,7 @@ label_separator = ", "
 [properties]
 collapse = "Свернуть панель"
 expand = "Открыть панель «{title}»"
+select_hint = "Выберите структуру для анализа"
 
 [properties.title]
 analysis = "Анализ"

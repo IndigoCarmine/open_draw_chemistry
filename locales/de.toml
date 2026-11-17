@@ -263,6 +263,7 @@ label_separator = ", "
 [properties]
 collapse = "Bereich einklappen"
 expand = "Bereich „{title}“ öffnen"
+select_hint = "Struktur auswählen, um sie zu analysieren"
 
 [properties.title]
 analysis = "Analyse"
