@@ -743,6 +743,7 @@ step_stack = "Stapel / Helix"
 step_array = "Reihe"
 step_lattice = "Kristall"
 step_transform = "Verschieben / Drehen"
+step_bend = "Bogen"
 
 [assembly.model.ring]
 count = "Anzahl"
@@ -783,6 +784,24 @@ pivot = "Drehpunkt"
 pivot_tip = "Der Punkt, um den gedreht wird. Der Schwerpunkt schließt ausgelassene (gelöschte oder abgetrennte) Kopien ein"
 pivot_centroid = "Schwerpunkt"
 pivot_origin = "Ursprung"
+
+[assembly.model.bend]
+radius = "Radius"
+radius_tip = "Radius des Bogens. Die Länge entlang z wird zur Länge entlang des Bogens, so bleiben die Abstände der Moleküle auf der Mittellinie erhalten. 0 lässt es gerade"
+direction = "Richtung"
+direction_tip = "Wohin sich der Bogen krümmt, als Winkel in der xy-Ebene ab +x (0° krümmt nach +x, 90° nach +y)"
+pivot = "Fixpunkt"
+pivot_tip = "Der Punkt, der sich nicht bewegt; die Linie entlang z durch ihn ist die Mittellinie des Bogens. Der Schwerpunkt hält die Mitte fest, der Ursprung z = 0"
+pivot_centroid = "Schwerpunkt"
+pivot_origin = "Ursprung"
+orient = "Moleküle"
+orient_tip = "Jedes Molekül wird als starres Ganzes bewegt, seine Form ändert sich nie. Entlang des Bogens: mit der Krümmung gedreht, wie eine gebogene Säule. Beibehalten: nur verschoben, gleich ausgerichtet wie vorher"
+orient_tangent = "Entlang des Bogens"
+orient_keep = "Beibehalten"
+curvature = "Krümmung"
+curvature_tip = "Folgt aus dem Radius: Drehung des Bogens pro Ångström und Länge eines ganzen Kreises"
+curvature_value = "{per_angstrom}°/Å · Kreis {circle} Å"
+straight = "— (gerade)"
 
 [assembly.model.lattice]
 space_group = "Raumgruppe"
@@ -882,6 +901,7 @@ rotated = "gedreht"
 slip = "Versatz {value}Å"
 operations = { one = "{n} Operation", other = "{n} Operationen" }
 no_spacing = "Abstand 0Å"
+orientation_kept = "Ausrichtung beibehalten"
 
 [assembly.pipeline.count]
 skipped = { one = "Übersprungen → {n} Molekül", other = "Übersprungen → {n} Moleküle" }
@@ -896,6 +916,7 @@ ring_tip = "Ordnet die Moleküle auf einem Kreis um die z-Achse an (Rosette)"
 stack_tip = "Stapelt alles Bisherige entlang z. Drehung und Versatz ergeben eine Helix"
 lattice_tip = "Nimmt alles Bisherige als asymmetrische Einheit, baut die Elementarzelle aus den Gitterkonstanten und den Symmetrieoperationen der Raumgruppe und wiederholt sie"
 transform_tip = "Verschiebt und dreht alles bisher Gebaute einmal, ohne es zu kopieren"
+bend_tip = "Biegt alles bisher Gebaute auf einen Kreisbogen. Jedes Molekül bewegt sich als starres Ganzes"
 lattice_exists = "Es gibt bereits einen Kristallschritt"
 
 [assembly.symop.system]
@@ -1015,6 +1036,8 @@ stack_twist = "Drehung"
 stack_slip = "Versatz"
 array_offset = "Abstand {axis}"
 array_rotation = "Drehung {axis}"
+bend_radius = "Bogenradius"
+bend_direction = "Bogenrichtung"
 pose_position = "Position {axis}"
 pose_rotation = "Drehung {axis}"
 step = "Schritt"

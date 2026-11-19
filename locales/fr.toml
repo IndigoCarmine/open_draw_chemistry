@@ -743,6 +743,7 @@ step_stack = "Empilement / hélice"
 step_array = "Réseau"
 step_lattice = "Cristal"
 step_transform = "Déplacer / Tourner"
+step_bend = "Arc"
 
 [assembly.model.ring]
 count = "Nombre"
@@ -783,6 +784,24 @@ pivot = "Pivot"
 pivot_tip = "Le point autour duquel tourne la rotation. Le centroïde inclut les copies exclues (supprimées ou détachées)"
 pivot_centroid = "Centroïde"
 pivot_origin = "Origine"
+
+[assembly.model.bend]
+radius = "Rayon"
+radius_tip = "Rayon de l’arc. La longueur le long de z devient la longueur le long de l’arc : l’espacement des molécules sur la ligne centrale est conservé. 0 le laisse droit"
+direction = "Direction"
+direction_tip = "Vers où l’arc se courbe, en angle dans le plan xy depuis +x (0° courbe vers +x, 90° vers +y)"
+pivot = "Point fixe"
+pivot_tip = "Le point qui ne bouge pas ; la ligne selon z qui le traverse est la ligne centrale de l’arc. Le centroïde garde le milieu en place ; l’origine garde z = 0"
+pivot_centroid = "Centroïde"
+pivot_origin = "Origine"
+orient = "Molécules"
+orient_tip = "Chaque molécule est déplacée d’un bloc rigide : sa forme ne change jamais. Le long de l’arc : tournée pour suivre la courbe, comme une colonne pliée. Conserver : seulement déplacée, orientée comme avant"
+orient_tangent = "Le long de l’arc"
+orient_keep = "Conserver"
+curvature = "Courbure"
+curvature_tip = "Découle du rayon : rotation de l’arc par ångström et longueur d’un cercle complet"
+curvature_value = "{per_angstrom}°/Å · cercle {circle} Å"
+straight = "— (droit)"
 
 [assembly.model.lattice]
 space_group = "Groupe d'espace"
@@ -882,6 +901,7 @@ rotated = "tournées"
 slip = "décalage {value}Å"
 operations = { one = "{n} opération", many = "{n} d'opérations", other = "{n} opérations" }
 no_spacing = "espacement 0Å"
+orientation_kept = "orientation conservée"
 
 [assembly.pipeline.count]
 skipped = { one = "Ignorée → {n} molécule", many = "Ignorée → {n} de molécules", other = "Ignorée → {n} molécules" }
@@ -896,6 +916,7 @@ ring_tip = "Dispose les molécules sur un cercle autour de l'axe z (une rosette)
 stack_tip = "Empile tout ce qui précède selon z. La torsion et le décalage en font une hélice"
 lattice_tip = "Prend tout ce qui précède comme unité asymétrique, construit la maille élémentaire à partir des paramètres de maille et des opérations de symétrie du groupe d'espace, puis la répète"
 transform_tip = "Déplace et tourne une fois tout ce qui est construit jusqu’ici, sans le copier"
+bend_tip = "Courbe tout ce qui est construit jusqu’ici sur un arc de cercle. Chaque molécule se déplace d’un bloc rigide"
 lattice_exists = "Il y a déjà une étape Cristal"
 
 [assembly.symop.system]
@@ -1015,6 +1036,8 @@ stack_twist = "Torsion"
 stack_slip = "Décalage"
 array_offset = "Espacement {axis}"
 array_rotation = "Rotation {axis}"
+bend_radius = "Rayon de l’arc"
+bend_direction = "Direction de l’arc"
 pose_position = "Position {axis}"
 pose_rotation = "Rotation {axis}"
 step = "Étape"

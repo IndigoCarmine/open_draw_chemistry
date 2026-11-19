@@ -746,6 +746,7 @@ step_stack = "Impilamento / elica"
 step_array = "Serie"
 step_lattice = "Cristallo"
 step_transform = "Sposta / Ruota"
+step_bend = "Arco"
 
 [assembly.model.ring]
 count = "Numero"
@@ -786,6 +787,24 @@ pivot = "Perno"
 pivot_tip = "Il punto attorno a cui avviene la rotazione. Il baricentro include le copie escluse (eliminate o staccate)"
 pivot_centroid = "Baricentro"
 pivot_origin = "Origine"
+
+[assembly.model.bend]
+radius = "Raggio"
+radius_tip = "Raggio dell’arco. La lunghezza lungo z diventa la lunghezza lungo l’arco, quindi la spaziatura delle molecole sulla linea centrale resta la stessa. 0 lo lascia dritto"
+direction = "Direzione"
+direction_tip = "Verso dove si curva l’arco, come angolo nel piano xy da +x (0° curva verso +x, 90° verso +y)"
+pivot = "Punto fisso"
+pivot_tip = "Il punto che non si muove; la linea lungo z che lo attraversa è la linea centrale dell’arco. Il baricentro tiene fermo il centro; l’origine tiene ferma z = 0"
+pivot_centroid = "Baricentro"
+pivot_origin = "Origine"
+orient = "Molecole"
+orient_tip = "Ogni molecola è spostata come un blocco rigido, quindi la sua forma non cambia mai. Lungo l’arco: ruotata per seguire la curva, come una colonna piegata. Mantieni: solo spostata, orientata come prima"
+orient_tangent = "Lungo l’arco"
+orient_keep = "Mantieni"
+curvature = "Curvatura"
+curvature_tip = "Deriva dal raggio: quanto ruota l’arco per ångström e la lunghezza di un cerchio intero"
+curvature_value = "{per_angstrom}°/Å · cerchio {circle} Å"
+straight = "— (dritto)"
 
 [assembly.model.lattice]
 space_group = "Gruppo spaziale"
@@ -885,6 +904,7 @@ rotated = "ruotato"
 slip = "scorr. {value}Å"
 operations = { one = "{n} operazione", other = "{n} operazioni" }
 no_spacing = "spaziatura 0Å"
+orientation_kept = "orientamento mantenuto"
 
 [assembly.pipeline.count]
 skipped = { one = "Saltato → {n} molecola", other = "Saltato → {n} molecole" }
@@ -899,6 +919,7 @@ ring_tip = "Dispone le molecole su una circonferenza attorno all’asse z (una r
 stack_tip = "Impila tutto ciò che precede lungo z. Torsione e scorrimento ne fanno un’elica"
 lattice_tip = "Prende tutto ciò che precede come unità asimmetrica, costruisce la cella elementare dalle costanti di cella e dalle operazioni di simmetria del gruppo spaziale, e la ripete"
 transform_tip = "Sposta e ruota una volta tutto ciò che è stato costruito finora, senza copiarlo"
+bend_tip = "Piega tutto ciò che è stato costruito finora su un arco di cerchio. Ogni molecola si muove come un blocco rigido"
 lattice_exists = "C’è già un passaggio cristallo"
 
 [assembly.symop.system]
@@ -1018,6 +1039,8 @@ stack_twist = "Torsione"
 stack_slip = "Scorrimento"
 array_offset = "Spaziatura {axis}"
 array_rotation = "Rotazione {axis}"
+bend_radius = "Raggio dell’arco"
+bend_direction = "Direzione dell’arco"
 pose_position = "Posizione {axis}"
 pose_rotation = "Rotazione {axis}"
 step = "Passaggio"

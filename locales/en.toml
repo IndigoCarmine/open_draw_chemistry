@@ -1028,6 +1028,8 @@ step_array = "Array"
 step_lattice = "Crystal"
 # Step name: moves and turns the whole structure once, without copying it.
 step_transform = "Move / Rotate"
+# Step name: bends everything built so far onto a circular arc, without copying it.
+step_bend = "Arc"
 
 [assembly.model.ring]
 # Parameter labels are in a narrow column (about 8 characters)
@@ -1076,6 +1078,34 @@ pivot_tip = "The point the rotation turns about. The centroid also counts the mo
 pivot_centroid = "Centroid"
 # Choice of pivot: the origin of coordinates.
 pivot_origin = "Origin"
+
+[assembly.model.bend]
+# Parameter label (narrow): radius of the arc
+radius = "Radius"
+radius_tip = "Radius of the arc. The length along z becomes the length along the arc, so the spacing of the molecules along the centre line is kept. 0 leaves it straight"
+# Parameter label (narrow): which way the arc curves
+direction = "Direction"
+direction_tip = "Which way the arc curves, as an angle in the xy plane from +x (0° curves towards +x, 90° towards +y)"
+# Parameter label (narrow): the point that stays put
+pivot = "Fixed at"
+pivot_tip = "The point that does not move; the line along z through it is the arc's centre line. The centroid keeps the middle in place; the origin keeps z = 0 in place"
+# Choice of fixed point: the centroid of the atoms built so far.
+pivot_centroid = "Centroid"
+# Choice of fixed point: the origin of coordinates.
+pivot_origin = "Origin"
+# Parameter label (narrow): how each molecule is turned
+orient = "Molecules"
+orient_tip = "Each molecule is moved as a rigid whole, so its shape never changes. Along the arc: turned to follow the curve, like a bent column. Keep: only moved, facing the same way as before"
+# Choice: turn each molecule to follow the arc.
+orient_tangent = "Along the arc"
+# Choice: keep each molecule's orientation.
+orient_keep = "Keep"
+# Read-only row label: how sharply the arc turns.
+curvature = "Curvature"
+curvature_tip = "Follows from the radius: how far the arc turns per ångström along it, and the length of a whole circle"
+# {per_angstrom}: degrees, e.g. 2.86. {circle}: Å, e.g. 125.7.
+curvature_value = "{per_angstrom}°/Å · circle {circle} Å"
+straight = "— (straight)"
 
 [assembly.model.lattice]
 space_group = "Space group"
@@ -1220,6 +1250,8 @@ slip = "slip {value}Å"
 operations = { one = "{n} operation", other = "{n} operations" }
 # Very short: an array step with no spacing.
 no_spacing = "spacing 0Å"
+# Very short: the arc step keeps each molecule's orientation.
+orientation_kept = "orientation kept"
 
 [assembly.pipeline.count]
 # After a step card: the step is skipped; {n} molecules so far.
@@ -1239,6 +1271,7 @@ ring_tip = "Arranges the molecules on a circle around the z axis (a rosette)"
 stack_tip = "Stacks everything so far along z. Twist and slip make it a helix"
 lattice_tip = "Takes everything so far as the asymmetric unit, builds the unit cell from the cell constants and the space group's symmetry operations, and repeats it"
 transform_tip = "Moves and turns everything built so far once, without copying it"
+bend_tip = "Bends everything built so far onto a circular arc. Each molecule moves as a rigid whole"
 lattice_exists = "There already is a crystal step"
 
 [assembly.symop.system]
@@ -1413,6 +1446,10 @@ stack_slip = "Slip"
 array_offset = "Offset {axis}"
 # Array step parameter; {axis} is x, y or z.
 array_rotation = "Rotation {axis}"
+# Arc step parameter.
+bend_radius = "Arc radius"
+# Arc step parameter (an angle).
+bend_direction = "Arc direction"
 # Hand-placed molecule parameter; {axis} is x, y or z.
 pose_position = "Position {axis}"
 # Hand-placed molecule parameter; {axis} is x, y or z.

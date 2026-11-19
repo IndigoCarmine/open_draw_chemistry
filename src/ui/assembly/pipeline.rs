@@ -6,7 +6,7 @@ use egui::{Margin, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, vec2};
 
 use super::style::{self, Look};
 use super::{AssemblyView, Change, Ink};
-use crate::assembly::model::{Array, Pivot, Ring, Stack, Transform};
+use crate::assembly::model::{Array, Bend, BendOrient, Pivot, Ring, Stack, Transform};
 use crate::assembly::{AssemblyState, Step, symop};
 use crate::ui::icons::{self, Icon};
 
@@ -378,6 +378,19 @@ pub(super) fn summary(step: &Step) -> String {
                 parts.join(" · ")
             }
         }
+        Step::Bend(Bend {
+            radius,
+            direction_deg,
+            orient,
+            ..
+        }) => {
+            let mut s = format!("r {radius:.2}Å · φ {direction_deg:.0}°");
+            if *orient == BendOrient::Keep {
+                s.push_str(" · ");
+                s.push_str(t!("assembly.pipeline.summary.orientation_kept"));
+            }
+            s
+        }
         Step::Lattice(l) => {
             let group = symop::matching_preset(&l.symops).map_or_else(
                 || tn!("assembly.pipeline.summary.operations", l.symops.len()),
@@ -423,7 +436,7 @@ pub(super) fn count_text(step: &Step, before: usize, after: usize) -> String {
             factor = after / before
         ),
         // It moves the structure and copies nothing.
-        Step::Transform(_) => tn!("assembly.pipeline.count.result", after),
+        Step::Transform(_) | Step::Bend(_) => tn!("assembly.pipeline.count.result", after),
         _ => tn!(
             "assembly.pipeline.count.times",
             after,
@@ -497,7 +510,7 @@ pub(super) fn add_box(ui: &mut Ui, look: &Look, state: &AssemblyState, changes: 
             ui.add_space(2.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                let chips: [Chip; 5] = [
+                let chips: [Chip; 6] = [
                     (
                         Step::new_array().label(),
                         t!("assembly.pipeline.add.array_tip"),
@@ -527,6 +540,12 @@ pub(super) fn add_box(ui: &mut Ui, look: &Look, state: &AssemblyState, changes: 
                         t!("assembly.pipeline.add.transform_tip"),
                         true,
                         Step::new_transform,
+                    ),
+                    (
+                        Step::new_bend().label(),
+                        t!("assembly.pipeline.add.bend_tip"),
+                        true,
+                        Step::new_bend,
                     ),
                 ];
                 for (name, tip, enabled, make) in chips {

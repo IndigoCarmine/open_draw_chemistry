@@ -15,18 +15,18 @@ pub const EXTENSION: &str = "odasm";
 ///
 /// 2 added the crystal step (`Lattice`, with its operations as `x,y,z` text). Version 1 files
 /// read unchanged; an older app opening a version 2 file says it is newer instead of calling
-/// it damaged. 3 added the move/rotate step (`Transform`) the same way.
-pub const VERSION: u32 = 3;
+/// it damaged. 3 added the move/rotate step (`Transform`) the same way, and 4 the arc step
+/// (`Bend`).
+pub const VERSION: u32 = 4;
 
 /// The version a file of `design` needs: the oldest one that holds every step it uses, so
 /// an assembly without a move/rotate step still opens in a release that reads only version 2.
 fn version_for(design: &Design) -> u32 {
-    if design
-        .steps
-        .iter()
-        .any(|step| matches!(step, Step::Transform(_)))
-    {
-        VERSION
+    let has = |f: fn(&Step) -> bool| design.steps.iter().any(f);
+    if has(|step| matches!(step, Step::Bend(_))) {
+        4
+    } else if has(|step| matches!(step, Step::Transform(_))) {
+        3
     } else {
         2
     }
@@ -344,6 +344,60 @@ mod tests {
         let design = from_str(old).unwrap();
         assert_eq!(design.steps.len(), 1);
         assert_eq!(design.molecule_count(), 3);
+    }
+
+    /// An arc step is saved with its options as version 4 and opens to the same build.
+    #[test]
+    fn a_bend_step_is_saved_as_version_4() {
+        use crate::assembly::model::{Bend, BendOrient, Pivot};
+        let design = Design {
+            components: vec![Component {
+                name: "co".into(),
+                atoms: vec![
+                    Atom3d {
+                        element: "C".into(),
+                        pos: [0.0; 3],
+                    },
+                    Atom3d {
+                        element: "O".into(),
+                        pos: [1.13, 0.0, 0.0],
+                    },
+                ],
+                bonds: Vec::new(),
+                orient: None,
+            }],
+            steps: vec![
+                Step::new_stack(),
+                Step::new_transform(),
+                Step::Bend(Bend {
+                    enabled: true,
+                    radius: 12.5,
+                    direction_deg: -30.0,
+                    pivot: Pivot::Origin,
+                    orient: BendOrient::Keep,
+                }),
+            ],
+            ..Default::default()
+        };
+        let text = to_string(&design);
+        assert!(text.contains("\"version\": 4"));
+        let back = from_str(&text).unwrap();
+        assert_eq!(back, design);
+        assert_eq!(build(&back, 1).unwrap(), build(&design, 1).unwrap());
+
+        // Without the options (as a hand-written file might be) it bends about the centroid,
+        // turning the molecules with the arc.
+        let bare = r#"{"version": 4, "steps": [{"Bend": {"enabled": true, "radius": 10, "direction_deg": 0}}]}"#;
+        assert_eq!(
+            from_str(bare).unwrap().steps,
+            vec![Step::Bend(Bend {
+                enabled: true,
+                radius: 10.0,
+                direction_deg: 0.0,
+                pivot: Pivot::Centroid,
+                orient: BendOrient::Tangent,
+            })]
+        );
     }
 
     #[test]
