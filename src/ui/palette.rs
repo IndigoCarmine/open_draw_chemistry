@@ -173,12 +173,12 @@ fn is_selected(editor: &ChemStructEditor, action: Action) -> bool {
 
 fn apply(editor: &mut ChemStructEditor, action: Action) {
     match action {
-        Action::Tool(tool) => editor.tool = tool.tool(),
+        Action::Tool(tool) => editor.set_tool(tool.tool()),
         Action::Bond(kind) => {
             let (order, stereo) = kind.order_and_stereo();
             editor.current_bond_order = order;
             editor.current_bond_stereo = stereo;
-            editor.tool = Tool::Bond;
+            editor.set_tool(Tool::Bond);
         }
         Action::Command(_) | Action::BracketMenu | Action::Planned => {}
     }
@@ -500,9 +500,7 @@ fn heading(ui: &mut egui::Ui, text: &str) {
 /// Atoms the bond tool places from now on are `symbol`.
 fn set_element(editor: &mut ChemStructEditor, symbol: &str) {
     editor.current_element = symbol.to_owned();
-    if editor.tool != Tool::Bond {
-        editor.tool = Tool::Bond;
-    }
+    editor.set_tool(Tool::Bond);
 }
 
 /// A plausible element symbol: one capital letter, optionally followed by one or two lower-case
