@@ -746,6 +746,7 @@ step_stack = "Apilamiento / hélice"
 step_array = "Matriz"
 step_lattice = "Cristal"
 step_transform = "Mover / Rotar"
+step_bend = "Arco"
 
 [assembly.model.ring]
 count = "Número"
@@ -786,6 +787,24 @@ pivot = "Pivote"
 pivot_tip = "El punto alrededor del cual gira la rotación. El centroide incluye las copias excluidas (eliminadas o separadas)"
 pivot_centroid = "Centroide"
 pivot_origin = "Origen"
+
+[assembly.model.bend]
+radius = "Radio"
+radius_tip = "Radio del arco. La longitud a lo largo de z pasa a ser la longitud a lo largo del arco, así que se conserva el espaciado de las moléculas sobre la línea central. 0 lo deja recto"
+direction = "Dirección"
+direction_tip = "Hacia dónde se curva el arco, como ángulo en el plano xy desde +x (0° se curva hacia +x, 90° hacia +y)"
+pivot = "Punto fijo"
+pivot_tip = "El punto que no se mueve; la línea a lo largo de z que pasa por él es la línea central del arco. El centroide mantiene el centro en su sitio; el origen, z = 0"
+pivot_centroid = "Centroide"
+pivot_origin = "Origen"
+orient = "Moléculas"
+orient_tip = "Cada molécula se mueve como un todo rígido, así que su forma nunca cambia. A lo largo del arco: girada para seguir la curva, como una columna doblada. Mantener: solo se desplaza, con la misma orientación"
+orient_tangent = "A lo largo del arco"
+orient_keep = "Mantener"
+curvature = "Curvatura"
+curvature_tip = "Se deduce del radio: cuánto gira el arco por ångström y la longitud de una circunferencia completa"
+curvature_value = "{per_angstrom}°/Å · circunferencia {circle} Å"
+straight = "— (recto)"
 
 [assembly.model.lattice]
 space_group = "Grupo espacial"
@@ -885,6 +904,7 @@ rotated = "girado"
 slip = "despl. {value}Å"
 operations = { one = "{n} operación", other = "{n} operaciones" }
 no_spacing = "espaciado 0Å"
+orientation_kept = "orientación mantenida"
 
 [assembly.pipeline.count]
 skipped = { one = "Omitido → {n} molécula", other = "Omitido → {n} moléculas" }
@@ -899,6 +919,7 @@ ring_tip = "Dispone las moléculas en una circunferencia alrededor del eje z (un
 stack_tip = "Apila todo lo anterior a lo largo de z. El giro y el desplazamiento lo convierten en una hélice"
 lattice_tip = "Toma todo lo anterior como unidad asimétrica, construye la celda unidad a partir de las constantes de celda y las operaciones de simetría del grupo espacial, y la repite"
 transform_tip = "Mueve y gira una vez todo lo construido hasta ahora, sin copiarlo"
+bend_tip = "Curva todo lo construido hasta ahora sobre un arco de circunferencia. Cada molécula se mueve como un todo rígido"
 lattice_exists = "Ya hay un paso de cristal"
 
 [assembly.symop.system]
@@ -1018,6 +1039,8 @@ stack_twist = "Giro"
 stack_slip = "Desplazamiento"
 array_offset = "Espaciado {axis}"
 array_rotation = "Rotación {axis}"
+bend_radius = "Radio del arco"
+bend_direction = "Dirección del arco"
 pose_position = "Posición {axis}"
 pose_rotation = "Rotación {axis}"
 step = "Paso"

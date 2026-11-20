@@ -219,6 +219,87 @@ impl Transform {
     }
 }
 
+/// How a [`Bend`] turns each molecule it moves onto the arc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum BendOrient {
+    /// Turned with the arc, as a bent column: what faced along z faces along the arc.
+    #[default]
+    Tangent,
+    /// Moved without turning: only its centroid goes onto the arc.
+    Keep,
+}
+
+/// Bends everything built so far onto an arc, without copying it: the length along z becomes
+/// the length along a circle of `radius` (Å), curving towards `direction` (degrees from +x in
+/// the xy plane). Each molecule is moved as a whole (its centroid decides where it goes), so
+/// no molecule is distorted. The line along z through the pivot is the arc's centre line; the
+/// pivot itself stays put.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Bend {
+    pub enabled: bool,
+    pub radius: f64,
+    pub direction_deg: f64,
+    #[serde(default)]
+    pub pivot: Pivot,
+    #[serde(default)]
+    pub orient: BendOrient,
+}
+
+/// Radii at or below this (Å) leave the structure straight.
+const MIN_BEND_RADIUS: f64 = 1e-6;
+
+impl Bend {
+    /// The move of a molecule whose centroid is `c`, the pivot at `pivot`.
+    pub fn move_of(&self, c: Vec3, pivot: Vec3) -> Rigid {
+        if self.radius.is_nan() || self.radius <= MIN_BEND_RADIUS {
+            return Rigid::IDENTITY;
+        }
+        let (sin, cos) = self.direction_deg.to_radians().sin_cos();
+        let towards = [cos, sin, 0.0];
+        // ẑ × d: turning +z about it by a small angle moves it towards d.
+        let axis = [-sin, cos, 0.0];
+        let centre = math::add(pivot, math::scale(towards, self.radius));
+        let s = c[2] - pivot[2];
+        let along = Rigid::translation([0.0, 0.0, -s])
+            .then(&Rigid::translation(math::scale(centre, -1.0)))
+            .then(&Rigid::rotation(math::axis_angle(
+                axis,
+                (s / self.radius).to_degrees(),
+            )))
+            .then(&Rigid::translation(centre));
+        match self.orient {
+            BendOrient::Tangent => along,
+            BendOrient::Keep => Rigid::translation(math::sub(along.apply(c), c)),
+        }
+    }
+
+    /// The move of each molecule of `set`, in order, their atoms taken from `shapes` (as
+    /// [`Transform::of_set`]). A molecule without a shape is left where it is.
+    fn of_set(&self, set: &[Instance], shapes: &[Option<Shape>]) -> Vec<Rigid> {
+        let molecules: Vec<Option<Vec<Vec3>>> = set
+            .iter()
+            .map(|inst| {
+                let (positions, _) = shapes.get(inst.component)?.as_ref()?;
+                Some(positions.iter().map(|&p| inst.transform.apply(p)).collect())
+            })
+            .collect();
+        let pivot = match self.pivot {
+            Pivot::Origin => [0.0; 3],
+            Pivot::Centroid => {
+                let atoms: Vec<Vec3> = molecules.iter().flatten().flatten().copied().collect();
+                centroid(&atoms)
+            }
+        };
+        molecules
+            .iter()
+            .map(|atoms| match atoms {
+                Some(atoms) if !atoms.is_empty() => self.move_of(centroid(atoms), pivot),
+                _ => Rigid::IDENTITY,
+            })
+            .collect()
+    }
+}
+
 /// A crystal: everything built so far is the asymmetric unit, copied by the space group's
 /// symmetry operations into a unit cell and the cell repeated `reps` times along its edges.
 ///
@@ -370,6 +451,7 @@ pub enum Step {
     Array(Array),
     Lattice(Lattice),
     Transform(Transform),
+    Bend(Bend),
 }
 
 impl Step {
@@ -422,6 +504,17 @@ impl Step {
         })
     }
 
+    /// A gentle bend about the middle: 20 Å turns a 3.5 Å stack by about 10° a layer.
+    pub fn new_bend() -> Self {
+        Step::Bend(Bend {
+            enabled: true,
+            radius: 20.0,
+            direction_deg: 0.0,
+            pivot: Pivot::Centroid,
+            orient: BendOrient::Tangent,
+        })
+    }
+
     /// The step's name in the panel.
     pub fn label(&self) -> &'static str {
         match self {
@@ -430,6 +523,7 @@ impl Step {
             Step::Array(_) => t!("assembly.model.step_array"),
             Step::Lattice(_) => t!("assembly.model.step_lattice"),
             Step::Transform(_) => t!("assembly.model.step_transform"),
+            Step::Bend(_) => t!("assembly.model.step_bend"),
         }
     }
 
@@ -440,6 +534,7 @@ impl Step {
             Step::Array(s) => s.enabled,
             Step::Lattice(s) => s.enabled,
             Step::Transform(s) => s.enabled,
+            Step::Bend(s) => s.enabled,
         }
     }
 
@@ -450,6 +545,7 @@ impl Step {
             Step::Array(s) => &mut s.enabled,
             Step::Lattice(s) => &mut s.enabled,
             Step::Transform(s) => &mut s.enabled,
+            Step::Bend(s) => &mut s.enabled,
         }
     }
 
@@ -463,7 +559,7 @@ impl Step {
             Step::Lattice(l) => {
                 return l.symops.len().max(1).saturating_mul(l.cell_count());
             }
-            Step::Transform(_) => 1,
+            Step::Transform(_) | Step::Bend(_) => 1,
         };
         n.max(1) as usize
     }
@@ -474,10 +570,12 @@ impl Step {
     /// turns about the origin, whatever its [`Pivot`], and [`Design::placements`] puts the
     /// pivot in place — so for a [`Step::Transform`] this is not where the step puts the
     /// molecules; use [`Design::placements`] (or [`Transform::about`] with the pivot) instead.
+    /// A [`Step::Bend`] moves each molecule by where it is, so here it gives the identity.
     pub fn transforms(&self) -> Vec<Rigid> {
         match self {
             Step::Lattice(l) => return l.translations(),
             Step::Transform(t) => return vec![t.about([0.0; 3])],
+            Step::Bend(_) => return vec![Rigid::IDENTITY],
             _ => {}
         }
         let n = self.copies();
@@ -493,7 +591,9 @@ impl Step {
                         .then(&Rigid::translation(slip_offset(s, i))),
                     Step::Array(s) => Rigid::rotation(math::euler_xyz(math::scale(s.euler_deg, i)))
                         .then(&Rigid::translation(math::scale(s.offset, i))),
-                    Step::Lattice(_) | Step::Transform(_) => unreachable!("handled above"),
+                    Step::Lattice(_) | Step::Transform(_) | Step::Bend(_) => {
+                        unreachable!("handled above")
+                    }
                 }
             })
             .collect()
@@ -764,6 +864,15 @@ impl Design {
                     let t = transform.of_set(&set, shapes);
                     for inst in &mut set {
                         inst.transform = inst.transform.then(&t);
+                    }
+                    after(i, set.len());
+                    continue;
+                }
+                if let Step::Bend(bend) = step {
+                    let shapes = shapes.get_or_insert_with(|| self.shapes());
+                    let moves = bend.of_set(&set, shapes);
+                    for (inst, t) in set.iter_mut().zip(&moves) {
+                        inst.transform = inst.transform.then(t);
                     }
                     after(i, set.len());
                     continue;
@@ -1470,6 +1579,120 @@ mod tests {
         assert_points(&atoms_of(&moved), &atoms_of(&design_of(vec![row()])));
         let alone = design_of(vec![step]);
         assert_points(&atoms_of(&alone), &[[0.0; 3], [2.0, 0.0, 0.0]]);
+    }
+
+    /// Seven layers of the molecule 3.5 Å apart along z (centroids at (1, 0, 3.5·i)).
+    fn column() -> Step {
+        Step::Stack(Stack {
+            enabled: true,
+            n: 7,
+            rise: 3.5,
+            twist_deg: 0.0,
+            slip: 0.0,
+        })
+    }
+
+    fn bend(radius: f64, direction_deg: f64, pivot: Pivot, orient: BendOrient) -> Step {
+        Step::Bend(Bend {
+            enabled: true,
+            radius,
+            direction_deg,
+            pivot,
+            orient,
+        })
+    }
+
+    #[test]
+    fn a_bend_wraps_a_column_onto_a_circle_keeping_each_molecule() {
+        let r = 20.0;
+        let d = design_of(vec![
+            column(),
+            bend(r, 0.0, Pivot::Origin, BendOrient::Tangent),
+        ]);
+        assert_eq!(d.molecule_count(), 7);
+        assert_eq!(d.running_counts(), vec![7, 7]);
+        let atoms = atoms_of(&d);
+        let centre = [r, 0.0, 0.0];
+        // The O atoms sat on the pivot's line (x = 0): they go onto the circle of radius r,
+        // one arc length of 3.5 Å apart, so a chord of 2r·sin(3.5 / 2r).
+        let chord = 2.0 * r * (3.5 / (2.0 * r)).sin();
+        for (i, m) in atoms.chunks(2).enumerate() {
+            let (o, h) = (m[0], m[1]);
+            assert!((math::distance(o, h) - 2.0).abs() < 1e-9, "O–H kept");
+            assert!((math::distance(o, centre) - r).abs() < 1e-9, "O on the arc");
+            // Turned with the arc: H, 2 Å towards the centre before, still is.
+            assert!(
+                (math::distance(h, centre) - (r - 2.0)).abs() < 1e-9,
+                "H inward"
+            );
+            assert!(
+                o[1].abs() < 1e-9 && h[1].abs() < 1e-9,
+                "bent in the xz plane"
+            );
+            if i > 0 {
+                assert!((math::distance(atoms[2 * (i - 1)], o) - chord).abs() < 1e-9);
+            }
+        }
+        // The first layer is on the pivot's level and does not move.
+        assert_points(&atoms[..2], &[[0.0; 3], [2.0, 0.0, 0.0]]);
+        // It curves towards +x.
+        assert!(atoms[12][0] > 0.5);
+    }
+
+    #[test]
+    fn a_bend_about_the_centroid_keeps_the_middle_layer() {
+        let straight = atoms_of(&design_of(vec![column()]));
+        let d = design_of(vec![
+            column(),
+            bend(15.0, 90.0, Pivot::Centroid, BendOrient::Tangent),
+        ]);
+        let atoms = atoms_of(&d);
+        assert_points(&atoms[6..8], &straight[6..8]);
+        // Towards +y, symmetric about the middle.
+        for i in [0usize, 1, 5, 6] {
+            assert!(atoms[2 * i][1] > 0.1, "layer {i}: {:?}", atoms[2 * i]);
+        }
+        assert!((atoms[0][1] - atoms[12][1]).abs() < 1e-9);
+        assert!((atoms[0][2] - 10.5 + (atoms[12][2] - 10.5)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_bend_keeping_orientation_only_moves_the_centroids() {
+        let r = 20.0;
+        let tangent = design_of(vec![
+            column(),
+            bend(r, 0.0, Pivot::Origin, BendOrient::Tangent),
+        ]);
+        let keep = design_of(vec![
+            column(),
+            bend(r, 0.0, Pivot::Origin, BendOrient::Keep),
+        ]);
+        let (ta, ka) = (atoms_of(&tangent), atoms_of(&keep));
+        for (t, k) in ta.chunks(2).zip(ka.chunks(2)) {
+            let tc = math::scale(math::add(t[0], t[1]), 0.5);
+            let kc = math::scale(math::add(k[0], k[1]), 0.5);
+            assert!(math::distance(tc, kc) < 1e-9, "same centroid");
+            assert!(math::distance(math::sub(k[1], k[0]), [2.0, 0.0, 0.0]) < 1e-9);
+        }
+        for inst in keep.instances() {
+            assert!(Rigid::rotation(inst.transform.rot).approx_eq(&Rigid::IDENTITY, 1e-12));
+        }
+    }
+
+    #[test]
+    fn a_bend_without_a_radius_or_disabled_leaves_it_straight() {
+        let straight = atoms_of(&design_of(vec![column()]));
+        for r in [0.0, -5.0, f64::NAN] {
+            let d = design_of(vec![
+                column(),
+                bend(r, 0.0, Pivot::Centroid, BendOrient::Tangent),
+            ]);
+            assert_points(&atoms_of(&d), &straight);
+        }
+        let mut d = design_of(vec![column(), Step::new_bend()]);
+        *d.steps[1].enabled_mut() = false;
+        assert_points(&atoms_of(&d), &straight);
+        assert_eq!(Step::new_bend().copies(), 1);
     }
 
     #[test]

@@ -765,6 +765,7 @@ step_stack = "堆疊 / 螺旋"
 step_array = "陣列"
 step_lattice = "晶體"
 step_transform = "移動・旋轉"
+step_bend = "圓弧"
 
 # Parameter labels are in a narrow column (keep short).
 [assembly.model.ring]
@@ -806,6 +807,24 @@ pivot = "中心"
 pivot_tip = "旋轉所繞的點。質心包括已排除（刪除或分離）的副本"
 pivot_centroid = "重心"
 pivot_origin = "原點"
+
+[assembly.model.bend]
+radius = "半徑"
+radius_tip = "圓弧的半徑。z 方向的長度即為沿圓弧的長度，因此中心線上分子的間距保持不變。為 0 時保持筆直"
+direction = "方向"
+direction_tip = "彎曲的方向。xy 平面內自 +x 起的角度（0° 向 +x 側、90° 向 +y 側彎曲）"
+pivot = "固定點"
+pivot_tip = "不動的點。經過該點的 z 方向直線即為圓弧的中心線。選重心則中間不動，選原點則 z = 0 不動"
+pivot_centroid = "重心"
+pivot_origin = "原點"
+orient = "分子朝向"
+orient_tip = "各分子作為剛體移動，形狀不會改變。沿切線：像彎曲的柱子一樣隨曲線旋轉。保持：朝向不變，只移動位置"
+orient_tangent = "沿切線"
+orient_keep = "保持"
+curvature = "彎曲度"
+curvature_tip = "由半徑決定：沿圓弧每前進 1 Å 轉過的角度，以及一整圈的長度"
+curvature_value = "{per_angstrom}°/Å · 一周 {circle} Å"
+straight = "—（筆直）"
 
 [assembly.model.lattice]
 space_group = "空間群"
@@ -906,6 +925,7 @@ rotated = "旋轉"
 slip = "錯位 {value}Å"
 operations = "{n} 個操作"
 no_spacing = "間距 0Å"
+orientation_kept = "朝向保持"
 
 [assembly.pipeline.count]
 skipped = "已略過 → {n} 個分子"
@@ -920,6 +940,7 @@ ring_tip = "將分子沿繞 z 軸的圓排列（玫瑰花結）"
 stack_tip = "將目前為止的全部內容沿 z 方向堆疊。加上扭轉和錯位即成螺旋"
 lattice_tip = "將目前為止的全部內容作為不對稱單元，依晶胞參數和空間群的對稱操作建構晶胞並重複"
 transform_tip = "將此前建構的整體移動並旋轉一次，不複製"
+bend_tip = "將此前建構的整體沿圓弧彎曲重新排列。各分子作為剛體移動"
 lattice_exists = "已有晶體步驟"
 
 [assembly.symop.system]
@@ -1040,6 +1061,8 @@ stack_twist = "扭轉"
 stack_slip = "錯位"
 array_offset = "間距 {axis}"
 array_rotation = "旋轉 {axis}"
+bend_radius = "圓弧半徑"
+bend_direction = "圓弧方向"
 pose_position = "位置 {axis}"
 pose_rotation = "旋轉 {axis}"
 step = "步驟"

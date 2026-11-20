@@ -765,6 +765,7 @@ step_stack = "적층 / 나선"
 step_array = "배열"
 step_lattice = "결정"
 step_transform = "이동・회전"
+step_bend = "원호"
 
 # Parameter labels are in a narrow column (keep short).
 [assembly.model.ring]
@@ -806,6 +807,24 @@ pivot = "중심"
 pivot_tip = "회전의 중심점. 무게중심에는 제외한(삭제하거나 분리한) 복사본도 포함됩니다"
 pivot_centroid = "무게중심"
 pivot_origin = "원점"
+
+[assembly.model.bend]
+radius = "반지름"
+radius_tip = "원호의 반지름. z 방향 길이가 그대로 원호를 따른 길이가 되므로 중심선 위 분자 간격이 유지됩니다. 0이면 곧은 채로 둡니다"
+direction = "방향"
+direction_tip = "휘는 방향. xy 평면에서 +x로부터의 각도 (0°는 +x 쪽, 90°는 +y 쪽으로 휩니다)"
+pivot = "고정점"
+pivot_tip = "움직이지 않는 점. 이 점을 지나는 z 방향 선이 원호의 중심선이 됩니다. 무게중심이면 가운데가, 원점이면 z = 0이 그 자리에 남습니다"
+pivot_centroid = "무게중심"
+pivot_origin = "원점"
+orient = "분자 방향"
+orient_tip = "각 분자는 강체로 옮기므로 모양이 바뀌지 않습니다. 접선 방향: 굽은 기둥처럼 곡선에 맞춰 회전. 유지: 방향은 그대로 두고 위치만 옮깁니다"
+orient_tangent = "접선 방향"
+orient_keep = "유지"
+curvature = "휨"
+curvature_tip = "반지름에서 정해집니다. 원호를 따라 1 Å마다 도는 각도와 한 바퀴의 길이"
+curvature_value = "{per_angstrom}°/Å · 한 바퀴 {circle} Å"
+straight = "—(곧음)"
 
 [assembly.model.lattice]
 space_group = "공간군"
@@ -906,6 +925,7 @@ rotated = "회전"
 slip = "어긋남 {value}Å"
 operations = "연산 {n}개"
 no_spacing = "간격 0Å"
+orientation_kept = "방향 유지"
 
 [assembly.pipeline.count]
 skipped = "건너뜀 → 분자 {n}개"
@@ -920,6 +940,7 @@ ring_tip = "분자를 z 축 둘레의 원 위에 배치합니다(로제트)"
 stack_tip = "지금까지의 전체를 z 방향으로 쌓습니다. 비틀림과 어긋남을 주면 나선이 됩니다"
 lattice_tip = "지금까지의 전체를 비대칭 단위로 삼아 격자 상수와 공간군의 대칭 연산으로 단위 세포를 만들고 반복합니다"
 transform_tip = "지금까지 만든 전체를 복제하지 않고 한 번 옮기고 회전합니다"
+bend_tip = "지금까지 만든 전체를 원호를 따라 휘어 다시 배치합니다. 각 분자는 강체로 움직입니다"
 lattice_exists = "결정 단계가 이미 있습니다"
 
 [assembly.symop.system]
@@ -1040,6 +1061,8 @@ stack_twist = "비틀림"
 stack_slip = "어긋남"
 array_offset = "간격 {axis}"
 array_rotation = "회전 {axis}"
+bend_radius = "원호 반지름"
+bend_direction = "원호 방향"
 pose_position = "위치 {axis}"
 pose_rotation = "회전 {axis}"
 step = "단계"

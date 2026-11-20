@@ -25,7 +25,9 @@ use super::viewport3d::{
     CellImages, Frame3d, Hit, Scene, Style3d, Viewport3d, element_color, exclusive_groups,
 };
 use crate::assembly::measure::{self, AtomRef, MeasurePick};
-use crate::assembly::model::{Array, Lattice, Pivot, Ring, Stack, Transform, helix_radius};
+use crate::assembly::model::{
+    Array, Bend, BendOrient, Lattice, Pivot, Ring, Stack, Transform, helix_radius,
+};
 use crate::assembly::symop::{self, SymOp};
 use crate::assembly::{AssemblyExport, AssemblyState, Built, Component, Step};
 use crate::document::Document;
@@ -1644,6 +1646,19 @@ fn vector(
     })
 }
 
+/// How sharply an arc of radius `radius` (Å) turns: degrees per ångström along it and the
+/// length of a whole circle, or that it stays straight.
+fn bend_curvature_text(radius: f64) -> String {
+    if radius.is_nan() || radius <= 1e-6 {
+        return t!("assembly.model.bend.straight").to_owned();
+    }
+    t!(
+        "assembly.model.bend.curvature_value",
+        per_angstrom = format!("{:.2}", (1.0 / radius).to_degrees()),
+        circle = format!("{:.1}", std::f64::consts::TAU * radius)
+    )
+}
+
 /// The step's parameters. Returns whether any changed.
 fn step_params(ui: &mut egui::Ui, step: &mut Step, ink: &Ink) -> bool {
     if let Step::Lattice(lattice) = step {
@@ -1807,6 +1822,75 @@ fn step_params(ui: &mut egui::Ui, step: &mut Step, ink: &Ink) -> bool {
                         changed |= ui.selectable_value(pivot, value, name).changed();
                     }
                     changed
+                },
+            );
+        }
+        Step::Bend(Bend {
+            radius,
+            direction_deg,
+            pivot,
+            orient,
+            ..
+        }) => {
+            changed |= number(
+                ui,
+                t!("assembly.model.bend.radius"),
+                radius,
+                0.05,
+                0.0..=10000.0,
+                " Å",
+                t!("assembly.model.bend.radius_tip"),
+            );
+            changed |= number(
+                ui,
+                t!("assembly.model.bend.direction"),
+                direction_deg,
+                0.5,
+                -180.0..=180.0,
+                "°",
+                t!("assembly.model.bend.direction_tip"),
+            );
+            changed |= field_row(
+                ui,
+                t!("assembly.model.bend.pivot"),
+                t!("assembly.model.bend.pivot_tip"),
+                |ui| {
+                    let mut changed = false;
+                    for (value, name) in [
+                        (Pivot::Centroid, t!("assembly.model.bend.pivot_centroid")),
+                        (Pivot::Origin, t!("assembly.model.bend.pivot_origin")),
+                    ] {
+                        changed |= ui.selectable_value(pivot, value, name).changed();
+                    }
+                    changed
+                },
+            );
+            changed |= field_row(
+                ui,
+                t!("assembly.model.bend.orient"),
+                t!("assembly.model.bend.orient_tip"),
+                |ui| {
+                    let mut changed = false;
+                    for (value, name) in [
+                        (
+                            BendOrient::Tangent,
+                            t!("assembly.model.bend.orient_tangent"),
+                        ),
+                        (BendOrient::Keep, t!("assembly.model.bend.orient_keep")),
+                    ] {
+                        changed |= ui.selectable_value(orient, value, name).changed();
+                    }
+                    changed
+                },
+            );
+            let r = *radius;
+            field_row(
+                ui,
+                t!("assembly.model.bend.curvature"),
+                t!("assembly.model.bend.curvature_tip"),
+                |ui| {
+                    ui.label(ink.muted(bend_curvature_text(r)));
+                    false
                 },
             );
         }
@@ -2491,6 +2575,20 @@ mod tests {
         let doc = doc_with(vec![array(7, 3.2), transform, Step::new_ring()]);
         assert_eq!(doc.assembly.design.running_counts(), vec![7, 7, 42]);
         assert_eq!(formula(&water()), "H2O");
+
+        // An arc moves the molecules and copies nothing either.
+        let mut bend = Step::new_bend();
+        assert_eq!(pipeline::summary(&bend), "r 20.00Å · φ 0°");
+        assert_eq!(pipeline::count_text(&bend, 7, 7), "→ 7 分子");
+        if let Step::Bend(b) = &mut bend {
+            b.direction_deg = 90.0;
+            b.orient = BendOrient::Keep;
+        }
+        assert_eq!(pipeline::summary(&bend), "r 20.00Å · φ 90° · 向き維持");
+        let doc = doc_with(vec![array(7, 3.2), bend]);
+        assert_eq!(doc.assembly.design.running_counts(), vec![7, 7]);
+        assert_eq!(bend_curvature_text(20.0), "2.86°/Å · 一周 125.7 Å");
+        assert_eq!(bend_curvature_text(0.0), "—（まっすぐ）");
     }
 
     #[test]

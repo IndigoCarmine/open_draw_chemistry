@@ -26,6 +26,8 @@ pub enum StepField {
     TransformOffset(usize),
     /// The move/rotate step's rotation about x, y or z.
     TransformEuler(usize),
+    BendRadius,
+    BendDirection,
     CellA,
     CellB,
     CellC,
@@ -52,6 +54,7 @@ impl StepField {
                 .map(TransformOffset)
                 .chain((0..3).map(TransformEuler))
                 .collect(),
+            Step::Bend(_) => vec![BendRadius, BendDirection],
         }
     }
 
@@ -65,6 +68,8 @@ impl StepField {
             StackSlip => t!("scan.param.stack_slip").into(),
             ArrayOffset(i) | TransformOffset(i) => t!("scan.param.array_offset", axis = XYZ[i]),
             ArrayEuler(i) | TransformEuler(i) => t!("scan.param.array_rotation", axis = XYZ[i]),
+            BendRadius => t!("scan.param.bend_radius").into(),
+            BendDirection => t!("scan.param.bend_direction").into(),
             CellA => "a".into(),
             CellB => "b".into(),
             CellC => "c".into(),
@@ -82,6 +87,7 @@ impl StepField {
                 | StackTwist
                 | ArrayEuler(_)
                 | TransformEuler(_)
+                | BendDirection
                 | CellAlpha
                 | CellBeta
                 | CellGamma
@@ -101,6 +107,8 @@ impl StepField {
             (ArrayEuler(i), Step::Array(s)) => s.euler_deg.get_mut(i)?,
             (TransformOffset(i), Step::Transform(s)) => s.offset.get_mut(i)?,
             (TransformEuler(i), Step::Transform(s)) => s.euler_deg.get_mut(i)?,
+            (BendRadius, Step::Bend(s)) => &mut s.radius,
+            (BendDirection, Step::Bend(s)) => &mut s.direction_deg,
             (CellA, Step::Lattice(l)) => &mut l.cell.a,
             (CellB, Step::Lattice(l)) => &mut l.cell.b,
             (CellC, Step::Lattice(l)) => &mut l.cell.c,
@@ -399,6 +407,7 @@ mod tests {
                 Step::new_array(),
                 Step::new_lattice(),
                 Step::new_transform(),
+                Step::new_bend(),
             ],
             manual: vec![Instance {
                 component: 0,
@@ -414,7 +423,7 @@ mod tests {
     fn every_assembly_parameter_round_trips() {
         let base = design();
         let params = design_params(&base, Some(0));
-        assert_eq!(params.len(), 2 + 3 + 6 + 6 + 6 + 6);
+        assert_eq!(params.len(), 2 + 3 + 6 + 6 + 6 + 2 + 6);
         for (n, param) in params.iter().enumerate() {
             let mut d = base.clone();
             let value = 37.0 + n as f64 * 0.25;
