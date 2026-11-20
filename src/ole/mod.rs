@@ -52,7 +52,7 @@ pub fn copy(editor: &ChemStructEditor, ctx: &egui::Context) -> bool {
 /// editor is shown; returns whether a copy was requested. Text fields keep their shortcut, and
 /// on platforms other than Windows nothing is taken.
 pub fn take_copy_shortcut(ctx: &egui::Context) -> bool {
-    if !cfg!(windows) || ctx.egui_wants_keyboard_input() {
+    if !cfg!(windows) || ctx.text_edit_focused() {
         return false;
     }
     ctx.input_mut(|input| {
@@ -152,7 +152,7 @@ impl PasteShortcut {
 
     /// The part of [`take`](Self::take) after the keyboard is read (testable without one).
     fn take_press(&mut self, ctx: &egui::Context, pressed: bool) -> bool {
-        if !pressed || ctx.egui_wants_keyboard_input() || !ctx.input(|i| i.focused) {
+        if !pressed || ctx.text_edit_focused() || !ctx.input(|i| i.focused) {
             return false;
         }
         ctx.input_mut(|i| i.focused = false);
