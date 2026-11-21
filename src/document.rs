@@ -52,6 +52,8 @@ pub struct Document {
     paste_shortcut: crate::ole::PasteShortcut,
     /// Ctrl+V was pressed on the canvas: the app pastes (see [`Document::take_paste_request`]).
     paste_requested: bool,
+    /// The palette's ring and chain tools, which the editor widget does not have.
+    pub canvas_tools: crate::ui::canvas_tools::CanvasTools,
 }
 
 /// The OLE object a document edits, and the document it is embedded in.
@@ -86,6 +88,7 @@ impl Document {
             softcore: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
+            canvas_tools: Default::default(),
         }
     }
 
@@ -111,6 +114,7 @@ impl Document {
             softcore: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
+            canvas_tools: Default::default(),
         }
     }
 
@@ -163,6 +167,7 @@ impl Document {
             softcore: None,
             paste_shortcut: Default::default(),
             paste_requested: false,
+            canvas_tools: Default::default(),
         }
     }
 
@@ -218,7 +223,10 @@ impl Document {
         if self.paste_shortcut.take(ui.ctx()) {
             self.paste_requested = true;
         }
-        let response = self.editor.show(ui);
+        self.canvas_tools.before_show(&mut self.editor, ui.ctx());
+        let mut response = self.editor.show(ui);
+        self.canvas_tools
+            .after_show(&mut self.editor, ui, &mut response);
         self.paste_shortcut.release(ui.ctx());
         if let Some(fit) = self.auto_fit.as_mut().filter(|_| fitting) {
             fit.view = Some((self.editor.zoom, self.editor.pan));

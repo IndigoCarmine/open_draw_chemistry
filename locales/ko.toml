@@ -463,7 +463,6 @@ equilibrium_arrow = "평형 화살표"
 bracket = "괄호"
 insert_reaction_table = "반응표 삽입"
 bond = "결합"
-planned = "{name}(준비 중)"
 
 [palette.heading]
 draw = "그리기"

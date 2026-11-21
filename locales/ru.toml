@@ -445,7 +445,6 @@ equilibrium_arrow = "Равновесная стрелка"
 bracket = "Скобка"
 insert_reaction_table = "Вставить таблицу реакции"
 bond = "Связь"
-planned = "{name} (скоро)"
 
 [palette.heading]
 draw = "Рисование"

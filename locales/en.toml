@@ -608,8 +608,6 @@ bracket = "Bracket"
 insert_reaction_table = "Insert reaction table"
 # Bond tool with a bond style that has no palette button.
 bond = "Bond"
-# Tooltip of a tool not available yet. {name}: the tool's name.
-planned = "{name} (coming soon)"
 
 # Section headings of the palette.
 [palette.heading]

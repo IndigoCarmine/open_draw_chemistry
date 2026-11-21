@@ -493,8 +493,6 @@ bracket = "ブラケット"
 insert_reaction_table = "反応表を挿入"
 # Bond tool with a bond style that has no palette button.
 bond = "結合"
-# Tooltip of a tool not available yet. {name}: the tool's name.
-planned = "{name}（準備中）"
 
 # Section headings of the palette.
 [palette.heading]

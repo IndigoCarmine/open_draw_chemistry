@@ -449,7 +449,6 @@ equilibrium_arrow = "Seta de equilíbrio"
 bracket = "Colchete"
 insert_reaction_table = "Inserir tabela de reação"
 bond = "Ligação"
-planned = "{name} (em breve)"
 
 [palette.heading]
 draw = "Desenhar"
