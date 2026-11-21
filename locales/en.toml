@@ -32,6 +32,8 @@ menu = "Language"
 tooltip = "Language"
 
 [app.status]
+node_imported = "Added \"{name}\" to the custom node library"
+node_exported = "Exported the custom node to {path}"
 # Status bar messages. {path} is a file path, {error} the reason it failed.
 open_failed = "Could not open {path}: {error}"
 # {name} is the opened document's title (usually its file name).
@@ -110,6 +112,7 @@ open = "Open file…"
 drop_hint = "You can also drop CDX / CDXML or 3D structure files (MOL2, PDB, XYZ, MOL, SDF) here to open them"
 
 [dialog.filter]
+assembly_node = "Custom assembly node (Open DrawChemistry)"
 # File type filters in the open/save dialogs.
 all_supported = "All supported formats"
 structure_3d = "3D structures (MOL2, PDB, XYZ, MOL, SDF)"
@@ -895,6 +898,8 @@ not_shown = "Show the 3D view first"
 no_gpu = "No GPU renderer is available"
 
 [assembly.view]
+add_monomer_node_tip = "Put a node of this monomer in the node editor, to wire into the graph"
+add_monomer_node = "Add to the node graph"
 # Panel heading of the assembly view (a molecular assembly built from monomers)
 title = "Assembly"
 no_document = "No document is open"
@@ -1219,18 +1224,6 @@ pick_tip = "Click to select the first molecule"
 # Below the clash list: how many pairs were not listed.
 more = { one = "{n} more pair", other = "{n} more pairs" }
 
-[assembly.pipeline]
-drag_tip = "Drag to reorder"
-collapse = "Hide parameters"
-expand = "Show parameters"
-remove = "Delete this step"
-lattice_single = "There can be only one crystal step"
-duplicate = "Duplicate this step (inserted right after it)"
-# Tooltip of a step's on/off switch while the step is used.
-enabled_tip = "In use (click to skip)"
-# Tooltip of a step's on/off switch while the step is skipped.
-disabled_tip = "Skipped (click to use)"
-
 [assembly.pipeline.summary]
 # Very short: the move/rotate step turns the structure about its centroid.
 rotated_centroid = "rotated about centroid"
@@ -1250,27 +1243,6 @@ operations = { one = "{n} operation", other = "{n} operations" }
 no_spacing = "spacing 0Å"
 # Very short: the arc step keeps each molecule's orientation.
 orientation_kept = "orientation kept"
-
-[assembly.pipeline.count]
-# After a step card: the step is skipped; {n} molecules so far.
-skipped = { one = "Skipped → {n} molecule", other = "Skipped → {n} molecules" }
-# After a step card: the crystal step's settings are invalid.
-cannot_build = { one = "Can't build → {n} molecule", other = "Can't build → {n} molecules" }
-# After a step card: molecules so far (when there is no whole factor).
-result = { one = "→ {n} molecule", other = "→ {n} molecules" }
-# After a step card: {factor} is how many times the step multiplies the molecules.
-times = { one = "× {factor} → {n} molecule", other = "× {factor} → {n} molecules" }
-
-[assembly.pipeline.add]
-# Heading of the box with one button per kind of step.
-title = "+ Add step"
-array_tip = "Lines up everything so far at a fixed spacing and rotation"
-ring_tip = "Arranges the molecules on a circle around the z axis (a rosette)"
-stack_tip = "Stacks everything so far along z. Twist and slip make it a helix"
-lattice_tip = "Takes everything so far as the asymmetric unit, builds the unit cell from the cell constants and the space group's symmetry operations, and repeats it"
-transform_tip = "Moves and turns everything built so far once, without copying it"
-bend_tip = "Bends everything built so far onto a circular arc. Each molecule moves as a rigid whole"
-lattice_exists = "There already is a crystal step"
 
 [assembly.symop.system]
 # Crystal systems of the space-group presets, with the cell each needs.
@@ -1748,3 +1720,107 @@ recursion = "A custom node cannot contain itself"
 
 [assembly.library.error]
 newer = "This custom node was saved by a newer version of the app (format {version}; this version reads up to {supported})"
+
+[assembly.editor]
+top = "Assembly"
+close = "Close the node editor"
+maximize = "Fill the view with the node editor"
+restore = "Show the viewer again"
+maximize_short = "Expand"
+restore_short = "Shrink"
+frame = "Fit"
+frame_tip = "Show every node (Home)"
+group = "Group"
+group_tip = "Gather the selected nodes into a custom node (Ctrl+G). Its inputs and outputs are the wires that cross the selection"
+add = "Add"
+add_tip = "Add a node (right-click or Shift+A on the canvas)"
+open = "Node editor"
+open_tip = "Show the graph of nodes that builds the assembly"
+empty_hint = "Add a monomer, then right-click to add nodes"
+search = "Search"
+no_match = "No node matches"
+new_group = "Group"
+
+[assembly.editor.menu]
+input = "Input"
+copy = "Copy"
+move = "Move"
+combine = "Combine and select"
+math = "Numbers"
+custom = "Custom nodes in this assembly"
+library = "Library"
+
+[assembly.panel]
+section_node = "Node"
+open_editor = "Open the node editor"
+no_node = "Click a node in the node editor to see its settings here"
+nodes_selected = { one = "{n} node selected", other = "{n} nodes selected" }
+label_hint = "Name"
+label_tip = "A name shown instead of the node's kind"
+bypass = "Bypass"
+bypass_tip = "Pass the molecules through unchanged (M)"
+# {input}: an input of the node; {from}: the node wired to it
+wired = "{input} ← {from}"
+enter = "Edit inside"
+enter_tip = "Show the nodes inside this custom node (Tab, or double-click it)"
+ungroup = "Ungroup"
+duplicate = "Duplicate"
+delete = "Delete"
+expose = "Make an input…"
+expose_tip = "Make one of this node's unwired inputs an input of the custom node"
+inputs = "Inputs"
+inputs_tip = "How many sets of molecules are merged, in order"
+outputs = "Outputs"
+keep_if = "Keep if"
+presets = "Examples"
+preset_every_other = "Every other molecule"
+preset_first_half = "The first half"
+preset_above = "Above z = 0"
+preset_monomer = "The first monomer only"
+preset_even_layers = "Every other layer"
+expr_tip = "An expression, e.g. 30*i + 5*sin(i) or layer % 2 == 0 && z > 0. Angles in sin, cos and tan are radians; sind, cosd and tand take degrees"
+# {names}: the variables an expression can use, e.g. "layer k count x y z"
+variables = "Names: {names}"
+add_var = "+ Variable"
+add_var_tip = "A named number the expression can use; it becomes an input that a value or another node can feed"
+remove_var = "Remove this variable"
+attr_name = "Name"
+attr_name_tip = "The attribute's name, for the expressions of the nodes after it"
+repeat_count_tip = "How many copies; copy i runs from 0 to count − 1"
+repeat_name_tip = "The attribute the copy number is kept under (as well as copy)"
+repeat_help = "Copy i is turned by the angles about x, then y, then z, then moved — each an expression of i and n"
+each_pivot_tip = "What each molecule turns about"
+pivot_own = "Its centroid"
+pivot_set = "Centroid of all"
+value_tip = "Type a number or an expression such as 360/7"
+ports_help = "Wire into the empty + socket to add one; the custom node's inputs and outputs are listed below"
+output_help = "What is wired here is the assembly"
+custom_node = "Custom node (changes apply wherever it is used)"
+name = "Name"
+description_hint = "What it makes"
+default_tip = "The value when nothing is wired"
+remove_port = "Remove this input or output (its wires go too)"
+section_custom = "Custom nodes"
+no_custom = "Select nodes and press Ctrl+G to make one"
+status_local = "only here"
+status_in_sync = "in the library"
+status_update = "library updated"
+status_modified = "changed here"
+status_conflict = "both changed"
+unused = "unused"
+add_node = "Add"
+save_to_library = "Save to library"
+save_to_library_tip = "Keep it for other assemblies (replaces the library's version)"
+take_library = "Use the library's version"
+take_library_tip = "Replace this assembly's copy with the library's"
+fork = "Make a copy"
+fork_tip = "A separate custom node with the same contents, to change without touching this one"
+copy_of = "{name} copy"
+export_node = "Export…"
+remove_def = "Remove from this assembly"
+library = "Library"
+library_empty = "Nothing else in the library"
+delete_from_library = "Delete from the library"
+import_node = "Import…"
+reload_library = "Reload"
+saved_to_library = "Saved \"{name}\" to the library"

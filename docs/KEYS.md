@@ -408,7 +408,49 @@ A right-click does nothing.
 | Operation | Condition | Effect |
 | --- | --- | --- |
 | Double-click | A monomer's name | Turn it into a field to rename it. Leaving the field ends it |
-| Drag | The grip (⠿) on the left of a step's card | Reorder the steps |
+| Click | A node in the node editor | Show its settings in the Node section |
+
+### 4.4 Node editor
+
+The assembly is a graph of nodes, shown under the viewer: monomers feed nodes that copy (ring, stack, array, crystal, repeat), move (move/rotate, arc, move each), merge and select molecules, and the Assembly node is what is built. A wire carries molecules (orange, labelled with how many), a number (grey) or three numbers (violet). The keys work while the cursor is over the editor and not in a text field.
+
+| Operation | Condition | Effect |
+| --- | --- | --- |
+| Drag | A node's header or body | Move it (and the other selected nodes) |
+| Click, `Shift`+click | A node | Select it / add it to or take it out of the selection |
+| Drag | Empty space | Select the nodes in a box (`Shift` adds to the selection) |
+| Drag | From a socket | Draw a wire; drop it on a socket of the right kind to connect. A number can feed a triple |
+| Drag | From a wired input | Take the wire off (drop it elsewhere to reconnect it) |
+| Drop a wire | On empty space | Offer the nodes that can take it; the one chosen is wired |
+| Drag to `+` | A merge's spare input; a group input or output node's spare socket | Add an input to the merge / an input or output to the custom node |
+| Double-click | A custom node | Edit inside it |
+| Right drag, middle drag | | Pan |
+| Wheel | | Zoom |
+| Right-click, `Shift`+`A` | | Add a node |
+| `Delete`, `X`, `Backspace` | | Delete the selected nodes (a node between two others is spliced out) |
+| `Ctrl`+`D` | | Duplicate the selected nodes |
+| `M` | | Bypass the selected nodes (their molecules pass through unchanged) / use them again |
+| `Ctrl`+`G` | | Gather the selected nodes into a custom node. The wires crossing the selection become its inputs and outputs |
+| `Ctrl`+`Alt`+`G` | A custom node is selected | Put its nodes back in its place |
+| `Tab` | | Edit inside the selected custom node; with none selected, go back out |
+| `Home` | | Show every node |
+| `Ctrl`+`A` | | Select every node |
+| `Esc` | | Let go of the selection; with nothing selected, go back out of a custom node |
+
+A design that is still a chain (a monomer and steps, as files before version 5 are) is saved as before until the graph is changed in a way a chain cannot hold.
+
+#### Expressions
+
+Select, Repeat, Move each, Set attribute and Expression nodes take expressions, such as `30*i + 5*sin(i)` or `layer % 2 == 0 && z > 0`.
+
+- Operators: `+ - * / % ^` (`%` takes the sign of the divisor, `^` is a power), comparisons `< <= > >= == !=`, `&& || !`, and `c ? a : b`. True is 1, false 0.
+- Functions: `sin cos tan asin acos atan` (radians), `sind cosd tand` (degrees), `atan2 sqrt abs floor ceil round min max pow clamp sign rad deg`. Constants `pi`, `e`.
+- Names: the node's own variables (inputs other nodes can feed), the molecules' attributes (`ring`, `layer`, `row`, `cell`, a repeat's name, `input` after a merge, `copy` and `copies` after any copying node, and those set by Set attribute), `k` (the molecule's place in the set), `count`, `comp` (its monomer, from 0), `x y z` (its centroid), and `i`, `n` (`copy` and `copies`). In a Repeat node, `i` is the copy number and `n` the number of copies.
+- Number fields also take an expression without names, such as `360/7`.
+
+#### Custom nodes
+
+A custom node made with `Ctrl`+`G` is kept in the assembly file, so the file opens the same anywhere. Its menu in the Custom nodes section saves it to the library (`OpenDrawChemistry/assembly_nodes` in the user's configuration folder), from which other assemblies can add it, and exports it as a `.odnode` file. When the library's version and the assembly's differ, the section says which changed and offers to take the library's version or make a separate copy.
 
 ---
 

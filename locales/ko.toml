@@ -904,16 +904,6 @@ pair = "{a} – {b}{image}: {distance} Å"
 pick_tip = "클릭하면 첫 번째 분자를 선택합니다"
 more = "그 밖에 {n}쌍"
 
-[assembly.pipeline]
-drag_tip = "드래그해 순서 변경"
-collapse = "매개변수 숨기기"
-expand = "매개변수 보기"
-remove = "이 단계 삭제"
-lattice_single = "결정 단계는 하나만 있을 수 있습니다"
-duplicate = "이 단계 복제(바로 뒤에 삽입)"
-enabled_tip = "사용 중(클릭하면 건너뜀)"
-disabled_tip = "건너뜀(클릭하면 사용)"
-
 # Very short texts in a step card's one-line summary.
 [assembly.pipeline.summary]
 rotated_centroid = "무게중심 기준 회전"
@@ -925,22 +915,6 @@ slip = "어긋남 {value}Å"
 operations = "연산 {n}개"
 no_spacing = "간격 0Å"
 orientation_kept = "방향 유지"
-
-[assembly.pipeline.count]
-skipped = "건너뜀 → 분자 {n}개"
-cannot_build = "만들 수 없음 → 분자 {n}개"
-result = "→ 분자 {n}개"
-times = "× {factor} → 분자 {n}개"
-
-[assembly.pipeline.add]
-title = "+ 단계 추가"
-array_tip = "지금까지의 전체를 일정한 간격과 회전으로 늘어놓습니다"
-ring_tip = "분자를 z 축 둘레의 원 위에 배치합니다(로제트)"
-stack_tip = "지금까지의 전체를 z 방향으로 쌓습니다. 비틀림과 어긋남을 주면 나선이 됩니다"
-lattice_tip = "지금까지의 전체를 비대칭 단위로 삼아 격자 상수와 공간군의 대칭 연산으로 단위 세포를 만들고 반복합니다"
-transform_tip = "지금까지 만든 전체를 복제하지 않고 한 번 옮기고 회전합니다"
-bend_tip = "지금까지 만든 전체를 원호를 따라 휘어 다시 배치합니다. 각 분자는 강체로 움직입니다"
-lattice_exists = "결정 단계가 이미 있습니다"
 
 [assembly.symop.system]
 triclinic = "삼사정계(제약 없음)"

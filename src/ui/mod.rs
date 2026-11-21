@@ -153,6 +153,10 @@ pub enum Command {
     /// Save the active assembly as `.odasm`, or open one into it.
     AssemblySave,
     AssemblyOpen,
+    /// Write one of the active assembly's custom nodes to a `.odnode` file the user picks.
+    AssemblyExportNode(crate::assembly::graph::DefId),
+    /// Read a `.odnode` file the user picks into the custom node library.
+    AssemblyImportNode,
     /// Put a reaction (stoichiometry) table under the active document's reaction.
     InsertReactionTable,
     /// 括弧で囲む: put polymer / repeating-unit brackets of this usage around the selected

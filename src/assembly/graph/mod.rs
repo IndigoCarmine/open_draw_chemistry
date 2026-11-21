@@ -15,6 +15,7 @@
 //! A design made of a monomer and a list of steps (every file before version 5) is the chain
 //! [`Graph::chain`] makes; it becomes a graph of its own only when the graph is edited.
 
+pub mod access;
 pub mod defs;
 pub mod eval;
 pub mod expr;

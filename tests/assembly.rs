@@ -262,3 +262,59 @@ fn fifty_thousand_atoms_clash_check_fast() {
         built.atoms.len()
     );
 }
+
+/// The same ~50 000 atoms made through a graph that splits, turns, copies and merges them
+/// back build just as quickly, and saving and opening the graph builds the same atoms.
+#[test]
+fn fifty_thousand_atoms_through_a_graph_build_fast() {
+    use open_draw_chemistry::assembly::graph::kinds::{MoveEach, Repeat, Select};
+    use open_draw_chemistry::assembly::graph::{InKey, NodeId, NodeKind, OutKey, ops};
+
+    let mut design = rosette_stack(6, 350);
+    let g = design.graph_mut();
+    let out = g.output().unwrap();
+    let stack = g.link_into(out, InKey::Set(0)).unwrap().from;
+    let select = g.add(
+        NodeKind::Select(Select {
+            expr: "layer % 2 == 0".into(),
+            vars: vec![],
+        }),
+        [0.0; 2],
+    );
+    let mut turn = MoveEach::new();
+    turn.euler_deg[2] = "15 + 2*sin(layer)".into();
+    let turn = g.add(NodeKind::MoveEach(turn), [0.0; 2]);
+    let merge = g.add(NodeKind::Merge { inputs: 2 }, [0.0; 2]);
+    let mut twice = Repeat::new();
+    twice.n = 2;
+    twice.offset = ["0".into(), "0".into(), "1300 * i".into()];
+    let repeat = g.add(NodeKind::Repeat(twice), [0.0; 2]);
+    let wire = |g: &mut open_draw_chemistry::assembly::graph::Graph,
+                from: NodeId,
+                o: OutKey,
+                to: NodeId,
+                i: InKey| {
+        ops::connect(g, &[], None, from, o, to, i).unwrap();
+    };
+    wire(g, stack, OutKey::Set, select, InKey::Set(0));
+    wire(g, select, OutKey::Selected, merge, InKey::Set(0));
+    wire(g, select, OutKey::Rest, turn, InKey::Set(0));
+    wire(g, turn, OutKey::Set, merge, InKey::Set(1));
+    wire(g, merge, OutKey::Set, repeat, InKey::Set(0));
+    wire(g, repeat, OutKey::Set, out, InKey::Set(0));
+
+    let start = Instant::now();
+    let built = build::build(&design, 1).unwrap();
+    let elapsed = start.elapsed();
+    assert_eq!(built.atoms.len(), 50_400);
+    let limit = if cfg!(debug_assertions) { 10.0 } else { 1.0 };
+    assert!(
+        elapsed.as_secs_f64() < limit,
+        "built {} atoms in {elapsed:?}",
+        built.atoms.len()
+    );
+    let text = file::to_string(&design);
+    assert!(text.contains("\"version\": 5"));
+    let back = file::from_str(&text).unwrap();
+    assert_eq!(build::build(&back, 1).unwrap(), built);
+}

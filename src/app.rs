@@ -698,6 +698,8 @@ impl OpenDrawApp {
             Command::AssemblyExport(export) => self.export_assembly(export),
             Command::AssemblySave => self.save_assembly(),
             Command::AssemblyOpen => self.open_assembly(),
+            Command::AssemblyExportNode(id) => self.export_assembly_node(&id),
+            Command::AssemblyImportNode => self.import_assembly_node(),
             Command::Undo | Command::Redo if self.view.is_assembly() => {
                 let Some(doc) = self.active_doc_mut() else {
                     return;
@@ -944,6 +946,54 @@ impl OpenDrawApp {
         self.status = match assembly::file::save(&path, &doc.assembly.design) {
             Ok(()) => t!("app.status.assembly_saved", path = path.display()),
             Err(e) => t!("app.status.assembly_save_failed", error = e),
+        };
+    }
+
+    fn export_assembly_node(&mut self, id: &assembly::graph::DefId) {
+        use assembly::graph::{defs, library};
+        let Some(doc) = self.active_doc() else { return };
+        let design = &doc.assembly.design;
+        let Some(def) = defs::find(&design.defs, id) else {
+            return;
+        };
+        let text = library::to_string(def, &design.defs);
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(t!("dialog.filter.assembly_node"), &[library::EXTENSION])
+            .set_file_name(format!("{}.{}", def.name, library::EXTENSION))
+            .save_file()
+        else {
+            return;
+        };
+        self.status = match std::fs::write(&path, text) {
+            Ok(()) => t!("app.status.node_exported", path = path.display()),
+            Err(e) => t!("app.status.write_failed", error = e),
+        };
+    }
+
+    fn import_assembly_node(&mut self) {
+        use assembly::graph::library;
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(t!("dialog.filter.assembly_node"), &[library::EXTENSION])
+            .pick_file()
+        else {
+            return;
+        };
+        let read = std::fs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|text| library::from_str(&text));
+        self.status = match read {
+            Ok(entry) => {
+                let mut all = entry.deps.clone();
+                all.push(entry.def.clone());
+                match library::NodeLibrary::default().save(&entry.def, &all) {
+                    Ok(_) => {
+                        self.assembly_view.nodes_reload_library();
+                        t!("app.status.node_imported", name = entry.def.name)
+                    }
+                    Err(e) => t!("app.status.write_failed", error = e),
+                }
+            }
+            Err(e) => t!("app.status.load_failed", path = path.display(), error = e),
         };
     }
 
