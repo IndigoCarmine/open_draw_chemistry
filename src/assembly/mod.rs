@@ -23,6 +23,7 @@ pub mod build;
 pub mod clash;
 pub mod export;
 pub mod file;
+pub mod graph;
 pub mod math;
 pub mod measure;
 pub mod model;

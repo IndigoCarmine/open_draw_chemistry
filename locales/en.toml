@@ -1690,3 +1690,61 @@ failed = "Soft-core optimization failed: {error}"
 assembly_built = "Built the assembly by soft-core optimization (E = {energy} {unit}); it opened as a new document"
 model_built = "Soft-core optimization done (E = {energy} {unit})"
 model_changed = "Soft-core optimization not applied: the 3D model has changed since it started"
+
+# ==== Assembly node graph ====
+
+[assembly.node]
+monomer = "Monomer"
+merge = "Merge"
+select = "Select"
+repeat = "Repeat"
+move_each = "Move each"
+set_attr = "Set attribute"
+value = "Value"
+vector = "Vector"
+expression = "Expression"
+combine = "Combine XYZ"
+separate = "Separate XYZ"
+group_input = "Group input"
+group_output = "Group output"
+output = "Assembly"
+missing_def = "(missing custom node)"
+
+[assembly.node.socket]
+molecules = "Molecules"
+selected = "Selected"
+rest = "Rest"
+count = "Count"
+value = "Value"
+vector = "Vector"
+
+[assembly.node.error]
+cycle = "The links loop back to this node"
+monomer_missing = "This monomer has been removed. Pick another one"
+too_many = "Too many molecules ({count}; at most {max})"
+crystal_dropped = "The crystal (unit cell) is dropped here: only the first input's molecules keep it, and only while the unit cell is kept whole"
+not_finite = "The expression gives no finite number (at copy {at})"
+not_a_number = "The expression gives no finite number"
+bad_name = "\"{name}\" cannot be an attribute name (letters, digits and _, not starting with a digit)"
+missing_def = "The custom node's definition is missing"
+recursion = "Custom node \"{name}\" uses itself"
+too_deep = "Custom nodes are nested too deep (at most {max})"
+
+[assembly.expr.error]
+empty = "Enter an expression"
+unexpected = "Unexpected \"{text}\" at character {at}"
+unknown_name = "Unknown name \"{name}\""
+unknown_function = "Unknown function \"{name}\""
+arity = "{name}() takes {count} arguments"
+unclosed = "A bracket is not closed (character {at})"
+trailing = "Extra text after the expression (character {at})"
+
+[assembly.editor.error]
+missing_socket = "That socket is not there"
+type = "These sockets carry different kinds of values"
+cycle = "That link would loop back"
+group_empty = "Select nodes to group (monomers and the assembly node cannot be grouped)"
+recursion = "A custom node cannot contain itself"
+
+[assembly.library.error]
+newer = "This custom node was saved by a newer version of the app (format {version}; this version reads up to {supported})"

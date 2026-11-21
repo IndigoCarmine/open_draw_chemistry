@@ -1300,3 +1300,61 @@ failed = "ソフトコア最適化に失敗しました: {error}"
 assembly_built = "ソフトコア最適化で集合体を構築しました（E = {energy} {unit}）。新しい文書として開きました"
 model_built = "ソフトコア最適化が完了しました（E = {energy} {unit}）"
 model_changed = "ソフトコア最適化の結果は適用しませんでした: 開始後に 3D モデルが変わっています"
+
+# ==== Assembly node graph ====
+
+[assembly.node]
+monomer = "単量体"
+merge = "合流"
+select = "選択"
+repeat = "繰り返し"
+move_each = "個別に移動"
+set_attr = "属性を設定"
+value = "数値"
+vector = "ベクトル"
+expression = "式"
+combine = "XYZ を合成"
+separate = "XYZ に分解"
+group_input = "グループ入力"
+group_output = "グループ出力"
+output = "集合体"
+missing_def = "（見つからない自作ノード）"
+
+[assembly.node.socket]
+molecules = "分子"
+selected = "選択"
+rest = "残り"
+count = "個数"
+value = "値"
+vector = "ベクトル"
+
+[assembly.node.error]
+cycle = "リンクがこのノードに戻ってループしています"
+monomer_missing = "この単量体は削除されています。別の単量体を選んでください"
+too_many = "分子が多すぎます（{count} 個、上限 {max} 個）"
+crystal_dropped = "ここで結晶（単位格子）の情報は失われます。保持されるのは最初の入力で、単位格子の分子がそろっている場合だけです"
+not_finite = "式が有限の数になりません（{at} 番目）"
+not_a_number = "式が有限の数になりません"
+bad_name = "「{name}」は属性名にできません（英字・数字・_ のみ、先頭は数字以外）"
+missing_def = "自作ノードの定義が見つかりません"
+recursion = "自作ノード「{name}」が自分自身を使っています"
+too_deep = "自作ノードの入れ子が深すぎます（最大 {max}）"
+
+[assembly.expr.error]
+empty = "式を入力してください"
+unexpected = "{at} 文字目の「{text}」が読めません"
+unknown_name = "「{name}」という名前はありません"
+unknown_function = "「{name}」という関数はありません"
+arity = "{name}() の引数は {count} 個です"
+unclosed = "括弧が閉じていません（{at} 文字目）"
+trailing = "式の後ろに余分な文字があります（{at} 文字目）"
+
+[assembly.editor.error]
+missing_socket = "そのソケットはありません"
+type = "このソケット同士は値の種類が違います"
+cycle = "そのリンクはループになります"
+group_empty = "グループ化するノードを選んでください（単量体と集合体ノードは含められません）"
+recursion = "自作ノードは自分自身を含められません"
+
+[assembly.library.error]
+newer = "この自作ノードは新しいバージョンのアプリで保存されています（形式 {version}、このバージョンは {supported} まで）"

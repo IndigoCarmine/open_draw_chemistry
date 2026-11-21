@@ -1,122 +1,35 @@
-//! What a scan can vary: a number of the assembly's design (a step's parameter, a cell
-//! constant, a hand-placed molecule's pose) or a picked bond length, angle or dihedral of the
-//! 3D model — and how a value is read from and written into each.
+//! What a scan can vary: a number of the assembly's design (a node's input, such as a step's
+//! parameter or a cell constant, a number node, a custom node's input, a hand-placed
+//! molecule's pose) or a picked bond length, angle or dihedral of the 3D model — and how a
+//! value is read from and written into each.
 
 use std::fmt;
 
-use crate::assembly::model::{Design, Step};
+pub use crate::assembly::graph::StepField;
+use crate::assembly::graph::{self, InKey, NodeId, NodeKind, SocketType, chain_step_id};
+use crate::assembly::model::{Design, node_name};
 use crate::assembly::place;
 use crate::three_d::edit;
 use crate::three_d::geom::{self, Graph, Vec3};
 use crate::three_d::{Constraint, Model3d};
 
-/// One number of a building step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StepField {
-    RingRadius,
-    RingTilt,
-    StackRise,
-    StackTwist,
-    StackSlip,
-    /// The array's offset along x, y or z.
-    ArrayOffset(usize),
-    /// The array's per-copy rotation about x, y or z.
-    ArrayEuler(usize),
-    /// The move/rotate step's offset along x, y or z.
-    TransformOffset(usize),
-    /// The move/rotate step's rotation about x, y or z.
-    TransformEuler(usize),
-    BendRadius,
-    BendDirection,
-    CellA,
-    CellB,
-    CellC,
-    CellAlpha,
-    CellBeta,
-    CellGamma,
-}
-
 const XYZ: [&str; 3] = ["x", "y", "z"];
 
-impl StepField {
-    /// The fields `step` has, in panel order.
-    pub fn of(step: &Step) -> Vec<StepField> {
-        use StepField::*;
-        match step {
-            Step::Ring(_) => vec![RingRadius, RingTilt],
-            Step::Stack(_) => vec![StackRise, StackTwist, StackSlip],
-            Step::Array(_) => (0..3)
-                .map(ArrayOffset)
-                .chain((0..3).map(ArrayEuler))
-                .collect(),
-            Step::Lattice(_) => vec![CellA, CellB, CellC, CellAlpha, CellBeta, CellGamma],
-            Step::Transform(_) => (0..3)
-                .map(TransformOffset)
-                .chain((0..3).map(TransformEuler))
-                .collect(),
-            Step::Bend(_) => vec![BendRadius, BendDirection],
-        }
-    }
-
-    pub fn label(self) -> String {
-        use StepField::*;
-        match self {
-            RingRadius => t!("scan.param.ring_radius").into(),
-            RingTilt => t!("scan.param.ring_tilt").into(),
-            StackRise => t!("scan.param.stack_rise").into(),
-            StackTwist => t!("scan.param.stack_twist").into(),
-            StackSlip => t!("scan.param.stack_slip").into(),
-            ArrayOffset(i) | TransformOffset(i) => t!("scan.param.array_offset", axis = XYZ[i]),
-            ArrayEuler(i) | TransformEuler(i) => t!("scan.param.array_rotation", axis = XYZ[i]),
-            BendRadius => t!("scan.param.bend_radius").into(),
-            BendDirection => t!("scan.param.bend_direction").into(),
-            CellA => "a".into(),
-            CellB => "b".into(),
-            CellC => "c".into(),
-            CellAlpha => "α".into(),
-            CellBeta => "β".into(),
-            CellGamma => "γ".into(),
-        }
-    }
-
-    pub fn is_angle(self) -> bool {
-        use StepField::*;
-        matches!(
-            self,
-            RingTilt
-                | StackTwist
-                | ArrayEuler(_)
-                | TransformEuler(_)
-                | BendDirection
-                | CellAlpha
-                | CellBeta
-                | CellGamma
-        )
-    }
-
-    /// The field's slot in `step`, or `None` when the step is of another kind.
-    fn slot(self, step: &mut Step) -> Option<&mut f64> {
-        use StepField::*;
-        Some(match (self, step) {
-            (RingRadius, Step::Ring(s)) => &mut s.radius,
-            (RingTilt, Step::Ring(s)) => &mut s.tilt_deg,
-            (StackRise, Step::Stack(s)) => &mut s.rise,
-            (StackTwist, Step::Stack(s)) => &mut s.twist_deg,
-            (StackSlip, Step::Stack(s)) => &mut s.slip,
-            (ArrayOffset(i), Step::Array(s)) => s.offset.get_mut(i)?,
-            (ArrayEuler(i), Step::Array(s)) => s.euler_deg.get_mut(i)?,
-            (TransformOffset(i), Step::Transform(s)) => s.offset.get_mut(i)?,
-            (TransformEuler(i), Step::Transform(s)) => s.euler_deg.get_mut(i)?,
-            (BendRadius, Step::Bend(s)) => &mut s.radius,
-            (BendDirection, Step::Bend(s)) => &mut s.direction_deg,
-            (CellA, Step::Lattice(l)) => &mut l.cell.a,
-            (CellB, Step::Lattice(l)) => &mut l.cell.b,
-            (CellC, Step::Lattice(l)) => &mut l.cell.c,
-            (CellAlpha, Step::Lattice(l)) => &mut l.cell.alpha,
-            (CellBeta, Step::Lattice(l)) => &mut l.cell.beta,
-            (CellGamma, Step::Lattice(l)) => &mut l.cell.gamma,
-            _ => return None,
-        })
+/// A step field's name in the scan's words ("Offset x").
+fn field_label(field: StepField, axis: Option<usize>) -> String {
+    use StepField::*;
+    let axis_name = XYZ[axis.unwrap_or(0).min(2)];
+    match field {
+        RingRadius => t!("scan.param.ring_radius").into(),
+        RingTilt => t!("scan.param.ring_tilt").into(),
+        StackRise => t!("scan.param.stack_rise").into(),
+        StackTwist => t!("scan.param.stack_twist").into(),
+        StackSlip => t!("scan.param.stack_slip").into(),
+        ArrayOffset | TransformOffset => t!("scan.param.array_offset", axis = axis_name),
+        ArrayEuler | TransformEuler => t!("scan.param.array_rotation", axis = axis_name),
+        BendRadius => t!("scan.param.bend_radius").into(),
+        BendDirection => t!("scan.param.bend_direction").into(),
+        other => other.axis_label(axis),
     }
 }
 
@@ -150,8 +63,13 @@ impl PoseField {
 /// A scanned parameter.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Param {
-    /// A number of building step `step` (an index into [`Design::steps`]).
-    Step { step: usize, field: StepField },
+    /// The value of input `key` of node `node` of the design's graph (top level), one axis of
+    /// it for a triple. `InKey::Value` is a number or vector node's own value.
+    Input {
+        node: NodeId,
+        key: InKey,
+        axis: Option<u8>,
+    },
     /// A number of hand-placed molecule `index` (into [`Design::manual`]).
     Pose { index: usize, field: PoseField },
     /// A bond length of the 3D model: the smaller side slides along the bond.
@@ -174,10 +92,58 @@ impl fmt::Display for ApplyError {
 
 impl std::error::Error for ApplyError {}
 
+/// The value of input `key` (axis `axis`) of a node of kind `kind`.
+fn read_kind(kind: &NodeKind, key: InKey, axis: Option<usize>) -> Option<f64> {
+    match (kind, key) {
+        (NodeKind::Value { value }, InKey::Value) => Some(*value),
+        (NodeKind::Vector { value }, InKey::Value) => Some(value[axis?.min(2)]),
+        _ => kind.inline(key).map(|v| v.component(axis)),
+    }
+}
+
+/// Set input `key` (axis `axis`) of a node of kind `kind`.
+fn write_kind(kind: &mut NodeKind, key: InKey, axis: Option<usize>, value: f64) -> bool {
+    match (&mut *kind, key) {
+        (NodeKind::Value { value: v }, InKey::Value) => {
+            *v = value;
+            true
+        }
+        (NodeKind::Vector { value: v }, InKey::Value) => match axis {
+            Some(i) => {
+                v[i.min(2)] = value;
+                true
+            }
+            None => false,
+        },
+        _ => match kind.inline(key) {
+            Some(old) => kind.set_inline(key, old.with_component(axis, value)),
+            None => false,
+        },
+    }
+}
+
 impl Param {
+    /// Field `field` of step `k` of a design's steps (the node the chain makes of it).
+    pub fn step(k: usize, field: StepField) -> Param {
+        Param::Input {
+            node: chain_step_id(k),
+            key: InKey::Field(field),
+            axis: None,
+        }
+    }
+
+    /// Axis `axis` of field `field` (a triple) of step `k`.
+    pub fn step_axis(k: usize, field: StepField, axis: usize) -> Param {
+        Param::Input {
+            node: chain_step_id(k),
+            key: InKey::Field(field),
+            axis: Some(axis as u8),
+        }
+    }
+
     /// Whether the parameter belongs to the assembly (else to the 3D model).
     pub fn is_assembly(&self) -> bool {
-        matches!(self, Param::Step { .. } | Param::Pose { .. })
+        matches!(self, Param::Input { .. } | Param::Pose { .. })
     }
 
     /// The parameter of the 3D model the picked atoms name, if they name a settable one.
@@ -190,10 +156,14 @@ impl Param {
         }
     }
 
-    /// Å or °.
+    /// Å, °, or nothing (a plain number).
     pub fn unit(&self) -> &'static str {
         let angle = match self {
-            Param::Step { field, .. } => field.is_angle(),
+            Param::Input { key, .. } => match key {
+                InKey::Field(f) if f.is_angle() => true,
+                InKey::Field(_) => false,
+                _ => return "",
+            },
             Param::Pose { field, .. } => matches!(field, PoseField::Rotation(_)),
             Param::Bond(_) => false,
             Param::Angle(_) | Param::Dihedral(_) => true,
@@ -201,7 +171,7 @@ impl Param {
         if angle { "°" } else { "Å" }
     }
 
-    /// The parameter's name, for the axis and the CSV header. `design` names the step;
+    /// The parameter's name, for the axis and the CSV header. `design` names the node;
     /// `model` the atoms (both optional: without them a generic name is given).
     pub fn label(&self, design: Option<&Design>, model: Option<&Model3d>) -> String {
         let atoms = |list: &[usize]| {
@@ -214,11 +184,45 @@ impl Param {
                 .join("–")
         };
         match self {
-            Param::Step { step, field } => {
-                let name = design
-                    .and_then(|d| d.steps.get(*step))
-                    .map_or(t!("scan.param.step"), Step::label);
-                format!("{} {}: {}", step + 1, name, field.label())
+            Param::Input { node, key, axis } => {
+                let axis = axis.map(usize::from);
+                let field = match key {
+                    InKey::Field(f) => field_label(*f, axis),
+                    InKey::Value => axis.map_or_else(String::new, |i| XYZ[i.min(2)].to_owned()),
+                    other => design
+                        .and_then(|d| {
+                            let g = d.effective_graph();
+                            let n = g.node(*node)?;
+                            let decl = n
+                                .kind
+                                .inputs(&d.defs, None)
+                                .into_iter()
+                                .find(|i| i.key == *other)?;
+                            Some(match axis {
+                                Some(i) if decl.ty == SocketType::Vec3 => {
+                                    format!("{} {}", decl.label, XYZ[i.min(2)])
+                                }
+                                _ => decl.label,
+                            })
+                        })
+                        .unwrap_or_default(),
+                };
+                let name = design.and_then(|d| {
+                    if d.is_linear() {
+                        let k = node.0.checked_sub(2)? as usize;
+                        let step = d.steps.get(k)?;
+                        return Some(format!("{} {}", k + 1, step.label()));
+                    }
+                    let g = d.effective_graph();
+                    g.node(*node)?;
+                    Some(node_name(&g, &d.defs, &[], *node))
+                });
+                let name = name.unwrap_or_else(|| t!("scan.param.step").to_owned());
+                if field.is_empty() {
+                    name
+                } else {
+                    format!("{name}: {field}")
+                }
             }
             Param::Pose { index, field } => {
                 t!("scan.param.pose", number = index + 1, field = field.label())
@@ -232,9 +236,17 @@ impl Param {
     /// The parameter's value in `design` now.
     pub fn read_design(&self, design: &Design) -> Option<f64> {
         match *self {
-            Param::Step { step, field } => {
-                let mut step = design.steps.get(step)?.clone();
-                field.slot(&mut step).map(|v| *v)
+            Param::Input { node, key, axis } => {
+                let axis = axis.map(usize::from);
+                if design.is_linear() {
+                    let step = design.steps.get(node.0.checked_sub(2)? as usize)?;
+                    let InKey::Field(field) = key else {
+                        return None;
+                    };
+                    return field.read(step).map(|v| v.component(axis));
+                }
+                let g = design.graph.as_ref()?;
+                read_kind(&g.node(node)?.kind, key, axis)
             }
             Param::Pose { index, field } => {
                 let (pose, _) = pose(design, index)?;
@@ -247,18 +259,32 @@ impl Param {
         }
     }
 
-    /// Put `value` into `design`.
+    /// Put `value` into `design`. A design still made of steps stays so.
     pub fn write_design(&self, design: &mut Design, value: f64) -> Result<(), ApplyError> {
         let missing = || ApplyError(t!("scan.error.item_missing").into());
         match *self {
-            Param::Step { step, field } => {
-                let slot = design
-                    .steps
-                    .get_mut(step)
-                    .and_then(|s| field.slot(s))
+            Param::Input { node, key, axis } => {
+                let axis = axis.map(usize::from);
+                if design.is_linear() {
+                    let k = node.0.checked_sub(2).ok_or_else(missing)? as usize;
+                    let step = design.steps.get_mut(k).ok_or_else(missing)?;
+                    let InKey::Field(field) = key else {
+                        return Err(missing());
+                    };
+                    let old = field.read(step).ok_or_else(missing)?;
+                    field.write(step, old.with_component(axis, value));
+                    return Ok(());
+                }
+                let n = design
+                    .graph
+                    .as_mut()
+                    .and_then(|g| g.node_mut(node))
                     .ok_or_else(missing)?;
-                *slot = value;
-                Ok(())
+                if write_kind(&mut n.kind, key, axis, value) {
+                    Ok(())
+                } else {
+                    Err(missing())
+                }
             }
             Param::Pose { index, field } => {
                 let (mut pose, local) = pose(design, index).ok_or_else(missing)?;
@@ -338,6 +364,7 @@ impl Param {
             Param::Angle(_) => ((current - 20.0).max(1.0), (current + 20.0).min(179.0)),
             Param::Bond(_) => ((current - 0.3).max(0.5), current + 0.5),
             _ if self.unit() == "°" => (current - 30.0, current + 30.0),
+            _ if self.unit().is_empty() => (current - 1.0, current + 1.0),
             _ => ((current - 1.0).max(0.0), current + 1.0),
         }
     }
@@ -351,19 +378,62 @@ fn pose(design: &Design, index: usize) -> Option<(place::Pose, Vec3)> {
     Some((place::pose_of(&inst.transform, local), local))
 }
 
-/// Every parameter of `design` that can be scanned: each enabled step's numbers, then the
-/// pose of hand-placed molecule `selected_manual` (the one selected in the viewer).
+/// Every parameter of `design` that can be scanned, then the pose of hand-placed molecule
+/// `selected_manual` (the one selected in the viewer). For a design made of steps: each step's
+/// numbers. For a graph: the number and vector nodes, then the unlinked number inputs of the
+/// other nodes that feed the assembly (counts left out: they take whole values).
 pub fn design_params(design: &Design, selected_manual: Option<usize>) -> Vec<Param> {
-    let mut out: Vec<Param> = design
-        .steps
-        .iter()
-        .enumerate()
-        .flat_map(|(step, s)| {
-            StepField::of(s)
-                .into_iter()
-                .map(move |field| Param::Step { step, field })
-        })
-        .collect();
+    let mut out = Vec::new();
+    let mut push = |node: NodeId, key: InKey, ty: SocketType| match ty {
+        SocketType::Number => out.push(Param::Input {
+            node,
+            key,
+            axis: None,
+        }),
+        SocketType::Vec3 => out.extend((0..3).map(|i| Param::Input {
+            node,
+            key,
+            axis: Some(i),
+        })),
+        SocketType::Set => {}
+    };
+    match &design.graph {
+        None => {
+            for (k, step) in design.steps.iter().enumerate() {
+                for field in StepField::of(step) {
+                    if !field.is_count() {
+                        push(chain_step_id(k), InKey::Field(field), field.ty());
+                    }
+                }
+            }
+        }
+        Some(g) => {
+            let ev = design.evaluation();
+            let rank = |kind: &NodeKind| match kind {
+                NodeKind::Value { .. } | NodeKind::Vector { .. } => 0,
+                NodeKind::Group(_) => 1,
+                _ => 2,
+            };
+            let mut nodes: Vec<&graph::Node> =
+                g.nodes.iter().filter(|n| ev.reached(&[], n.id)).collect();
+            nodes.sort_by_key(|n| (rank(&n.kind), n.id));
+            for n in nodes {
+                match &n.kind {
+                    NodeKind::Value { .. } => push(n.id, InKey::Value, SocketType::Number),
+                    NodeKind::Vector { .. } => push(n.id, InKey::Value, SocketType::Vec3),
+                    kind => {
+                        for decl in kind.inputs(&design.defs, None) {
+                            let count = matches!(decl.key, InKey::Count)
+                                || matches!(decl.key, InKey::Field(f) if f.is_count());
+                            if !count && g.link_into(n.id, decl.key).is_none() {
+                                push(n.id, decl.key, decl.ty);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     if let Some(index) = selected_manual.filter(|&k| k < design.manual.len()) {
         out.extend(
             PoseField::ALL
@@ -377,8 +447,9 @@ pub fn design_params(design: &Design, selected_manual: Option<usize>) -> Vec<Par
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assembly::graph::{OutKey, ops};
     use crate::assembly::math::Rigid;
-    use crate::assembly::model::{Component, Instance};
+    use crate::assembly::model::{Component, Instance, Step};
     use crate::three_d::{Atom3d, Bond3d};
 
     fn component() -> Component {
@@ -418,25 +489,30 @@ mod tests {
     }
 
     /// Every assembly parameter reads back the value written into it, and writing one leaves
-    /// the others alone.
+    /// the others alone — for a design of steps and for the same design as a graph.
     #[test]
     fn every_assembly_parameter_round_trips() {
-        let base = design();
-        let params = design_params(&base, Some(0));
-        assert_eq!(params.len(), 2 + 3 + 6 + 6 + 6 + 2 + 6);
-        for (n, param) in params.iter().enumerate() {
-            let mut d = base.clone();
-            let value = 37.0 + n as f64 * 0.25;
-            param.write_design(&mut d, value).unwrap();
-            let back = param.read_design(&d).unwrap();
-            assert!((back - value).abs() < 1e-9, "{param:?}: {back}");
-            for other in params.iter().filter(|p| *p != param) {
-                let (a, b) = (other.read_design(&base), other.read_design(&d));
-                let (a, b) = (a.unwrap(), b.unwrap());
-                // Euler angles of a pose are coupled only through gimbal lock; 37° is not.
-                assert!((a - b).abs() < 1e-6, "{param:?} changed {other:?}");
+        let linear = design();
+        let mut as_graph = linear.clone();
+        as_graph.graph_mut();
+        for base in [linear, as_graph] {
+            let params = design_params(&base, Some(0));
+            assert_eq!(params.len(), 2 + 3 + 6 + 6 + 6 + 2 + 6, "{params:?}");
+            for (n, param) in params.iter().enumerate() {
+                let mut d = base.clone();
+                let value = 37.0 + n as f64 * 0.25;
+                param.write_design(&mut d, value).unwrap();
+                assert_eq!(d.is_linear(), base.is_linear());
+                let back = param.read_design(&d).unwrap();
+                assert!((back - value).abs() < 1e-9, "{param:?}: {back}");
+                for other in params.iter().filter(|p| *p != param) {
+                    let (a, b) = (other.read_design(&base), other.read_design(&d));
+                    let (a, b) = (a.unwrap(), b.unwrap());
+                    // Euler angles of a pose are coupled only through gimbal lock; 37° is not.
+                    assert!((a - b).abs() < 1e-6, "{param:?} changed {other:?}");
+                }
+                assert!(!param.label(Some(&d), None).is_empty());
             }
-            assert!(!param.label(Some(&d), None).is_empty());
         }
     }
 
@@ -449,24 +525,11 @@ mod tests {
             ..Default::default()
         };
         let params = design_params(&d, None);
-        let fields: Vec<StepField> = params
-            .iter()
-            .map(|p| match p {
-                Param::Step { field, .. } => *field,
-                other => panic!("{other:?}"),
-            })
+        let expected: Vec<Param> = (0..3)
+            .map(|i| Param::step_axis(0, StepField::TransformOffset, i))
+            .chain((0..3).map(|i| Param::step_axis(0, StepField::TransformEuler, i)))
             .collect();
-        assert_eq!(
-            fields,
-            [
-                StepField::TransformOffset(0),
-                StepField::TransformOffset(1),
-                StepField::TransformOffset(2),
-                StepField::TransformEuler(0),
-                StepField::TransformEuler(1),
-                StepField::TransformEuler(2),
-            ]
-        );
+        assert_eq!(params, expected);
         assert_eq!(params[2].unit(), "Å");
         assert_eq!(params[5].unit(), "°");
         let origin = |d: &Design| d.instances()[0].transform.apply([0.0; 3]);
@@ -477,24 +540,66 @@ mod tests {
         params[5].write_design(&mut moved, 180.0).unwrap();
         assert!(geom::distance(origin(&moved), [1.2, 0.0, 4.0]) < 1e-9);
         assert_eq!(params[5].read_design(&moved), Some(180.0));
+        assert!(params[0].label(Some(&d), None).starts_with("1 "));
+    }
+
+    /// A number node feeding a stack's rise is a parameter of its own; the rise it feeds is
+    /// not offered.
+    #[test]
+    fn a_value_node_can_be_scanned() {
+        let mut d = Design {
+            components: vec![component()],
+            steps: vec![Step::new_stack()],
+            ..Default::default()
+        };
+        let g = d.graph_mut();
+        let v = g.add(NodeKind::Value { value: 3.5 }, [0.0; 2]);
+        ops::connect(
+            g,
+            &[],
+            None,
+            v,
+            OutKey::Number,
+            chain_step_id(0),
+            InKey::Field(StepField::StackRise),
+        )
+        .unwrap();
+        let params = design_params(&d, None);
+        assert_eq!(
+            params[0],
+            Param::Input {
+                node: v,
+                key: InKey::Value,
+                axis: None
+            }
+        );
+        assert!(!params.contains(&Param::step(0, StepField::StackRise)));
+        assert_eq!(params[0].unit(), "");
+        let top = |d: &Design| d.instances().last().unwrap().transform.apply([0.0; 3])[2];
+        params[0].write_design(&mut d, 4.0).unwrap();
+        assert!((top(&d) - 36.0).abs() < 1e-9);
     }
 
     #[test]
     fn a_missing_step_is_an_error_not_a_panic() {
         let mut d = design();
-        let p = Param::Step {
-            step: 9,
-            field: StepField::RingRadius,
-        };
-        assert!(p.write_design(&mut d, 1.0).is_err());
-        let wrong_kind = Param::Step {
-            step: 0,
-            field: StepField::StackRise,
-        };
+        assert!(
+            Param::step(9, StepField::RingRadius)
+                .write_design(&mut d, 1.0)
+                .is_err()
+        );
+        let wrong_kind = Param::step(0, StepField::StackRise);
         assert!(wrong_kind.write_design(&mut d, 1.0).is_err());
         assert!(
             Param::Dihedral([0, 1, 2, 3])
                 .write_design(&mut d, 1.0)
+                .is_err()
+        );
+        let mut g = design();
+        g.graph_mut();
+        assert!(
+            Param::step(9, StepField::RingRadius)
+                .write_design(&mut g, 1.0)
                 .is_err()
         );
     }

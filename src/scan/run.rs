@@ -1073,14 +1073,8 @@ mod energy_tests {
             steps: vec![stack],
             ..Default::default()
         };
-        let rise = Param::Step {
-            step: 0,
-            field: StepField::StackRise,
-        };
-        let twist = Param::Step {
-            step: 0,
-            field: StepField::StackTwist,
-        };
+        let rise = Param::step(0, StepField::StackRise);
+        let twist = Param::step(0, StepField::StackTwist);
         let axes = [
             Axis {
                 param: rise.clone(),
@@ -1135,10 +1129,7 @@ mod energy_tests {
             steps: vec![stack],
             ..Default::default()
         };
-        let rise = Param::Step {
-            step: 0,
-            field: StepField::StackRise,
-        };
+        let rise = Param::step(0, StepField::StackRise);
         let axis = Axis {
             param: rise.clone(),
             start: 3.4,
@@ -1709,10 +1700,7 @@ mod energy_tests {
     }
 
     fn stack_rise() -> Param {
-        Param::Step {
-            step: 0,
-            field: StepField::StackRise,
-        }
+        Param::step(0, StepField::StackRise)
     }
 
     /// `n` copies of `component` stacked, 3.5 Å apart and untwisted.
@@ -1754,10 +1742,7 @@ mod energy_tests {
     }
 
     fn cell_c() -> Param {
-        Param::Step {
-            step: 1,
-            field: StepField::CellC,
-        }
+        Param::step(1, StepField::CellC)
     }
 
     /// `points` less their centroid.
@@ -1888,10 +1873,7 @@ mod energy_tests {
             steps: vec![lattice],
             ..Default::default()
         };
-        let a = Param::Step {
-            step: 0,
-            field: StepField::CellA,
-        };
+        let a = Param::step(0, StepField::CellA);
         let axis = Axis {
             param: a.clone(),
             start: 7.0,
@@ -2471,10 +2453,7 @@ mod energy_tests {
             steps: vec![stack],
             ..Default::default()
         };
-        let rise = Param::Step {
-            step: 0,
-            field: StepField::StackRise,
-        };
+        let rise = Param::step(0, StepField::StackRise);
         let source = Source::assembly(&design, vec![rise]);
         let reference = source.reference().unwrap();
         for ff in ForceField::ALL {

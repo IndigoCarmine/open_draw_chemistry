@@ -454,11 +454,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
             let selected_manual = state.selected.and_then(|m| state.design.manual_index(m));
             let options = design_params(&state.design, selected_manual);
             atoms = state.design.atom_count();
-            has_lattice = state
-                .design
-                .steps
-                .iter()
-                .any(|s| s.enabled() && matches!(s, crate::assembly::Step::Lattice(_)));
+            has_lattice = state.design.evaluation().output.crystal.is_some();
             if options.is_empty() {
                 ui.label(muted(ui, t!("scan.window.no_params")));
             }
@@ -1685,14 +1681,8 @@ mod tests {
             assert!(text.contains("Minimum"), "{text}");
         }
 
-        let rise = Param::Step {
-            step: 0,
-            field: scan::StepField::StackRise,
-        };
-        let twist = Param::Step {
-            step: 0,
-            field: scan::StepField::StackTwist,
-        };
+        let rise = Param::step(0, scan::StepField::StackRise);
+        let twist = Param::step(0, scan::StepField::StackTwist);
         let scan = scan_of(
             vec![
                 (rise.clone(), vec![3.0, 3.5, 4.0, 4.5]),
@@ -1737,14 +1727,8 @@ mod tests {
             steps: vec![Step::new_stack()],
             ..Default::default()
         });
-        let rise = Param::Step {
-            step: 0,
-            field: scan::StepField::StackRise,
-        };
-        let twist = Param::Step {
-            step: 0,
-            field: scan::StepField::StackTwist,
-        };
+        let rise = Param::step(0, scan::StepField::StackRise);
+        let twist = Param::step(0, scan::StepField::StackTwist);
         let scan = scan_of(
             vec![
                 (rise.clone(), vec![3.0, 4.0]),
