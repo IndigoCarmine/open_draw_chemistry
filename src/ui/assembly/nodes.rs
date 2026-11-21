@@ -342,13 +342,14 @@ fn lay(
     }
     for i in node.kind.inputs(defs, owner) {
         let wired = graph.link_into(node.id, i.key).is_some();
-        let unit = match i.key {
-            InKey::Field(f) if f.is_count() => "",
-            InKey::Field(_) if i.angle => "°",
-            InKey::Field(_) => " Å",
-            _ => "",
+        let unit = if i.angle {
+            "°"
+        } else if i.length {
+            " Å"
+        } else {
+            ""
         };
-        let edit = (!wired && i.ty != SocketType::Set)
+        let edit = (!wired && matches!(i.ty, SocketType::Number | SocketType::Vec3))
             .then(|| {
                 node.kind
                     .inline(i.key)
@@ -546,6 +547,7 @@ fn header_color(c: Category) -> Color32 {
         Category::Move => Color32::from_rgb(0x3A, 0x58, 0x86),
         Category::Combine => Color32::from_rgb(0x66, 0x4A, 0x88),
         Category::Math => Color32::from_rgb(0x4C, 0x66, 0x46),
+        Category::Geometry => Color32::from_rgb(0x2F, 0x6E, 0x55),
         Category::Group => Color32::from_rgb(0x7A, 0x66, 0x26),
         Category::Output => Color32::from_rgb(0x55, 0x4C, 0x46),
     }
@@ -556,6 +558,8 @@ fn socket_color(ty: SocketType) -> Color32 {
         SocketType::Set => crate::theme::ORANGE_ON_DARK,
         SocketType::Number => Color32::from_rgb(0xA8, 0xA2, 0x9B),
         SocketType::Vec3 => Color32::from_rgb(0x8C, 0x7B, 0xD9),
+        SocketType::Curve => Color32::from_rgb(0x4F, 0xC2, 0x8E),
+        SocketType::Points => Color32::from_rgb(0x4A, 0xB8, 0xD8),
     }
 }
 
@@ -777,7 +781,10 @@ fn canvas(
         wire(&painter, s0, s1, color, v.zoom);
         let shown = ev.shown.get(&(scope.clone(), link.from, link.out));
         let text = match shown {
-            Some(Shown::Count(n)) if ty == SocketType::Set => Some(format!("{n}")),
+            Some(Shown::Count(n)) if matches!(ty, SocketType::Set | SocketType::Points) => {
+                Some(format!("{n}"))
+            }
+            Some(Shown::Field) => Some("ƒ".to_owned()),
             Some(Shown::Number(x)) => Some(number_text(*x)),
             _ => None,
         };
@@ -827,6 +834,8 @@ fn canvas(
     if v.zoom >= BOX_ZOOM {
         let mut boxes = ui.new_child(egui::UiBuilder::new().max_rect(area));
         boxes.set_clip_rect(area.intersect(ui.clip_rect()));
+        // The theme keeps a text field at least a button high: the boxes fit their rows.
+        boxes.spacing_mut().interact_size.y = 0.0;
         let base = ui.scope_id().with(("value", &scope));
         for l in &order {
             let r = v.rect(l.rect);
@@ -1304,7 +1313,7 @@ fn draw_node(painter: &egui::Painter, l: &Laid, v: View, selected: bool, boxes: 
             continue;
         }
         match row.ty {
-            SocketType::Set => {
+            SocketType::Set | SocketType::Curve | SocketType::Points => {
                 painter.circle_filled(p, SOCKET_R * z, c);
             }
             SocketType::Number => {
@@ -1392,6 +1401,8 @@ fn add_menu(
             Category::Copy => t!("assembly.editor.menu.copy"),
             Category::Move => t!("assembly.editor.menu.move"),
             Category::Combine => t!("assembly.editor.menu.combine"),
+            Category::Geometry => t!("assembly.editor.menu.geometry"),
+            Category::Input => t!("assembly.editor.menu.input"),
             _ => t!("assembly.editor.menu.math"),
         };
         entries.push(Entry {

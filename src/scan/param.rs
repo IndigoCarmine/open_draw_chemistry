@@ -395,7 +395,7 @@ pub fn design_params(design: &Design, selected_manual: Option<usize>) -> Vec<Par
             key,
             axis: Some(i),
         })),
-        SocketType::Set => {}
+        SocketType::Set | SocketType::Curve | SocketType::Points => {}
     };
     match &design.graph {
         None => {

@@ -11,7 +11,7 @@ use crate::assembly::graph::defs::{self, DefId, NodeDef, Status};
 use crate::assembly::graph::eval::is_name;
 use crate::assembly::graph::expr::{Expr, eval_const};
 use crate::assembly::graph::kinds::{
-    EachPivot, NodeKind, PortValue, SocketType, Var, next_var_key, next_var_name,
+    CurveSample, EachPivot, NodeKind, PortValue, SocketType, Var, next_var_key, next_var_name,
 };
 use crate::assembly::graph::{InKey, NodeId, access, library, ops};
 use crate::assembly::model::{Design, node_name};
@@ -376,6 +376,103 @@ fn kind_params(
             );
             changed |= vars_editor(ui, &mut m.vars);
         }
+        NodeKind::Circle(c) => {
+            changed |= super::count(
+                ui,
+                t!("assembly.node.socket.resolution"),
+                &mut c.resolution,
+                t!("assembly.panel.circle_resolution_tip"),
+            );
+            changed |= super::number(
+                ui,
+                t!("assembly.node.socket.radius"),
+                &mut c.radius,
+                0.05,
+                0.0..=1.0e5,
+                " Å",
+                t!("assembly.panel.circle_radius_tip"),
+            );
+        }
+        NodeKind::CurveToPoints(c) => {
+            changed |= super::field_row(
+                ui,
+                t!("assembly.panel.curve_mode"),
+                t!("assembly.panel.curve_mode_tip"),
+                |ui| {
+                    let mut m = false;
+                    for (mode, label) in [
+                        (CurveSample::Count, t!("assembly.panel.curve_count")),
+                        (CurveSample::Length, t!("assembly.panel.curve_length")),
+                        (CurveSample::Evaluated, t!("assembly.panel.curve_evaluated")),
+                    ] {
+                        m |= ui.selectable_value(&mut c.mode, mode, label).changed();
+                    }
+                    m
+                },
+            );
+            match c.mode {
+                CurveSample::Count => {
+                    changed |= super::count(
+                        ui,
+                        t!("assembly.node.socket.count"),
+                        &mut c.count,
+                        t!("assembly.panel.curve_count_tip"),
+                    );
+                }
+                CurveSample::Length => {
+                    changed |= super::number(
+                        ui,
+                        t!("assembly.node.socket.length"),
+                        &mut c.length,
+                        0.05,
+                        0.001..=1.0e5,
+                        " Å",
+                        t!("assembly.panel.curve_length_tip"),
+                    );
+                }
+                CurveSample::Evaluated => {}
+            }
+            ui.label(
+                RichText::new(t!("assembly.panel.curve_frame_help"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
+        }
+        NodeKind::InstanceOnPoints(p) => {
+            changed |= ui
+                .checkbox(&mut p.align, t!("assembly.panel.align_to_points"))
+                .on_hover_text(t!("assembly.panel.align_to_points_tip"))
+                .changed();
+            changed |= super::number(
+                ui,
+                t!("assembly.node.socket.selection"),
+                &mut p.selection,
+                0.05,
+                f64::MIN..=f64::MAX,
+                "",
+                t!("assembly.panel.selection_tip"),
+            );
+            changed |= super::vector(
+                ui,
+                t!("assembly.node.socket.rotation"),
+                &mut p.rotation_deg,
+                0.5,
+                "°",
+                t!("assembly.panel.instance_rotation_tip"),
+            );
+            ui.label(
+                RichText::new(t!("assembly.panel.instance_help"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
+        }
+        NodeKind::Index => {
+            ui.label(
+                RichText::new(t!("assembly.panel.index_help"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
+        }
         NodeKind::SetAttr(a) => {
             changed |= super::field_row(
                 ui,
@@ -628,6 +725,8 @@ fn def_editor(ui: &mut Ui, state: &mut AssemblyState, def_id: &DefId, look: &Loo
                     SocketType::Set => "●",
                     SocketType::Number => "○",
                     SocketType::Vec3 => "◆",
+                    SocketType::Curve => "∿",
+                    SocketType::Points => "⁘",
                 };
                 ui.label(RichText::new(kind).size(11.0).color(look.muted));
                 ui.add(egui::TextEdit::singleline(&mut p.name).desired_width(100.0));

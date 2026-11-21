@@ -11,6 +11,11 @@
 //! merge's `input`; each copying node also sets `copy` and `copies`. Expressions in selecting
 //! and moving nodes read them, with `k` (the molecule's place in the set), `count`, `comp`
 //! (its monomer, from 0), `x`, `y`, `z` (its centroid) and the node's own variables.
+//!
+//! A number may also be a field: a value per element of whatever uses it, such as the index
+//! node's. Nodes that work element by element (select, move each, set attribute, instance on
+//! points) take one wherever they take a number; expression and combine nodes fed one give
+//! one; other inputs report it.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -19,7 +24,7 @@ use std::sync::Arc;
 use super::defs::{self, DefId, NodeDef};
 use super::expr::Expr;
 use super::field::{StepField, count_of};
-use super::kinds::{EachPivot, NodeKind, PortValue, SocketType, Var};
+use super::kinds::{CurveSample, EachPivot, NodeKind, PortValue, SocketType, Var};
 use super::{Graph, InKey, NodeId, OutKey};
 use crate::assembly::math::{self, Rigid, Vec3};
 use crate::assembly::model::{Component, Crystal, Ids, Instance, Shape, Step, centroid};
@@ -111,12 +116,76 @@ impl Set {
     }
 }
 
+/// Curves: lines through points.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Curve {
+    pub splines: Vec<Spline>,
+}
+
+/// One curve: its points in order, and whether the last joins the first.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Spline {
+    pub points: Vec<Vec3>,
+    pub closed: bool,
+}
+
+/// Points, each with a frame: where it is and how it is turned.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Points {
+    pub frames: Vec<Rigid>,
+}
+
+/// A number for each element of whatever uses it.
+#[derive(Debug, Clone)]
+pub enum Field {
+    Const(f64),
+    /// The element's place, from 0.
+    Index,
+    /// An expression of other fields (its variables, in order).
+    Expr(Rc<Expr>, Vec<Field>),
+}
+
+impl Field {
+    /// The values for `len` elements.
+    pub fn column(&self, len: usize) -> Vec<f64> {
+        match self {
+            Field::Const(v) => vec![*v; len],
+            Field::Index => (0..len).map(|k| k as f64).collect(),
+            Field::Expr(expr, args) => {
+                let columns: Vec<Vec<f64>> = args.iter().map(|a| a.column(len)).collect();
+                let mut values = vec![0.0; args.len()];
+                (0..len)
+                    .map(|k| {
+                        for (v, c) in values.iter_mut().zip(&columns) {
+                            *v = c[k];
+                        }
+                        expr.eval(&values)
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn constant(&self) -> Option<f64> {
+        match self {
+            Field::Const(v) => Some(*v),
+            _ => None,
+        }
+    }
+}
+
 /// What travels along a wire.
 #[derive(Debug, Clone)]
 pub enum Data {
     Set(Arc<Set>),
     Number(f64),
     Vec3(Vec3),
+    Curve(Arc<Curve>),
+    Points(Arc<Points>),
+    /// A number per element.
+    Field(Rc<Field>),
+    /// Three numbers per element.
+    Field3(Rc<[Field; 3]>),
 }
 
 impl Data {
@@ -124,7 +193,7 @@ impl Data {
         match self {
             Data::Number(v) => Some(*v),
             Data::Vec3(v) => Some(v[0]),
-            Data::Set(_) => None,
+            _ => None,
         }
     }
 
@@ -134,7 +203,27 @@ impl Data {
             (Data::Number(v), _) => Some(PortValue::Number(*v)),
             (Data::Vec3(v), SocketType::Number) => Some(PortValue::Number(v[0])),
             (Data::Vec3(v), _) => Some(PortValue::Vec3(*v)),
-            (Data::Set(_), _) => None,
+            _ => None,
+        }
+    }
+
+    fn is_field(&self) -> bool {
+        matches!(self, Data::Field(_) | Data::Field3(_))
+    }
+
+    /// The data as a socket of type `ty` takes it, if it can.
+    fn conform(self, ty: SocketType) -> Option<Data> {
+        match (self, ty) {
+            (d @ Data::Set(_), SocketType::Set)
+            | (d @ Data::Curve(_), SocketType::Curve)
+            | (d @ Data::Points(_), SocketType::Points) => Some(d),
+            (d @ (Data::Field(_) | Data::Field3(_)), SocketType::Number | SocketType::Vec3) => {
+                Some(d)
+            }
+            (d, SocketType::Number | SocketType::Vec3) => {
+                d.as_port_value(ty).map(Data::from_port_value)
+            }
+            _ => None,
         }
     }
 
@@ -166,6 +255,8 @@ pub enum Shown {
     Count(usize),
     Number(f64),
     Vec3(Vec3),
+    /// A value per element.
+    Field,
 }
 
 /// The result of evaluating a graph.
@@ -345,7 +436,63 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             .unwrap_or(inline)
     }
 
-    /// The values of an expression node's variables.
+    /// The value of a number input that may be a field: what feeds it, else `inline`.
+    fn field_input(
+        &mut self,
+        graph: &Graph,
+        owner: Option<&NodeDef>,
+        scope: &Scope,
+        id: NodeId,
+        key: InKey,
+        inline: f64,
+    ) -> Field {
+        match self.linked(graph, owner, scope, id, key) {
+            Some(Data::Field(f)) => (*f).clone(),
+            Some(Data::Field3(f)) => f[0].clone(),
+            Some(d) => Field::Const(d.as_number().unwrap_or(inline)),
+            None => Field::Const(inline),
+        }
+    }
+
+    /// The value of a triple input that may be a field: what feeds it, else `inline`.
+    fn field3_input(
+        &mut self,
+        graph: &Graph,
+        owner: Option<&NodeDef>,
+        scope: &Scope,
+        id: NodeId,
+        key: InKey,
+        inline: Vec3,
+    ) -> [Field; 3] {
+        match self.linked(graph, owner, scope, id, key) {
+            Some(Data::Field3(f)) => (*f).clone(),
+            Some(Data::Field(f)) => [(*f).clone(), (*f).clone(), (*f).clone()],
+            Some(Data::Vec3(v)) => v.map(Field::Const),
+            Some(Data::Number(v)) => [v; 3].map(Field::Const),
+            _ => inline.map(Field::Const),
+        }
+    }
+
+    /// The values of an expression node's variables (fields where fields feed them).
+    fn var_fields(
+        &mut self,
+        graph: &Graph,
+        owner: Option<&NodeDef>,
+        scope: &Scope,
+        id: NodeId,
+        vars: &[Var],
+    ) -> Vec<(String, Field)> {
+        vars.iter()
+            .map(|v| {
+                (
+                    v.name.clone(),
+                    self.field_input(graph, owner, scope, id, InKey::Var(v.key), v.value),
+                )
+            })
+            .collect()
+    }
+
+    /// The values of an expression node's variables, which must be plain numbers.
     fn var_values(
         &mut self,
         graph: &Graph,
@@ -353,15 +500,36 @@ impl<'s, 'a> Evaluator<'s, 'a> {
         scope: &Scope,
         id: NodeId,
         vars: &[Var],
-    ) -> Vec<(String, f64)> {
-        vars.iter()
-            .map(|v| {
-                (
-                    v.name.clone(),
-                    self.number_input(graph, owner, scope, id, InKey::Var(v.key), v.value),
-                )
+    ) -> Result<Vec<(String, f64)>, Fail> {
+        self.var_fields(graph, owner, scope, id, vars)
+            .into_iter()
+            .map(|(name, f)| match f.constant() {
+                Some(v) => Ok((name, v)),
+                None => Err(Fail::new(t!("assembly.node.error.field_here"))),
             })
             .collect()
+    }
+
+    /// A field fed to an input that takes one number for all.
+    fn check_fields(
+        &mut self,
+        graph: &Graph,
+        owner: Option<&NodeDef>,
+        scope: &Scope,
+        id: NodeId,
+        kind: &NodeKind,
+    ) -> Result<(), Fail> {
+        for decl in kind.inputs(self.src.defs, owner) {
+            if matches!(decl.ty, SocketType::Number | SocketType::Vec3)
+                && !takes_field(kind, decl.key)
+                && self
+                    .linked(graph, owner, scope, id, decl.key)
+                    .is_some_and(|d| d.is_field())
+            {
+                return Err(Fail::new(t!("assembly.node.error.field_here")));
+            }
+        }
+        Ok(())
     }
 
     /// Node `id`'s outputs, evaluated once per scope.
@@ -386,7 +554,10 @@ impl<'s, 'a> Evaluator<'s, 'a> {
         let outputs = if node.bypass {
             self.pass_through(graph, owner, scope, id, &node.kind)
         } else {
-            match self.compute(graph, owner, scope, id, &node.kind) {
+            let computed = self
+                .check_fields(graph, owner, scope, id, &node.kind)
+                .and_then(|()| self.compute(graph, owner, scope, id, &node.kind));
+            match computed {
                 Ok(outputs) => outputs,
                 Err(fail) => {
                     self.error(scope, id, fail);
@@ -403,6 +574,9 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 }
                 Data::Number(v) => Shown::Number(*v),
                 Data::Vec3(v) => Shown::Vec3(*v),
+                Data::Points(p) => Shown::Count(p.frames.len()),
+                Data::Curve(c) => Shown::Count(c.splines.iter().map(|s| s.points.len()).sum()),
+                Data::Field(_) | Data::Field3(_) => Shown::Field,
             };
             self.out.shown.insert((scope.clone(), id, *out), shown);
         }
@@ -434,8 +608,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                     SocketType::Set => {
                         Data::Set(through.take().unwrap_or_else(|| Arc::new(Set::default())))
                     }
-                    SocketType::Number => Data::Number(0.0),
-                    SocketType::Vec3 => Data::Vec3([0.0; 3]),
+                    ty => default_data(ty, None),
                 };
                 (o.key, data)
             })
@@ -510,7 +683,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             }
             NodeKind::Select(sel) => {
                 let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
-                let vars = self.var_values(graph, owner, scope, id, &sel.vars);
+                let vars = self.var_fields(graph, owner, scope, id, &sel.vars);
                 let keep = self.per_item(&input, &vars, &sel.expr, |v| v != 0.0 && !v.is_nan())?;
                 let (chosen, rest): (Vec<usize>, Vec<usize>) =
                     (0..input.len()).partition(|&k| keep[k]);
@@ -543,7 +716,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                     InKey::Count,
                     f64::from(r.n),
                 ));
-                let vars = self.var_values(graph, owner, scope, id, &r.vars);
+                let vars = self.var_values(graph, owner, scope, id, &r.vars)?;
                 let mut names: Vec<String> = vec!["i".into(), "n".into()];
                 names.extend(vars.iter().map(|(name, _)| name.clone()));
                 let resolve = |name: &str| names.iter().rposition(|n| n == name);
@@ -577,7 +750,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             }
             NodeKind::MoveEach(m) => {
                 let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
-                let vars = self.var_values(graph, owner, scope, id, &m.vars);
+                let vars = self.var_fields(graph, owner, scope, id, &m.vars);
                 let columns: Vec<Vec<f64>> = m
                     .offset
                     .iter()
@@ -610,7 +783,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                     return Err(Fail::new(t!("assembly.node.error.bad_name", name = name)));
                 }
                 let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
-                let vars = self.var_values(graph, owner, scope, id, &a.vars);
+                let vars = self.var_fields(graph, owner, scope, id, &a.vars);
                 let values = self.per_item(&input, &vars, &a.expr, |v| v)?;
                 let mut out = (*input).clone();
                 out.set_attr(name, values);
@@ -619,10 +792,18 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             NodeKind::Value { value } => Ok(vec![(OutKey::Number, Data::Number(*value))]),
             NodeKind::Vector { value } => Ok(vec![(OutKey::Vec3, Data::Vec3(*value))]),
             NodeKind::Expression(e) => {
-                let vars = self.var_values(graph, owner, scope, id, &e.vars);
+                let vars = self.var_fields(graph, owner, scope, id, &e.vars);
                 let resolve = |name: &str| vars.iter().rposition(|(n, _)| n == name);
                 let expr = Expr::parse(&e.expr, &resolve).map_err(expr_fail)?;
-                let values: Vec<f64> = vars.iter().map(|(_, v)| *v).collect();
+                let Some(values) = vars
+                    .iter()
+                    .map(|(_, f)| f.constant())
+                    .collect::<Option<Vec<f64>>>()
+                else {
+                    let args = vars.into_iter().map(|(_, f)| f).collect();
+                    let field = Field::Expr(Rc::new(expr), args);
+                    return Ok(vec![(OutKey::Number, Data::Field(Rc::new(field)))]);
+                };
                 let v = expr.eval(&values);
                 if !v.is_finite() {
                     return Err(Fail::new(t!("assembly.node.error.not_a_number")));
@@ -631,7 +812,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             }
             NodeKind::Combine { value } => {
                 let v = [0u8, 1, 2].map(|i| {
-                    self.number_input(
+                    self.field_input(
                         graph,
                         owner,
                         scope,
@@ -640,18 +821,155 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                         value[usize::from(i)],
                     )
                 });
-                Ok(vec![(OutKey::Vec3, Data::Vec3(v))])
+                match [0, 1, 2].map(|a| v[a].constant()) {
+                    [Some(x), Some(y), Some(z)] => Ok(vec![(OutKey::Vec3, Data::Vec3([x, y, z]))]),
+                    _ => Ok(vec![(OutKey::Vec3, Data::Field3(Rc::new(v)))]),
+                }
             }
             NodeKind::Separate { value } => {
                 let v = match self.linked(graph, owner, scope, id, InKey::Value) {
                     Some(Data::Vec3(v)) => v,
                     Some(Data::Number(n)) => [n; 3],
+                    Some(d @ (Data::Field(_) | Data::Field3(_))) => {
+                        let f = match d {
+                            Data::Field3(f) => (*f).clone(),
+                            Data::Field(f) => [(*f).clone(), (*f).clone(), (*f).clone()],
+                            _ => unreachable!(),
+                        };
+                        return Ok(f
+                            .into_iter()
+                            .zip(0u8..)
+                            .map(|(f, i)| (OutKey::Axis(i), Data::Field(Rc::new(f))))
+                            .collect());
+                    }
                     _ => *value,
                 };
                 Ok((0..3u8)
                     .map(|i| (OutKey::Axis(i), Data::Number(v[usize::from(i)])))
                     .collect())
             }
+            NodeKind::Circle(c) => {
+                let n = count_of(self.number_input(
+                    graph,
+                    owner,
+                    scope,
+                    id,
+                    InKey::Count,
+                    f64::from(c.resolution),
+                ));
+                let r = self.number_input(graph, owner, scope, id, InKey::Param(0), c.radius);
+                if !r.is_finite() {
+                    return Err(Fail::new(t!("assembly.node.error.not_a_number")));
+                }
+                let points = (0..n)
+                    .map(|i| {
+                        let a = std::f64::consts::TAU * f64::from(i) / f64::from(n);
+                        [r * a.cos(), r * a.sin(), 0.0]
+                    })
+                    .collect();
+                let curve = Curve {
+                    splines: vec![Spline {
+                        points,
+                        closed: true,
+                    }],
+                };
+                Ok(vec![(OutKey::Curve, Data::Curve(Arc::new(curve)))])
+            }
+            NodeKind::CurveToPoints(c) => {
+                let curve = match self.linked(graph, owner, scope, id, InKey::Curve) {
+                    Some(Data::Curve(curve)) => curve,
+                    _ => Arc::new(Curve::default()),
+                };
+                let count = count_of(self.number_input(
+                    graph,
+                    owner,
+                    scope,
+                    id,
+                    InKey::Count,
+                    f64::from(c.count),
+                ));
+                let length = self.number_input(graph, owner, scope, id, InKey::Param(0), c.length);
+                let sample = match c.mode {
+                    CurveSample::Count => Sample::Count(count as usize),
+                    CurveSample::Length if length.is_finite() && length > 1e-3 => {
+                        Sample::Length(length)
+                    }
+                    CurveSample::Length => {
+                        return Err(Fail::new(t!("assembly.node.error.bad_length")));
+                    }
+                    CurveSample::Evaluated => Sample::Evaluated,
+                };
+                let mut frames = Vec::new();
+                for spline in &curve.splines {
+                    frames.extend(spline_points(spline, sample));
+                    if frames.len() > MAX_INSTANCES {
+                        return Err(Fail::new(t!(
+                            "assembly.node.error.too_many",
+                            count = frames.len(),
+                            max = MAX_INSTANCES
+                        )));
+                    }
+                }
+                Ok(vec![(
+                    OutKey::Points,
+                    Data::Points(Arc::new(Points { frames })),
+                )])
+            }
+            NodeKind::InstanceOnPoints(p) => {
+                let points = match self.linked(graph, owner, scope, id, InKey::Points) {
+                    Some(Data::Points(points)) => points,
+                    _ => Arc::new(Points::default()),
+                };
+                let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
+                let n = points.frames.len();
+                let chosen = self
+                    .field_input(graph, owner, scope, id, InKey::Param(0), p.selection)
+                    .column(n);
+                let turn = self
+                    .field3_input(graph, owner, scope, id, InKey::Param(1), p.rotation_deg)
+                    .map(|f| f.column(n));
+                let mut moves = Vec::new();
+                let mut used = Vec::new();
+                for (k, frame) in points.frames.iter().enumerate() {
+                    if chosen[k] == 0.0 || chosen[k].is_nan() {
+                        continue;
+                    }
+                    let e = [turn[0][k], turn[1][k], turn[2][k]];
+                    if e.iter().any(|v| !v.is_finite()) {
+                        return Err(Fail::new(t!("assembly.node.error.not_finite", at = k)));
+                    }
+                    let place = if p.align {
+                        *frame
+                    } else {
+                        Rigid::translation(frame.trans)
+                    };
+                    moves.push(Rigid::rotation(math::euler_xyz(e)).then(&place));
+                    used.push(k as f64);
+                }
+                if input.len().saturating_mul(moves.len()) > MAX_INSTANCES {
+                    return Err(Fail::new(t!(
+                        "assembly.node.error.too_many",
+                        count = input.len().saturating_mul(moves.len()),
+                        max = MAX_INSTANCES
+                    )));
+                }
+                if input.crystal.is_some() {
+                    self.warn(
+                        scope,
+                        id,
+                        t!("assembly.node.error.crystal_dropped").to_owned(),
+                    );
+                }
+                let mut out = input.copied(&moves, "");
+                out.crystal = None;
+                let point = used
+                    .iter()
+                    .flat_map(|&k| std::iter::repeat_n(k, input.len()))
+                    .collect();
+                out.set_attr("point", point);
+                set(out)
+            }
+            NodeKind::Index => Ok(vec![(OutKey::Number, Data::Field(Rc::new(Field::Index)))]),
             NodeKind::Group(g) => self.group(graph, owner, scope, id, &g.def, &g.inputs),
             NodeKind::GroupInput => {
                 let bound = self.bindings.get(scope).cloned().unwrap_or_default();
@@ -704,15 +1022,12 @@ impl<'s, 'a> Evaluator<'s, 'a> {
         let mut bound = Vec::with_capacity(def.inputs.len());
         for p in &def.inputs {
             let data = match self.linked(graph, owner, scope, id, InKey::Port(p.key)) {
-                Some(Data::Set(s)) if p.ty == SocketType::Set => Data::Set(s),
-                Some(d) if p.ty != SocketType::Set => d
-                    .as_port_value(p.ty)
-                    .map_or_else(|| default_data(p.ty, p.default), Data::from_port_value),
-                _ => match inline.get(&p.key) {
-                    Some(v) if p.ty != SocketType::Set => Data::from_port_value(match p.ty {
-                        SocketType::Vec3 => PortValue::Vec3(v.vec3()),
-                        _ => PortValue::Number(v.number()),
-                    }),
+                Some(d) => d
+                    .conform(p.ty)
+                    .unwrap_or_else(|| default_data(p.ty, p.default)),
+                None => match (inline.get(&p.key), p.ty) {
+                    (Some(v), SocketType::Number) => Data::Number(v.number()),
+                    (Some(v), SocketType::Vec3) => Data::Vec3(v.vec3()),
                     _ => default_data(p.ty, p.default),
                 },
             };
@@ -730,11 +1045,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
         for p in &def.outputs {
             let data = out_node
                 .and_then(|o| self.linked(&def.graph, Some(def), &inner, o, InKey::Port(p.key)))
-                .and_then(|d| match (d, p.ty) {
-                    (Data::Set(s), SocketType::Set) => Some(Data::Set(s)),
-                    (Data::Set(_), _) | (_, SocketType::Set) => None,
-                    (d, ty) => d.as_port_value(ty).map(Data::from_port_value),
-                })
+                .and_then(|d| d.conform(p.ty))
                 .unwrap_or_else(|| default_data(p.ty, p.default));
             outputs.push((OutKey::Port(p.key), data));
         }
@@ -838,13 +1149,15 @@ impl<'s, 'a> Evaluator<'s, 'a> {
     fn per_item<T>(
         &self,
         set: &Set,
-        vars: &[(String, f64)],
+        vars: &[(String, Field)],
         src: &str,
         map: impl Fn(f64) -> T,
     ) -> Result<Vec<T>, Fail> {
         #[derive(Clone, Copy)]
         enum Slot {
             Var(f64),
+            /// A variable fed a field: its column.
+            Column(usize),
             Attr(usize),
             K,
             Count,
@@ -854,13 +1167,21 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             Copies,
         }
         let slots = std::cell::RefCell::new(Vec::<(String, Slot)>::new());
+        let columns = std::cell::RefCell::new(Vec::<Vec<f64>>::new());
         let resolve = |name: &str| {
             let mut slots = slots.borrow_mut();
             if let Some(k) = slots.iter().position(|(n, _)| n == name) {
                 return Some(k);
             }
-            let slot = if let Some((_, v)) = vars.iter().rev().find(|(n, _)| n == name) {
-                Slot::Var(*v)
+            let slot = if let Some((_, f)) = vars.iter().rev().find(|(n, _)| n == name) {
+                match f.constant() {
+                    Some(v) => Slot::Var(v),
+                    None => {
+                        let mut columns = columns.borrow_mut();
+                        columns.push(f.column(set.len()));
+                        Slot::Column(columns.len() - 1)
+                    }
+                }
             } else if let Some(a) = set.attrs.iter().position(|(n, _)| &**n == name) {
                 Slot::Attr(a)
             } else {
@@ -881,6 +1202,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
         };
         let expr = Expr::parse(src, &resolve).map_err(expr_fail)?;
         let slots: Vec<Slot> = slots.into_inner().into_iter().map(|(_, s)| s).collect();
+        let columns = columns.into_inner();
         let copy = set.attr("copy");
         let copies = set.attr("copies");
         let needs_centroid = slots.iter().any(|s| matches!(s, Slot::Axis(_)));
@@ -895,6 +1217,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             for (v, slot) in values.iter_mut().zip(&slots) {
                 *v = match *slot {
                     Slot::Var(v) => v,
+                    Slot::Column(c) => columns[c][k],
                     Slot::Attr(a) => set.attrs[a].1[k],
                     Slot::K => k as f64,
                     Slot::Count => set.len() as f64,
@@ -947,9 +1270,132 @@ fn merge(sets: &[Arc<Set>]) -> Set {
     out
 }
 
+/// Whether input `key` of a node of kind `kind` takes a field (a value per element).
+fn takes_field(kind: &NodeKind, key: InKey) -> bool {
+    matches!(
+        (kind, key),
+        (
+            NodeKind::Select(_)
+                | NodeKind::MoveEach(_)
+                | NodeKind::SetAttr(_)
+                | NodeKind::Expression(_),
+            InKey::Var(_),
+        ) | (NodeKind::Combine { .. }, InKey::Axis(_))
+            | (NodeKind::Separate { .. }, InKey::Value)
+            | (NodeKind::InstanceOnPoints(_), InKey::Param(_))
+            | (NodeKind::Group(_) | NodeKind::GroupOutput, InKey::Port(_))
+    )
+}
+
+/// How [`spline_points`] places points.
+#[derive(Clone, Copy)]
+enum Sample {
+    Count(usize),
+    Length(f64),
+    Evaluated,
+}
+
+/// Points along `spline`, each framed: x along the curve, z normal to its plane.
+fn spline_points(spline: &Spline, sample: Sample) -> Vec<Rigid> {
+    let pts = &spline.points;
+    let n = pts.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let closed = spline.closed && n > 2;
+    let segments = if closed { n } else { n - 1 };
+    let seg = |i: usize| (pts[i], pts[(i + 1) % n]);
+    // Newell's normal of the polygon; z for a straight line or a point.
+    let mut normal = [0.0; 3];
+    for i in 0..n {
+        let (a, b) = (pts[i], pts[(i + 1) % n]);
+        normal = math::add(normal, math::cross(a, b));
+    }
+    let normal = math::unit(normal).unwrap_or([0.0, 0.0, 1.0]);
+    let dir = |i: usize| {
+        let (a, b) = seg(i);
+        math::unit(math::sub(b, a))
+    };
+    // The tangent at vertex `i`: between the segments meeting there.
+    let vertex_tangent = |i: usize| {
+        let before = if i > 0 {
+            dir(i - 1)
+        } else if closed {
+            dir(n - 1)
+        } else {
+            None
+        };
+        let after = if i < segments { dir(i) } else { None };
+        match (before, after) {
+            (Some(a), Some(b)) => math::unit(math::add(a, b)).or(Some(b)),
+            (a, b) => a.or(b),
+        }
+    };
+    let frame = |at: Vec3, tangent: Option<Vec3>| {
+        let x = tangent.unwrap_or([1.0, 0.0, 0.0]);
+        let z = math::unit(math::sub(normal, math::scale(x, math::dot(normal, x))))
+            .or_else(|| math::unit(math::cross(x, [0.0, 0.0, 1.0])))
+            .or_else(|| math::unit(math::cross(x, [0.0, 1.0, 0.0])))
+            .unwrap_or([0.0, 0.0, 1.0]);
+        let y = math::cross(z, x);
+        Rigid {
+            rot: [[x[0], y[0], z[0]], [x[1], y[1], z[1]], [x[2], y[2], z[2]]],
+            trans: at,
+        }
+    };
+    if let Sample::Evaluated = sample {
+        return (0..n).map(|i| frame(pts[i], vertex_tangent(i))).collect();
+    }
+    let lengths: Vec<f64> = (0..segments)
+        .map(|i| {
+            let (a, b) = seg(i);
+            math::distance(a, b)
+        })
+        .collect();
+    let total: f64 = lengths.iter().sum();
+    let at_length = |s: f64| {
+        let mut left = s;
+        for (i, &l) in lengths.iter().enumerate() {
+            if left <= l * (1.0 - 1e-9) || i + 1 == segments {
+                if left <= l * 1e-9 {
+                    return frame(pts[i], vertex_tangent(i));
+                }
+                let (a, b) = seg(i);
+                let t = if l > 0.0 { (left / l).min(1.0) } else { 0.0 };
+                if t >= 1.0 - 1e-9 {
+                    return frame(b, vertex_tangent((i + 1) % n.max(1)).or(dir(i)));
+                }
+                return frame(math::add(a, math::scale(math::sub(b, a), t)), dir(i));
+            }
+            left -= l;
+        }
+        frame(pts[0], vertex_tangent(0))
+    };
+    if total <= 0.0 || segments == 0 {
+        return vec![frame(pts[0], vertex_tangent(0))];
+    }
+    let places: Vec<f64> = match sample {
+        Sample::Count(0) => Vec::new(),
+        Sample::Count(1) => vec![0.0],
+        Sample::Count(c) if closed => (0..c).map(|i| total * i as f64 / c as f64).collect(),
+        Sample::Count(c) => (0..c).map(|i| total * i as f64 / (c - 1) as f64).collect(),
+        Sample::Length(step) => {
+            let m = (total / step + 1e-9).floor() as usize;
+            let m = if closed { m.max(1) } else { m + 1 };
+            (0..m.min(MAX_INSTANCES + 1))
+                .map(|i| i as f64 * step)
+                .collect()
+        }
+        Sample::Evaluated => Vec::new(),
+    };
+    places.into_iter().map(at_length).collect()
+}
+
 fn default_data(ty: SocketType, default: Option<PortValue>) -> Data {
     match ty {
         SocketType::Set => Data::Set(Arc::new(Set::default())),
+        SocketType::Curve => Data::Curve(Arc::new(Curve::default())),
+        SocketType::Points => Data::Points(Arc::new(Points::default())),
         SocketType::Number => Data::Number(default.map_or(0.0, PortValue::number)),
         SocketType::Vec3 => Data::Vec3(default.map_or([0.0; 3], PortValue::vec3)),
     }
@@ -1230,6 +1676,158 @@ mod tests {
         let x = r.instances()[3].transform.rot;
         let angle = x[1][0].atan2(x[0][0]).to_degrees();
         assert!((angle - (90.0 + 5.0 * 3f64.sin())).abs() < 1e-9, "{angle}");
+    }
+
+    /// A monomer instanced on a circle's points (turned back a quarter, since a point's x axis
+    /// runs along the circle) is a ring.
+    #[test]
+    fn instances_on_a_circle_are_a_ring() {
+        use crate::assembly::graph::kinds::{Circle, CurveToPoints, InstanceOnPoints};
+        use crate::assembly::model::Ring;
+        let ring = Step::Ring(Ring {
+            enabled: true,
+            n: 6,
+            radius: 7.0,
+            tilt_deg: 0.0,
+        });
+        let d = design(vec![ring]);
+        for (resolution, count) in [(6, 6), (12, 6), (6, 12)] {
+            let mut r = design(vec![]);
+            let g = r.graph_mut();
+            let out = g.output().unwrap();
+            g.links.clear();
+            let circle = g.add(
+                NodeKind::Circle(Circle {
+                    resolution,
+                    radius: 7.0,
+                }),
+                [0.0; 2],
+            );
+            let mut sample = CurveToPoints::new();
+            sample.count = count;
+            let points = g.add(NodeKind::CurveToPoints(sample), [0.0; 2]);
+            let mut put = InstanceOnPoints::new();
+            put.rotation_deg = [0.0, 0.0, -90.0];
+            let put = g.add(NodeKind::InstanceOnPoints(put), [0.0; 2]);
+            link(g, circle, OutKey::Curve, points, InKey::Curve);
+            link(g, points, OutKey::Points, put, InKey::Points);
+            link(g, NodeId(1), OutKey::Set, put, InKey::Set(0));
+            link(g, put, OutKey::Set, out, InKey::Set(0));
+            let ev = r.evaluation();
+            assert!(ev.errors.is_empty(), "{:?}", ev.errors);
+            let want = d.instances();
+            let got = r.instances();
+            if count == 6 {
+                assert!(same(&want, &got), "{resolution} points, {count} copies");
+                assert_eq!(
+                    ev.output.attr("point").unwrap(),
+                    &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+                );
+            } else {
+                // Twelve copies on a hexagon: every other one on a corner, the others midway
+                // along a side, all turned along it.
+                assert_eq!(got.len(), 12);
+                for (k, w) in want.iter().enumerate() {
+                    assert!(same(std::slice::from_ref(w), &got[2 * k..2 * k + 1]));
+                }
+                let mid = got[1].transform.trans;
+                let apothem = 7.0 * (std::f64::consts::PI / 6.0).cos();
+                assert!((math::norm(mid) - apothem).abs() < 1e-9);
+            }
+        }
+    }
+
+    /// The index is a value per element: per point in instance on points (choosing every
+    /// third point and turning each copy by 10° more), per molecule in move each.
+    #[test]
+    fn the_index_is_a_value_per_element() {
+        use crate::assembly::graph::kinds::{
+            Circle, CurveSample, CurveToPoints, Expression, InstanceOnPoints, Var,
+        };
+        let mut d = design(vec![]);
+        let g = d.graph_mut();
+        let out = g.output().unwrap();
+        g.links.clear();
+        let circle = g.add(NodeKind::Circle(Circle::new()), [0.0; 2]);
+        let points = g.add(
+            NodeKind::CurveToPoints(CurveToPoints {
+                mode: CurveSample::Evaluated,
+                count: 1,
+                length: 1.0,
+            }),
+            [0.0; 2],
+        );
+        let put = g.add(
+            NodeKind::InstanceOnPoints(InstanceOnPoints {
+                align: false,
+                ..InstanceOnPoints::new()
+            }),
+            [0.0; 2],
+        );
+        let index = g.add(NodeKind::Index, [0.0; 2]);
+        let expr = |e: &str| {
+            NodeKind::Expression(Expression {
+                expr: e.into(),
+                vars: vec![Var {
+                    key: 0,
+                    name: "a".into(),
+                    value: 0.0,
+                }],
+            })
+        };
+        let third = g.add(expr("a % 3 == 0"), [0.0; 2]);
+        let turn = g.add(expr("10 * a"), [0.0; 2]);
+        let z = g.add(NodeKind::Combine { value: [0.0; 3] }, [0.0; 2]);
+        link(g, circle, OutKey::Curve, points, InKey::Curve);
+        link(g, points, OutKey::Points, put, InKey::Points);
+        link(g, NodeId(1), OutKey::Set, put, InKey::Set(0));
+        link(g, index, OutKey::Number, third, InKey::Var(0));
+        link(g, third, OutKey::Number, put, InKey::Param(0));
+        link(g, index, OutKey::Number, turn, InKey::Var(0));
+        link(g, turn, OutKey::Number, z, InKey::Axis(2));
+        link(g, z, OutKey::Vec3, put, InKey::Param(1));
+        link(g, put, OutKey::Set, out, InKey::Set(0));
+        let ev = d.evaluation();
+        assert!(ev.errors.is_empty(), "{:?}", ev.errors);
+        assert_eq!(ev.output.attr("point").unwrap(), &[0.0, 3.0, 6.0]);
+        assert_eq!(ev.shown[&(vec![], third, OutKey::Number)], Shown::Field);
+        for (inst, k) in ev.output.items.iter().zip([0.0, 3.0, 6.0]) {
+            let rot = inst.transform.rot;
+            let angle = rot[1][0].atan2(rot[0][0]).to_degrees();
+            assert!((angle - 10.0 * k).abs() < 1e-9, "{angle}");
+        }
+
+        // A field where one value is wanted is reported.
+        let g = d.graph_mut();
+        let ring = g.add(NodeKind::Op(Step::new_ring()), [0.0; 2]);
+        link(g, put, OutKey::Set, ring, InKey::Set(0));
+        link(
+            g,
+            turn,
+            OutKey::Number,
+            ring,
+            InKey::Field(StepField::RingRadius),
+        );
+        link(g, ring, OutKey::Set, out, InKey::Set(0));
+        let ev = d.evaluation();
+        assert_eq!(ev.errors.len(), 1);
+        assert_eq!(ev.errors[0].node, ring);
+    }
+
+    /// Points every 2 Å along an open curve: both ends and the evenly spaced points between.
+    #[test]
+    fn points_along_a_line_by_length() {
+        let line = Spline {
+            points: vec![[0.0; 3], [5.0, 0.0, 0.0]],
+            closed: false,
+        };
+        let frames = spline_points(&line, Sample::Length(2.0));
+        let xs: Vec<f64> = frames.iter().map(|f| f.trans[0]).collect();
+        assert_eq!(xs, [0.0, 2.0, 4.0]);
+        assert!(frames.iter().all(|f| f.rot[0][0] > 0.999));
+        let ends = spline_points(&line, Sample::Count(3));
+        let xs: Vec<f64> = ends.iter().map(|f| f.trans[0]).collect();
+        assert_eq!(xs, [0.0, 2.5, 5.0]);
     }
 
     #[test]

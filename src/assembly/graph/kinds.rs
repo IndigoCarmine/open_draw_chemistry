@@ -19,6 +19,10 @@ pub enum SocketType {
     Number,
     /// Three numbers (x, y, z).
     Vec3,
+    /// Curves: lines through points, open or closed.
+    Curve,
+    /// Points, each turned (a frame to put a copy in).
+    Points,
 }
 
 impl SocketType {
@@ -146,6 +150,45 @@ pub struct Expression {
     pub vars: Vec<Var>,
 }
 
+/// A circle of `resolution` points about the origin in the xy plane: a closed curve.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Circle {
+    pub resolution: u32,
+    pub radius: f64,
+}
+
+/// Where [`CurveToPoints`] puts its points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CurveSample {
+    /// `count` points evenly along each curve.
+    #[default]
+    Count,
+    /// A point every `length` Å along each curve.
+    Length,
+    /// The curve's own points.
+    Evaluated,
+}
+
+/// Points along curves, each turned to follow the curve: its x axis along the curve, its z
+/// axis normal to the curve's plane (z for a curve in the xy plane).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CurveToPoints {
+    pub mode: CurveSample,
+    pub count: u32,
+    pub length: f64,
+}
+
+/// A copy of the molecules fed in on each point chosen, turned by `rotation_deg` and then by
+/// the point's own turn (when `align`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InstanceOnPoints {
+    /// Whether a point is used (not 0), when no link feeds it.
+    pub selection: f64,
+    pub rotation_deg: Vec3,
+    /// Turn each copy as its point is turned.
+    pub align: bool,
+}
+
 /// A custom node in use: which definition, and the values of its inputs no link feeds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroupRef {
@@ -186,6 +229,12 @@ pub enum NodeKind {
     Separate {
         value: Vec3,
     },
+    /// A circle (a curve).
+    Circle(Circle),
+    CurveToPoints(CurveToPoints),
+    InstanceOnPoints(InstanceOnPoints),
+    /// The place of each element (molecule, point) where it is used: a value per element.
+    Index,
     Group(GroupRef),
     /// Inside a custom node: its inputs.
     GroupInput,
@@ -203,6 +252,8 @@ pub struct InDecl {
     pub label: String,
     /// Degrees rather than ångström (or a plain number).
     pub angle: bool,
+    /// Ångström.
+    pub length: bool,
 }
 
 /// An output socket.
@@ -221,6 +272,8 @@ pub enum Category {
     Move,
     Combine,
     Math,
+    /// Curves and points.
+    Geometry,
     Group,
     Output,
 }
@@ -233,6 +286,14 @@ fn input(key: InKey, ty: SocketType, label: impl Into<String>) -> InDecl {
         ty,
         label: label.into(),
         angle: false,
+        length: false,
+    }
+}
+
+fn length_input(key: InKey, label: impl Into<String>) -> InDecl {
+    InDecl {
+        length: true,
+        ..input(key, SocketType::Number, label)
     }
 }
 
@@ -265,6 +326,10 @@ impl NodeKind {
             NodeKind::Expression(_) => t!("assembly.node.expression").into(),
             NodeKind::Combine { .. } => t!("assembly.node.combine").into(),
             NodeKind::Separate { .. } => t!("assembly.node.separate").into(),
+            NodeKind::Circle(_) => t!("assembly.node.circle").into(),
+            NodeKind::CurveToPoints(_) => t!("assembly.node.curve_to_points").into(),
+            NodeKind::InstanceOnPoints(_) => t!("assembly.node.instance_on_points").into(),
+            NodeKind::Index => t!("assembly.node.index").into(),
             NodeKind::Group(g) => super::defs::find(defs, &g.def).map_or_else(
                 || t!("assembly.node.missing_def").into(),
                 |d| d.name.clone(),
@@ -277,7 +342,10 @@ impl NodeKind {
 
     pub fn category(&self) -> Category {
         match self {
-            NodeKind::Monomer { .. } | NodeKind::GroupInput => Category::Input,
+            NodeKind::Monomer { .. } | NodeKind::GroupInput | NodeKind::Index => Category::Input,
+            NodeKind::Circle(_) | NodeKind::CurveToPoints(_) | NodeKind::InstanceOnPoints(_) => {
+                Category::Geometry
+            }
             NodeKind::Op(Step::Transform(_) | Step::Bend(_)) | NodeKind::MoveEach(_) => {
                 Category::Move
             }
@@ -309,13 +377,68 @@ impl NodeKind {
             NodeKind::Monomer { .. }
             | NodeKind::Value { .. }
             | NodeKind::Vector { .. }
+            | NodeKind::Index
             | NodeKind::GroupInput => Vec::new(),
+            NodeKind::Circle(_) => vec![
+                input(
+                    InKey::Count,
+                    SocketType::Number,
+                    t!("assembly.node.socket.resolution"),
+                ),
+                length_input(InKey::Param(0), t!("assembly.node.socket.radius")),
+            ],
+            NodeKind::CurveToPoints(c) => {
+                let mut v = vec![input(
+                    InKey::Curve,
+                    SocketType::Curve,
+                    t!("assembly.node.socket.curve"),
+                )];
+                match c.mode {
+                    CurveSample::Count => v.push(input(
+                        InKey::Count,
+                        SocketType::Number,
+                        t!("assembly.node.socket.count"),
+                    )),
+                    CurveSample::Length => v.push(length_input(
+                        InKey::Param(0),
+                        t!("assembly.node.socket.length"),
+                    )),
+                    CurveSample::Evaluated => {}
+                }
+                v
+            }
+            NodeKind::InstanceOnPoints(_) => vec![
+                input(
+                    InKey::Points,
+                    SocketType::Points,
+                    t!("assembly.node.socket.points"),
+                ),
+                input(
+                    InKey::Set(0),
+                    SocketType::Set,
+                    t!("assembly.node.socket.instance"),
+                ),
+                input(
+                    InKey::Param(0),
+                    SocketType::Number,
+                    t!("assembly.node.socket.selection"),
+                ),
+                InDecl {
+                    angle: true,
+                    ..input(
+                        InKey::Param(1),
+                        SocketType::Vec3,
+                        t!("assembly.node.socket.rotation"),
+                    )
+                },
+            ],
             NodeKind::Op(step) => std::iter::once(set())
                 .chain(StepField::of(step).into_iter().map(|f| InDecl {
                     key: InKey::Field(f),
                     ty: f.ty(),
                     label: f.label().into(),
                     angle: f.is_angle(),
+                    length: !f.is_angle() && !f.is_count(),
                 }))
                 .collect(),
             NodeKind::Merge { inputs } => (0..*inputs)
@@ -388,7 +511,23 @@ impl NodeKind {
             | NodeKind::Merge { .. }
             | NodeKind::Repeat(_)
             | NodeKind::MoveEach(_)
+            | NodeKind::InstanceOnPoints(_)
             | NodeKind::SetAttr(_) => vec![set()],
+            NodeKind::Circle(_) => vec![output(
+                OutKey::Curve,
+                SocketType::Curve,
+                t!("assembly.node.socket.curve"),
+            )],
+            NodeKind::CurveToPoints(_) => vec![output(
+                OutKey::Points,
+                SocketType::Points,
+                t!("assembly.node.socket.points"),
+            )],
+            NodeKind::Index => vec![output(
+                OutKey::Number,
+                SocketType::Number,
+                t!("assembly.node.socket.index"),
+            )],
             NodeKind::Select(_) => vec![
                 output(
                     OutKey::Selected,
@@ -444,6 +583,18 @@ impl NodeKind {
             }
             (NodeKind::Separate { value }, InKey::Value) => Some(PortValue::Vec3(*value)),
             (NodeKind::Group(g), InKey::Port(p)) => g.inputs.get(&p).copied(),
+            (NodeKind::Circle(c), InKey::Count) => Some(PortValue::Number(f64::from(c.resolution))),
+            (NodeKind::Circle(c), InKey::Param(0)) => Some(PortValue::Number(c.radius)),
+            (NodeKind::CurveToPoints(c), InKey::Count) => {
+                Some(PortValue::Number(f64::from(c.count)))
+            }
+            (NodeKind::CurveToPoints(c), InKey::Param(0)) => Some(PortValue::Number(c.length)),
+            (NodeKind::InstanceOnPoints(p), InKey::Param(0)) => {
+                Some(PortValue::Number(p.selection))
+            }
+            (NodeKind::InstanceOnPoints(p), InKey::Param(1)) => {
+                Some(PortValue::Vec3(p.rotation_deg))
+            }
             (kind, InKey::Var(k)) => kind
                 .vars()?
                 .iter()
@@ -471,6 +622,30 @@ impl NodeKind {
             }
             (NodeKind::Group(g), InKey::Port(p)) => {
                 g.inputs.insert(p, value);
+                true
+            }
+            (NodeKind::Circle(c), InKey::Count) => {
+                c.resolution = super::field::count_of(value.number());
+                true
+            }
+            (NodeKind::Circle(c), InKey::Param(0)) => {
+                c.radius = value.number();
+                true
+            }
+            (NodeKind::CurveToPoints(c), InKey::Count) => {
+                c.count = super::field::count_of(value.number());
+                true
+            }
+            (NodeKind::CurveToPoints(c), InKey::Param(0)) => {
+                c.length = value.number();
+                true
+            }
+            (NodeKind::InstanceOnPoints(p), InKey::Param(0)) => {
+                p.selection = value.number();
+                true
+            }
+            (NodeKind::InstanceOnPoints(p), InKey::Param(1)) => {
+                p.rotation_deg = value.vec3();
                 true
             }
             (kind, InKey::Var(k)) => match kind
@@ -529,7 +704,60 @@ impl NodeKind {
             NodeKind::Expression(Expression::new()),
             NodeKind::Combine { value: [0.0; 3] },
             NodeKind::Separate { value: [0.0; 3] },
+            NodeKind::Index,
+            NodeKind::Circle(Circle::new()),
+            NodeKind::CurveToPoints(CurveToPoints::new()),
+            NodeKind::InstanceOnPoints(InstanceOnPoints::new()),
         ]
+    }
+}
+
+impl Circle {
+    /// Eight points 10 Å from the centre.
+    pub fn new() -> Self {
+        Self {
+            resolution: 8,
+            radius: 10.0,
+        }
+    }
+}
+
+impl Default for Circle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CurveToPoints {
+    pub fn new() -> Self {
+        Self {
+            mode: CurveSample::Count,
+            count: 10,
+            length: 5.0,
+        }
+    }
+}
+
+impl Default for CurveToPoints {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl InstanceOnPoints {
+    /// On every point, turned as the point is.
+    pub fn new() -> Self {
+        Self {
+            selection: 1.0,
+            rotation_deg: [0.0; 3],
+            align: true,
+        }
+    }
+}
+
+impl Default for InstanceOnPoints {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

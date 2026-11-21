@@ -57,6 +57,12 @@ pub enum InKey {
     Count,
     /// The triple a separate node splits.
     Value,
+    /// Curves to take points along.
+    Curve,
+    /// Points to put copies on.
+    Points,
+    /// Another number or triple of a node, by its place.
+    Param(u8),
 }
 
 /// An output socket of a node.
@@ -73,6 +79,8 @@ pub enum OutKey {
     Port(u32),
     /// x, y or z of a separate node.
     Axis(u8),
+    Curve,
+    Points,
 }
 
 /// One node: what it is, where it is drawn, and whether it is bypassed.

@@ -447,6 +447,14 @@ Select, Repeat, Move each, Set attribute and Expression nodes take expressions, 
 - Functions: `sin cos tan asin acos atan` (radians), `sind cosd tand` (degrees), `atan2 sqrt abs floor ceil round min max pow clamp sign rad deg`. Constants `pi`, `e`.
 - Names: the node's own variables (inputs other nodes can feed), the molecules' attributes (`ring`, `layer`, `row`, `cell`, a repeat's name, `input` after a merge, `copy` and `copies` after any copying node, and those set by Set attribute), `k` (the molecule's place in the set), `count`, `comp` (its monomer, from 0), `x y z` (its centroid), and `i`, `n` (`copy` and `copies`). In a Repeat node, `i` is the copy number and `n` the number of copies.
 - Number fields also take an expression without names, such as `360/7`.
+- An input no wire feeds shows its value in a box on the node (from 60 % zoom): click it, type a number or such an expression (three separated by commas for a triple, or one for all three) and press Enter; Esc puts it back.
+
+#### Curves, points and the index
+
+- **Circle** makes a closed curve of *Resolution* points about the origin in the xy plane.
+- **Curve to points** puts points along curves: *Count* points evenly spaced, one every *Length* Å, or the curve's own points. Each point is turned to follow the curve: its x axis along the curve, its z axis normal to the curve's plane.
+- **Instance on points** puts a copy of the molecules fed to *Instance* on each point, turned by *Rotation* and then (with *Turn with the points*) as the point is. *Selection* chooses the points (not 0). The copies get the attribute `point`, the point's index.
+- **Index** gives a value per element, its place from 0: the point's in instance on points, the molecule's in select, move each and set attribute. Expression and combine nodes fed one give a value per element too (the wire shows ƒ); an input that takes one value for all reports it. For example, *Index* → expression `a % 3 == 0` → *Selection* puts copies on every third point, and *Index* → expression `10 * a` → combine z → *Rotation* turns each copy 10° more than the one before.
 
 #### Custom nodes
 
