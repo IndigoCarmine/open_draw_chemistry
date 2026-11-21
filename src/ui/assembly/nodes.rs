@@ -180,6 +180,8 @@ pub(super) enum GraphEdit {
     Ungroup(NodeId),
     /// Set the value of an unwired input (or of a number or triple node, `InKey::Value`).
     SetValue(NodeId, InKey, PortValue),
+    /// The same while it is dragged: the drag is one undo step when the button is let go.
+    DragValue(NodeId, InKey, PortValue),
     /// Add custom node `def` (with the custom nodes it uses) from the library to the design,
     /// and a node using it at `pos`.
     AddFromLibrary(Box<library::Entry>, [f32; 2]),
@@ -213,6 +215,8 @@ struct Row {
     value: Option<String>,
     edit: Option<PortValue>,
     unit: &'static str,
+    /// How a drag changes the value.
+    scrub: Scrub,
     /// Canvas y of the row's middle, from the node's top.
     y: f32,
     /// A socket offered for a new port or merge input.
@@ -232,7 +236,7 @@ struct Laid {
     rect: Rect,
     title: String,
     subtitle: Option<String>,
-    /// The value of a number or triple node, typed in on its subtitle's line.
+    /// The value of a number or triple node, typed in or dragged on its subtitle's line.
     own: Option<PortValue>,
     rows: Vec<Row>,
     category: Category,
@@ -322,6 +326,7 @@ fn lay(
             value: None,
             edit: None,
             unit: "",
+            scrub: Scrub::PLAIN,
             y,
             new: false,
         });
@@ -335,6 +340,7 @@ fn lay(
             value: None,
             edit: None,
             unit: "",
+            scrub: Scrub::PLAIN,
             y,
             new: true,
         });
@@ -372,6 +378,17 @@ fn lay(
             value: edit.map(|v| value_text(v, unit)),
             edit,
             unit,
+            scrub: if matches!(i.key, InKey::Count)
+                || matches!(i.key, InKey::Field(f) if f.is_count())
+            {
+                Scrub::COUNT
+            } else if i.angle {
+                Scrub::ANGLE
+            } else if i.length {
+                Scrub::LENGTH
+            } else {
+                Scrub::PLAIN
+            },
             y,
             new: false,
         });
@@ -390,6 +407,7 @@ fn lay(
             value: None,
             edit: None,
             unit: "",
+            scrub: Scrub::PLAIN,
             y,
             new: true,
         });
@@ -480,20 +498,153 @@ fn parse_value(text: &str, ty: SocketType) -> Option<PortValue> {
     }
 }
 
-/// The box of a value on the canvas. What is typed is kept while the box has the focus and
-/// set when it lets go of it (Enter, a click elsewhere); Esc puts the value back. Returns
-/// the new value, and whether the box took the focus this frame.
+/// How dragging a value box changes the value: by `speed` a point, in steps of `grid`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Scrub {
+    speed: f64,
+    grid: f64,
+}
+
+impl Scrub {
+    const COUNT: Scrub = Scrub {
+        speed: 0.1,
+        grid: 1.0,
+    };
+    const ANGLE: Scrub = Scrub {
+        speed: 0.5,
+        grid: 0.5,
+    };
+    const LENGTH: Scrub = Scrub {
+        speed: 0.05,
+        grid: 0.05,
+    };
+    const PLAIN: Scrub = Scrub {
+        speed: 0.01,
+        grid: 0.01,
+    };
+
+    /// The change for `points` of drag (finer with Ctrl).
+    fn by(self, points: f32, fine: bool) -> f64 {
+        let (speed, grid) = if fine && self.grid < 1.0 {
+            (self.speed / 10.0, self.grid / 10.0)
+        } else {
+            (self.speed, self.grid)
+        };
+        (f64::from(points) * speed / grid).round() * grid
+    }
+}
+
+/// `start` moved by a drag of `drag` (screen points, y down): a number by its x; a triple's
+/// x by the drag's x and y by its upward y, or z instead of y with Shift.
+fn scrubbed(start: PortValue, drag: Vec2, scrub: Scrub, shift: bool, fine: bool) -> PortValue {
+    match start {
+        PortValue::Number(v) => PortValue::Number(v + scrub.by(drag.x, fine)),
+        PortValue::Vec3([x, y, z]) => {
+            let up = scrub.by(-drag.y, fine);
+            let x = x + scrub.by(drag.x, fine);
+            if shift {
+                PortValue::Vec3([x, y, z + up])
+            } else {
+                PortValue::Vec3([x, y + up, z])
+            }
+        }
+    }
+}
+
+/// What a value box did this frame.
+#[derive(Debug, Default)]
+struct BoxResult {
+    /// A value typed in (Enter, a click elsewhere).
+    set: Option<PortValue>,
+    /// A value being dragged (joins the history when the button is let go).
+    drag: Option<PortValue>,
+    /// The box was taken hold of (to type in or to drag).
+    touched: bool,
+}
+
+/// The box of a value on the canvas. Dragging it changes the value (a triple: x left and
+/// right, y up and down, z up and down with Shift; finer with Ctrl); a click turns it into a
+/// field to type in, kept while it has the focus and set when it lets go of it (Enter, a
+/// click elsewhere); Esc puts the value back.
 fn value_field(
     ui: &mut Ui,
     id: egui::Id,
     rect: Rect,
     value: PortValue,
+    scrub: Scrub,
     z: f32,
-) -> (Option<PortValue>, bool) {
+) -> BoxResult {
     let ty = match value {
         PortValue::Number(_) => SocketType::Number,
         PortValue::Vec3(_) => SocketType::Vec3,
     };
+    let tip = match ty {
+        SocketType::Vec3 => t!("assembly.editor.vector_tip"),
+        _ => t!("assembly.editor.value_tip"),
+    };
+    let font = FontId::monospace(10.5 * z);
+    let typing_id = id.with("typing");
+    let typing =
+        ui.memory(|m| m.has_focus(id)) || ui.data(|d| d.get_temp(typing_id).unwrap_or(false));
+    let mut out = BoxResult::default();
+    if !typing {
+        let response = ui
+            .interact(rect, id.with("drag"), Sense::click_and_drag())
+            .on_hover_text(tip);
+        let start_id = id.with("start");
+        if response.drag_started_by(PointerButton::Primary) {
+            ui.data_mut(|d| d.insert_temp(start_id, value));
+            out.touched = true;
+        }
+        if response.dragged_by(PointerButton::Primary)
+            && let Some(start) = ui.data(|d| d.get_temp::<PortValue>(start_id))
+            && let Some((from, now)) =
+                ui.input(|i| Some((i.pointer.press_origin()?, i.pointer.interact_pos()?)))
+        {
+            let (shift, fine) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
+            let next = scrubbed(start, now - from, scrub, shift, fine);
+            if next != value {
+                out.drag = Some(next);
+            }
+        }
+        if response.drag_stopped() {
+            ui.data_mut(|d| d.remove::<PortValue>(start_id));
+        }
+        if response.clicked() {
+            ui.data_mut(|d| d.insert_temp(typing_id, true));
+            ui.memory_mut(|m| m.request_focus(id));
+            out.touched = true;
+        }
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(match ty {
+                SocketType::Vec3 => egui::CursorIcon::AllScroll,
+                _ => egui::CursorIcon::ResizeHorizontal,
+            });
+        }
+        let active = response.hovered() || response.dragged();
+        let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+        let radius = CornerRadius::same((3.0 * z).round().clamp(1.0, 4.0) as u8);
+        let back = if active {
+            dark::RAISED.gamma_multiply(1.4)
+        } else {
+            dark::CANVAS_BACK
+        };
+        painter.rect(
+            rect,
+            radius,
+            back,
+            Stroke::new(1.0, if active { dark::MUTED } else { dark::BORDER }),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            rect.right_center() - vec2(3.0 * z, 0.0),
+            Align2::RIGHT_CENTER,
+            value_text(value, ""),
+            font,
+            dark::TEXT,
+        );
+        return out;
+    }
     let shown = value_text(value, "");
     let mut text = if ui.memory(|m| m.has_focus(id)) {
         ui.data_mut(|d| d.get_temp::<String>(id))
@@ -506,16 +657,12 @@ fn value_field(
     } else {
         ERROR
     };
-    let tip = match ty {
-        SocketType::Vec3 => t!("assembly.editor.vector_tip"),
-        _ => t!("assembly.editor.value_tip"),
-    };
     let response = ui
         .put(
             rect,
             egui::TextEdit::singleline(&mut text)
                 .id(id)
-                .font(FontId::monospace(10.5 * z))
+                .font(font)
                 .text_color(color)
                 .background_color(dark::CANVAS_BACK)
                 .align(Align2::RIGHT_CENTER)
@@ -524,9 +671,12 @@ fn value_field(
                 .desired_width(rect.width()),
         )
         .on_hover_text(tip);
-    let mut new = None;
     if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(id, text));
+        // Focused now: the flag that asked for it has done its work.
+        ui.data_mut(|d| {
+            d.remove::<bool>(typing_id);
+            d.insert_temp(id, text);
+        });
     } else if response.lost_focus() {
         ui.data_mut(|d| d.remove::<String>(id));
         let cancel = ui.input(|i| i.key_pressed(Key::Escape));
@@ -534,10 +684,16 @@ fn value_field(
             && let Some(v) = parse_value(&text, ty)
             && v != value
         {
-            new = Some(v);
+            out.set = Some(v);
         }
+    } else if !ui.memory(|m| m.has_focus(id))
+        && ui.data(|d| d.get_temp::<bool>(typing_id).is_some())
+        && ui.input(|i| i.pointer.any_pressed())
+    {
+        // Asked for the focus but a click went elsewhere first.
+        ui.data_mut(|d| d.remove::<bool>(typing_id));
     }
-    (new, response.gained_focus())
+    out
 }
 
 fn header_color(c: Category) -> Color32 {
@@ -839,22 +995,25 @@ fn canvas(
         let base = ui.scope_id().with(("value", &scope));
         for l in &order {
             let r = v.rect(l.rect);
-            let mut fields: Vec<(InKey, Rect, PortValue)> = Vec::new();
+            let mut fields: Vec<(InKey, Rect, PortValue, Scrub)> = Vec::new();
             if let Some(own) = l.own {
-                fields.push((InKey::Value, own_box(r, v.zoom), own));
+                fields.push((InKey::Value, own_box(r, v.zoom), own, Scrub::PLAIN));
             }
             for row in &l.rows {
                 if let (Some(value), Side::In(key)) = (row.edit, row.side) {
-                    fields.push((key, value_box(r, row, v.zoom), value));
+                    fields.push((key, value_box(r, row, v.zoom), value, row.scrub));
                 }
             }
-            for (key, rect, value) in fields {
+            for (key, rect, value, scrub) in fields {
                 let id = base.with((l.id, format!("{key:?}")));
-                let (new, focused) = value_field(&mut boxes, id, rect, value, v.zoom);
-                if let Some(new) = new {
+                let done = value_field(&mut boxes, id, rect, value, scrub, v.zoom);
+                if let Some(new) = done.set {
                     edits.push(GraphEdit::SetValue(l.id, key, new));
                 }
-                if focused && !view.rt.selected.contains(&l.id) {
+                if let Some(new) = done.drag {
+                    edits.push(GraphEdit::DragValue(l.id, key, new));
+                }
+                if done.touched && !view.rt.selected.contains(&l.id) {
                     view.rt.selected = [l.id].into();
                     view.rt.menu = None;
                 }
@@ -1568,6 +1727,13 @@ pub(super) fn apply(state: &mut AssemblyState, rt: &mut Runtime, edit: GraphEdit
         state.touch_layout();
         return;
     }
+    if let GraphEdit::DragValue(id, key, value) = edit {
+        access::edit_at(&mut state.design, &scope, |g, _, _| {
+            set_value(g, id, key, value);
+        });
+        state.touch();
+        return;
+    }
     let result = state.edit(|design| {
         access::edit_at(design, &scope, |g, defs, owner| {
             apply_to(g, defs, owner, edit)
@@ -1581,6 +1747,19 @@ pub(super) fn apply(state: &mut AssemblyState, rt: &mut Runtime, edit: GraphEdit
         }
         Ok(None) => rt.report = None,
         Err(message) => rt.report = Some((message, true)),
+    }
+}
+
+/// Set input `key` of node `id` to `value` (`InKey::Value`: a number or triple node's own).
+fn set_value(graph: &mut Graph, id: NodeId, key: InKey, value: PortValue) {
+    if let Some(n) = graph.node_mut(id) {
+        match (&mut n.kind, key) {
+            (NodeKind::Value { value: v }, InKey::Value) => *v = value.number(),
+            (NodeKind::Vector { value: v }, InKey::Value) => *v = value.vec3(),
+            (kind, key) => {
+                kind.set_inline(key, value);
+            }
+        }
     }
 }
 
@@ -1653,16 +1832,8 @@ fn apply_to(
                 ops::group(graph, defs, owner, &ids, &name).map_err(|e| e.to_string())?;
             Ok(Some([node].into()))
         }
-        GraphEdit::SetValue(id, key, value) => {
-            if let Some(n) = graph.node_mut(id) {
-                match (&mut n.kind, key) {
-                    (NodeKind::Value { value: v }, InKey::Value) => *v = value.number(),
-                    (NodeKind::Vector { value: v }, InKey::Value) => *v = value.vec3(),
-                    (kind, key) => {
-                        kind.set_inline(key, value);
-                    }
-                }
-            }
+        GraphEdit::SetValue(id, key, value) | GraphEdit::DragValue(id, key, value) => {
+            set_value(graph, id, key, value);
             Ok(None)
         }
         GraphEdit::Ungroup(node) => {
@@ -1964,6 +2135,63 @@ mod tests {
         assert_eq!(count(&s) * 6, before * 8, "the ring of 6 is a ring of 8");
         assert!(s.undo());
         assert_eq!(count(&s), before);
+    }
+
+    /// Dragging a value changes it every frame and is one undo step once let go.
+    #[test]
+    fn dragging_a_value_is_one_undo_step() {
+        use crate::assembly::graph::StepField;
+        let mut s = state();
+        let mut rt = Runtime::default();
+        let before = s.design.molecule_count();
+        for n in [7.0, 8.0, 9.0] {
+            apply(
+                &mut s,
+                &mut rt,
+                GraphEdit::DragValue(
+                    chain_step_id(0),
+                    InKey::Field(StepField::RingCount),
+                    PortValue::Number(n),
+                ),
+            );
+        }
+        assert_eq!(s.design.molecule_count() * 6, before * 9);
+        s.settle();
+        assert!(s.undo());
+        assert_eq!(s.design.molecule_count(), before);
+    }
+
+    #[test]
+    fn a_drag_moves_a_number_sideways_and_a_triple_both_ways() {
+        let n = scrubbed(
+            PortValue::Number(1.0),
+            vec2(20.0, 50.0),
+            Scrub::LENGTH,
+            false,
+            false,
+        );
+        assert_eq!(n, PortValue::Number(2.0));
+        let v = PortValue::Vec3([0.0; 3]);
+        let up_right = scrubbed(v, vec2(10.0, -20.0), Scrub::ANGLE, false, false);
+        assert_eq!(up_right, PortValue::Vec3([5.0, 10.0, 0.0]));
+        let shifted = scrubbed(v, vec2(0.0, -20.0), Scrub::ANGLE, true, false);
+        assert_eq!(shifted, PortValue::Vec3([0.0, 0.0, 10.0]));
+        let count = scrubbed(
+            PortValue::Number(6.0),
+            vec2(14.0, 0.0),
+            Scrub::COUNT,
+            false,
+            false,
+        );
+        assert_eq!(count, PortValue::Number(7.0));
+        let fine = scrubbed(
+            PortValue::Number(0.0),
+            vec2(10.0, 0.0),
+            Scrub::LENGTH,
+            false,
+            true,
+        );
+        assert!(matches!(fine, PortValue::Number(x) if (x - 0.05).abs() < 1e-12));
     }
 
     /// The editor draws headless, inside a custom node too, with the add menu open.

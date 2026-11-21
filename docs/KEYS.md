@@ -447,7 +447,7 @@ Select, Repeat, Move each, Set attribute and Expression nodes take expressions, 
 - Functions: `sin cos tan asin acos atan` (radians), `sind cosd tand` (degrees), `atan2 sqrt abs floor ceil round min max pow clamp sign rad deg`. Constants `pi`, `e`.
 - Names: the node's own variables (inputs other nodes can feed), the molecules' attributes (`ring`, `layer`, `row`, `cell`, a repeat's name, `input` after a merge, `copy` and `copies` after any copying node, and those set by Set attribute), `k` (the molecule's place in the set), `count`, `comp` (its monomer, from 0), `x y z` (its centroid), and `i`, `n` (`copy` and `copies`). In a Repeat node, `i` is the copy number and `n` the number of copies.
 - Number fields also take an expression without names, such as `360/7`.
-- An input no wire feeds shows its value in a box on the node (from 60 % zoom): click it, type a number or such an expression (three separated by commas for a triple, or one for all three) and press Enter; Esc puts it back.
+- An input no wire feeds shows its value in a box on the node (from 60 % zoom). Drag the box left or right to change the value; a triple's box changes x left and right and y up and down (z with `Shift`); `Ctrl` makes it finer. The whole drag is one undo step. Click the box to type a number or such an expression (three separated by commas for a triple, or one for all three) and press Enter; Esc puts it back.
 
 #### Curves, points and the index
 
