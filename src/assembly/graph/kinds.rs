@@ -157,6 +157,32 @@ pub struct Circle {
     pub radius: f64,
 }
 
+/// How a [`ParamCurve`]'s three expressions place a point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Coords {
+    /// x, y, z.
+    #[default]
+    Cartesian,
+    /// r, θ (degrees, from the x axis towards y) and z: polar in the xy plane, z up.
+    Polar,
+}
+
+/// A curve through `resolution` points, each where three expressions of the parameter `t`
+/// put it, `t` running evenly from `t_min` to `t_max` (for a closed curve, the last point
+/// stops one step short of `t_max`, which is taken to be where the curve began). The
+/// expressions also read `i` (the point's index), `n` (`resolution`) and the variables.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParamCurve {
+    pub coords: Coords,
+    pub exprs: [String; 3],
+    pub t_min: f64,
+    pub t_max: f64,
+    pub resolution: u32,
+    pub closed: bool,
+    #[serde(default)]
+    pub vars: Vec<Var>,
+}
+
 /// Where [`CurveToPoints`] puts its points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum CurveSample {
@@ -231,6 +257,8 @@ pub enum NodeKind {
     },
     /// A circle (a curve).
     Circle(Circle),
+    /// A curve of expressions of a parameter.
+    ParamCurve(ParamCurve),
     CurveToPoints(CurveToPoints),
     InstanceOnPoints(InstanceOnPoints),
     /// The place of each element (molecule, point) where it is used: a value per element.
@@ -327,6 +355,7 @@ impl NodeKind {
             NodeKind::Combine { .. } => t!("assembly.node.combine").into(),
             NodeKind::Separate { .. } => t!("assembly.node.separate").into(),
             NodeKind::Circle(_) => t!("assembly.node.circle").into(),
+            NodeKind::ParamCurve(_) => t!("assembly.node.param_curve").into(),
             NodeKind::CurveToPoints(_) => t!("assembly.node.curve_to_points").into(),
             NodeKind::InstanceOnPoints(_) => t!("assembly.node.instance_on_points").into(),
             NodeKind::Index => t!("assembly.node.index").into(),
@@ -343,9 +372,10 @@ impl NodeKind {
     pub fn category(&self) -> Category {
         match self {
             NodeKind::Monomer { .. } | NodeKind::GroupInput | NodeKind::Index => Category::Input,
-            NodeKind::Circle(_) | NodeKind::CurveToPoints(_) | NodeKind::InstanceOnPoints(_) => {
-                Category::Geometry
-            }
+            NodeKind::Circle(_)
+            | NodeKind::ParamCurve(_)
+            | NodeKind::CurveToPoints(_)
+            | NodeKind::InstanceOnPoints(_) => Category::Geometry,
             NodeKind::Op(Step::Transform(_) | Step::Bend(_)) | NodeKind::MoveEach(_) => {
                 Category::Move
             }
@@ -387,6 +417,26 @@ impl NodeKind {
                 ),
                 length_input(InKey::Param(0), t!("assembly.node.socket.radius")),
             ],
+            NodeKind::ParamCurve(c) => [
+                input(
+                    InKey::Count,
+                    SocketType::Number,
+                    t!("assembly.node.socket.resolution"),
+                ),
+                input(
+                    InKey::Param(0),
+                    SocketType::Number,
+                    t!("assembly.node.socket.t_min"),
+                ),
+                input(
+                    InKey::Param(1),
+                    SocketType::Number,
+                    t!("assembly.node.socket.t_max"),
+                ),
+            ]
+            .into_iter()
+            .chain(var_inputs(&c.vars))
+            .collect(),
             NodeKind::CurveToPoints(c) => {
                 let mut v = vec![input(
                     InKey::Curve,
@@ -513,7 +563,7 @@ impl NodeKind {
             | NodeKind::MoveEach(_)
             | NodeKind::InstanceOnPoints(_)
             | NodeKind::SetAttr(_) => vec![set()],
-            NodeKind::Circle(_) => vec![output(
+            NodeKind::Circle(_) | NodeKind::ParamCurve(_) => vec![output(
                 OutKey::Curve,
                 SocketType::Curve,
                 t!("assembly.node.socket.curve"),
@@ -585,6 +635,11 @@ impl NodeKind {
             (NodeKind::Group(g), InKey::Port(p)) => g.inputs.get(&p).copied(),
             (NodeKind::Circle(c), InKey::Count) => Some(PortValue::Number(f64::from(c.resolution))),
             (NodeKind::Circle(c), InKey::Param(0)) => Some(PortValue::Number(c.radius)),
+            (NodeKind::ParamCurve(c), InKey::Count) => {
+                Some(PortValue::Number(f64::from(c.resolution)))
+            }
+            (NodeKind::ParamCurve(c), InKey::Param(0)) => Some(PortValue::Number(c.t_min)),
+            (NodeKind::ParamCurve(c), InKey::Param(1)) => Some(PortValue::Number(c.t_max)),
             (NodeKind::CurveToPoints(c), InKey::Count) => {
                 Some(PortValue::Number(f64::from(c.count)))
             }
@@ -632,6 +687,18 @@ impl NodeKind {
                 c.radius = value.number();
                 true
             }
+            (NodeKind::ParamCurve(c), InKey::Count) => {
+                c.resolution = super::field::count_of(value.number());
+                true
+            }
+            (NodeKind::ParamCurve(c), InKey::Param(0)) => {
+                c.t_min = value.number();
+                true
+            }
+            (NodeKind::ParamCurve(c), InKey::Param(1)) => {
+                c.t_max = value.number();
+                true
+            }
             (NodeKind::CurveToPoints(c), InKey::Count) => {
                 c.count = super::field::count_of(value.number());
                 true
@@ -670,6 +737,7 @@ impl NodeKind {
             NodeKind::MoveEach(m) => Some(&m.vars),
             NodeKind::SetAttr(s) => Some(&s.vars),
             NodeKind::Expression(e) => Some(&e.vars),
+            NodeKind::ParamCurve(c) => Some(&c.vars),
             _ => None,
         }
     }
@@ -681,6 +749,7 @@ impl NodeKind {
             NodeKind::MoveEach(m) => Some(&mut m.vars),
             NodeKind::SetAttr(s) => Some(&mut s.vars),
             NodeKind::Expression(e) => Some(&mut e.vars),
+            NodeKind::ParamCurve(c) => Some(&mut c.vars),
             _ => None,
         }
     }
@@ -706,6 +775,7 @@ impl NodeKind {
             NodeKind::Separate { value: [0.0; 3] },
             NodeKind::Index,
             NodeKind::Circle(Circle::new()),
+            NodeKind::ParamCurve(ParamCurve::new()),
             NodeKind::CurveToPoints(CurveToPoints::new()),
             NodeKind::InstanceOnPoints(InstanceOnPoints::new()),
         ]
@@ -723,6 +793,27 @@ impl Circle {
 }
 
 impl Default for Circle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ParamCurve {
+    /// A helix: radius 10 Å, two turns, 7 Å a turn, in polar form.
+    pub fn new() -> Self {
+        Self {
+            coords: Coords::Polar,
+            exprs: ["10".into(), "360*t".into(), "7*t".into()],
+            t_min: 0.0,
+            t_max: 2.0,
+            resolution: 24,
+            closed: false,
+            vars: Vec::new(),
+        }
+    }
+}
+
+impl Default for ParamCurve {
     fn default() -> Self {
         Self::new()
     }

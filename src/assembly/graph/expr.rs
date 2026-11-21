@@ -122,6 +122,8 @@ pub enum ErrorKind {
     Arity(String, usize),
     Unclosed,
     Trailing,
+    /// The text ends where a number or name was still wanted (`3*`).
+    Incomplete,
 }
 
 impl fmt::Display for ExprError {
@@ -137,6 +139,7 @@ impl fmt::Display for ExprError {
             ErrorKind::Arity(s, n) => t!("assembly.expr.error.arity", name = s, count = n),
             ErrorKind::Unclosed => t!("assembly.expr.error.unclosed", at = at),
             ErrorKind::Trailing => t!("assembly.expr.error.trailing", at = at),
+            ErrorKind::Incomplete => t!("assembly.expr.error.incomplete").to_owned(),
         };
         f.write_str(&text)
     }
@@ -248,7 +251,7 @@ impl Parser<'_> {
 
     fn unexpected(&self) -> ExprError {
         let kind = match self.toks.get(self.pos) {
-            None => ErrorKind::Unclosed,
+            None => ErrorKind::Incomplete,
             Some((Tok::Num(v), _)) => ErrorKind::Unexpected(v.to_string()),
             Some((Tok::Name(n), _)) => ErrorKind::Unexpected(n.clone()),
             Some((Tok::Sym(s), _)) => ErrorKind::Unexpected((*s).to_owned()),
@@ -620,6 +623,8 @@ mod tests {
         assert_eq!(err("foo(1)").kind, ErrorKind::UnknownFunction("foo".into()));
         assert_eq!(err("min(1)").kind, ErrorKind::Arity("min".into(), 2));
         assert_eq!(err("(1 + 2").kind, ErrorKind::Unclosed);
+        assert_eq!(err("3*").kind, ErrorKind::Incomplete);
+        assert_eq!(err("sin(").kind, ErrorKind::Incomplete);
         assert_eq!(err("1 2").kind, ErrorKind::Trailing);
     }
 

@@ -11,7 +11,8 @@ use crate::assembly::graph::defs::{self, DefId, NodeDef, Status};
 use crate::assembly::graph::eval::is_name;
 use crate::assembly::graph::expr::{Expr, eval_const};
 use crate::assembly::graph::kinds::{
-    CurveSample, EachPivot, NodeKind, PortValue, SocketType, Var, next_var_key, next_var_name,
+    Coords, CurveSample, EachPivot, NodeKind, PortValue, SocketType, Var, next_var_key,
+    next_var_name,
 };
 use crate::assembly::graph::{InKey, NodeId, access, library, ops};
 use crate::assembly::model::{Design, node_name};
@@ -105,20 +106,6 @@ fn node_card(
         ui.checkbox(&mut node.bypass, t!("assembly.panel.bypass"))
             .on_hover_text(t!("assembly.panel.bypass_tip"));
     }
-    for issue in ev
-        .errors
-        .iter()
-        .filter(|i| i.node == id && i.scope == scope)
-    {
-        ui.label(RichText::new(&issue.message).size(11.5).color(ink.warn));
-    }
-    for issue in ev
-        .warnings
-        .iter()
-        .filter(|i| i.node == id && i.scope == scope)
-    {
-        ui.label(RichText::new(&issue.message).size(11.5).color(look.muted));
-    }
     // Inputs fed by wires: their value comes from there.
     let wired: Vec<String> = node
         .kind
@@ -136,6 +123,23 @@ fn node_card(
     ui.add_enabled_ui(!node.bypass, |ui| {
         kind_params(ui, &mut node.kind, &state.design, &vars_hint, ink);
     });
+    // The node's errors come and go as an expression is typed: under the fields, so the field
+    // being typed in keeps its place (and its id, and so the focus).
+    for issue in ev
+        .errors
+        .iter()
+        .filter(|i| i.node == id && i.scope == scope)
+    {
+        ui.label(RichText::new(&issue.message).size(11.5).color(ink.warn));
+    }
+    for issue in ev
+        .warnings
+        .iter()
+        .filter(|i| i.node == id && i.scope == scope)
+    {
+        ui.label(RichText::new(&issue.message).size(11.5).color(look.muted));
+    }
+
     for w in wired {
         ui.label(look.muted(w));
     }
@@ -399,6 +403,64 @@ fn kind_params(
                 t!("assembly.panel.circle_radius_tip"),
             );
         }
+        NodeKind::ParamCurve(c) => {
+            changed |= super::field_row(
+                ui,
+                t!("assembly.panel.coords"),
+                t!("assembly.panel.coords_tip"),
+                |ui| {
+                    let mut m = false;
+                    for (coords, label) in [
+                        (Coords::Cartesian, t!("assembly.panel.coords_cartesian")),
+                        (Coords::Polar, t!("assembly.panel.coords_polar")),
+                    ] {
+                        m |= ui.selectable_value(&mut c.coords, coords, label).changed();
+                    }
+                    m
+                },
+            );
+            let axes = match c.coords {
+                Coords::Cartesian => ["x", "y", "z"],
+                Coords::Polar => ["r", "θ °", "z"],
+            };
+            for (axis, e) in axes.iter().zip(c.exprs.iter_mut()) {
+                changed |= curve_expr(ui, axis, e, &c.vars, ink);
+            }
+            changed |= super::number(
+                ui,
+                t!("assembly.node.socket.t_min"),
+                &mut c.t_min,
+                0.01,
+                f64::MIN..=f64::MAX,
+                "",
+                t!("assembly.panel.t_range_tip"),
+            );
+            changed |= super::number(
+                ui,
+                t!("assembly.node.socket.t_max"),
+                &mut c.t_max,
+                0.01,
+                f64::MIN..=f64::MAX,
+                "",
+                t!("assembly.panel.t_range_tip"),
+            );
+            changed |= super::count(
+                ui,
+                t!("assembly.node.socket.resolution"),
+                &mut c.resolution,
+                t!("assembly.panel.curve_resolution_tip"),
+            );
+            changed |= ui
+                .checkbox(&mut c.closed, t!("assembly.panel.closed"))
+                .on_hover_text(t!("assembly.panel.closed_tip"))
+                .changed();
+            ui.label(
+                RichText::new(t!("assembly.panel.param_curve_help"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
+            changed |= vars_editor(ui, &mut c.vars);
+        }
         NodeKind::CurveToPoints(c) => {
             changed |= super::field_row(
                 ui,
@@ -600,6 +662,27 @@ fn labelled_expr(
         false
     });
     if let Err(e) = check(expr, vars, hint, true) {
+        ui.label(RichText::new(e).size(11.0).color(ink.warn));
+    }
+    changed
+}
+
+/// One of a parametric curve's expressions, labelled with its axis: it reads `t`, `i`, `n`
+/// and the node's variables.
+fn curve_expr(ui: &mut Ui, axis: &str, expr: &mut String, vars: &[Var], ink: &Ink) -> bool {
+    let mut changed = false;
+    super::field_row(ui, axis, "", |ui| {
+        changed |= ui
+            .add(
+                egui::TextEdit::singleline(expr)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text(t!("assembly.panel.expr_tip"))
+            .changed();
+        false
+    });
+    if let Err(e) = check(expr, vars, "t i n", false) {
         ui.label(RichText::new(e).size(11.0).color(ink.warn));
     }
     changed

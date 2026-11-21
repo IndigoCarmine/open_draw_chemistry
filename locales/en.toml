@@ -1718,6 +1718,7 @@ circle = "Circle"
 curve_to_points = "Curve to points"
 instance_on_points = "Instance on points"
 index = "Index"
+param_curve = "Parametric curve"
 
 [assembly.node.socket]
 molecules = "Molecules"
@@ -1735,6 +1736,8 @@ selection = "Selection"
 rotation = "Rotation"
 length = "Length"
 index = "Index"
+t_min = "t from"
+t_max = "t to"
 
 [assembly.node.error]
 cycle = "The links loop back to this node"
@@ -1749,6 +1752,7 @@ recursion = "Custom node \"{name}\" uses itself"
 too_deep = "Custom nodes are nested too deep (at most {max})"
 field_here = "This input takes one value for all, not a value per element (such as the index's). Feed it to a node that works element by element: select, move each, set attribute or instance on points"
 bad_length = "The length between points must be more than 0"
+not_finite_point = "The expressions give no finite position (at point {at})"
 
 [assembly.expr.error]
 empty = "Enter an expression"
@@ -1758,6 +1762,7 @@ unknown_function = "Unknown function \"{name}\""
 arity = "{name}() takes {count} arguments"
 unclosed = "A bracket is not closed (character {at})"
 trailing = "Extra text after the expression (character {at})"
+incomplete = "The expression ends too soon: a number or name is missing at the end"
 
 [assembly.editor.error]
 missing_socket = "That socket is not there"
@@ -1893,3 +1898,12 @@ selection_tip = "Whether a point gets a copy (not 0). Feed it a field, such as a
 instance_rotation_tip = "Turns each copy about x, then y, then z before it is put on its point. Feed it a field to turn each copy differently"
 instance_help = "Puts a copy of the molecules fed in on each point. The copies get the attribute point (the point's index), with copy and copies."
 index_help = "Gives each element its place, from 0: the molecule's in select, move each and set attribute, the point's in instance on points. Use it in an expression or combine node to make a value per element."
+coords = "Coordinates"
+coords_tip = "How the three expressions place each point"
+coords_cartesian = "Cartesian (x, y, z)"
+coords_polar = "Polar (r, θ, z)"
+t_range_tip = "The parameter t runs evenly from \"t from\" to \"t to\""
+curve_resolution_tip = "How many points the curve goes through"
+closed = "Closed"
+closed_tip = "Join the last point to the first. t then stops one step short of \"t to\", taken to be where the curve began"
+param_curve_help = "Each expression may use t, i (the point's index from 0), n (the number of points) and the variables below. In polar form θ is in degrees from the x axis towards y, r is the distance from the z axis and z the height. Example: a helix r = 10, θ = 360*t, z = 7*t."

@@ -297,6 +297,16 @@ pub(super) fn subtitle(kind: &NodeKind, design: &Design) -> Option<String> {
             parts.join(" · ")
         }
         NodeKind::SetAttr(a) => format!("{} = {}", a.name, a.expr),
+        NodeKind::ParamCurve(c) => format!(
+            "{}: {}, {}, {}",
+            match c.coords {
+                crate::assembly::graph::kinds::Coords::Cartesian => "x y z",
+                crate::assembly::graph::kinds::Coords::Polar => "r θ z",
+            },
+            c.exprs[0],
+            c.exprs[1],
+            c.exprs[2]
+        ),
         NodeKind::Expression(e) => e.expr.clone(),
         NodeKind::Value { value } => number_text(*value),
         NodeKind::Vector { value } => value_text(PortValue::Vec3(*value), ""),

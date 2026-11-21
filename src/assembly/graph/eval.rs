@@ -24,7 +24,7 @@ use std::sync::Arc;
 use super::defs::{self, DefId, NodeDef};
 use super::expr::Expr;
 use super::field::{StepField, count_of};
-use super::kinds::{CurveSample, EachPivot, NodeKind, PortValue, SocketType, Var};
+use super::kinds::{Coords, CurveSample, EachPivot, NodeKind, PortValue, SocketType, Var};
 use super::{Graph, InKey, NodeId, OutKey};
 use crate::assembly::math::{self, Rigid, Vec3};
 use crate::assembly::model::{Component, Crystal, Ids, Instance, Shape, Step, centroid};
@@ -871,6 +871,58 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                     splines: vec![Spline {
                         points,
                         closed: true,
+                    }],
+                };
+                Ok(vec![(OutKey::Curve, Data::Curve(Arc::new(curve)))])
+            }
+            NodeKind::ParamCurve(c) => {
+                let n = count_of(self.number_input(
+                    graph,
+                    owner,
+                    scope,
+                    id,
+                    InKey::Count,
+                    f64::from(c.resolution),
+                ));
+                let t0 = self.number_input(graph, owner, scope, id, InKey::Param(0), c.t_min);
+                let t1 = self.number_input(graph, owner, scope, id, InKey::Param(1), c.t_max);
+                let vars = self.var_values(graph, owner, scope, id, &c.vars)?;
+                let mut names: Vec<String> = vec!["t".into(), "i".into(), "n".into()];
+                names.extend(vars.iter().map(|(name, _)| name.clone()));
+                let resolve = |name: &str| names.iter().rposition(|n| n == name);
+                let exprs = c
+                    .exprs
+                    .iter()
+                    .map(|src| Expr::parse(src, &resolve).map_err(expr_fail))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut values = vec![0.0, 0.0, f64::from(n)];
+                values.extend(vars.iter().map(|(_, v)| *v));
+                // A closed curve's last step leads back to its first point.
+                let steps = if c.closed { n } else { n.saturating_sub(1) }.max(1);
+                let mut points = Vec::with_capacity(n as usize);
+                for i in 0..n {
+                    values[0] = t0 + (t1 - t0) * f64::from(i) / f64::from(steps);
+                    values[1] = f64::from(i);
+                    let [a, b, z] = [0, 1, 2].map(|k| exprs[k].eval(&values));
+                    let p = match c.coords {
+                        Coords::Cartesian => [a, b, z],
+                        Coords::Polar => {
+                            let th = b.to_radians();
+                            [a * th.cos(), a * th.sin(), z]
+                        }
+                    };
+                    if p.iter().any(|v| !v.is_finite()) {
+                        return Err(Fail::new(t!(
+                            "assembly.node.error.not_finite_point",
+                            at = i
+                        )));
+                    }
+                    points.push(p);
+                }
+                let curve = Curve {
+                    splines: vec![Spline {
+                        points,
+                        closed: c.closed,
                     }],
                 };
                 Ok(vec![(OutKey::Curve, Data::Curve(Arc::new(curve)))])
@@ -1812,6 +1864,82 @@ mod tests {
         let ev = d.evaluation();
         assert_eq!(ev.errors.len(), 1);
         assert_eq!(ev.errors[0].node, ring);
+    }
+
+    /// A curve of `t` in either form: a circle written out is the circle node's, a helix rises
+    /// as it turns, and a variable fed a number changes it.
+    #[test]
+    fn a_parametric_curve_in_either_form() {
+        use crate::assembly::graph::kinds::{Circle, Coords, ParamCurve, Var};
+        let curve = |kind: NodeKind, feed: Option<f64>| {
+            let mut d = design(vec![]);
+            let g = d.graph_mut();
+            let node = g.add(kind, [0.0; 2]);
+            if let Some(v) = feed {
+                let value = g.add(NodeKind::Value { value: v }, [0.0; 2]);
+                link(g, value, OutKey::Number, node, InKey::Var(0));
+            }
+            // Instance on the curve's own points, so the evaluation reaches it.
+            let points = g.add(
+                NodeKind::CurveToPoints(crate::assembly::graph::kinds::CurveToPoints {
+                    mode: crate::assembly::graph::kinds::CurveSample::Evaluated,
+                    count: 1,
+                    length: 1.0,
+                }),
+                [0.0; 2],
+            );
+            let put = g.add(
+                NodeKind::InstanceOnPoints(crate::assembly::graph::kinds::InstanceOnPoints::new()),
+                [0.0; 2],
+            );
+            let out = g.output().unwrap();
+            g.links.retain(|l| l.to != out);
+            link(g, node, OutKey::Curve, points, InKey::Curve);
+            link(g, points, OutKey::Points, put, InKey::Points);
+            link(g, NodeId(1), OutKey::Set, put, InKey::Set(0));
+            link(g, put, OutKey::Set, out, InKey::Set(0));
+            let ev = d.evaluation();
+            assert!(ev.errors.is_empty(), "{:?}", ev.errors);
+            ev.output
+                .items
+                .iter()
+                .map(|i| i.transform.trans)
+                .collect::<Vec<_>>()
+        };
+        let circle = curve(NodeKind::Circle(Circle::new()), None);
+        let written = |coords, exprs: [&str; 3]| ParamCurve {
+            coords,
+            exprs: exprs.map(String::from),
+            t_min: 0.0,
+            t_max: 1.0,
+            resolution: 8,
+            closed: true,
+            vars: Vec::new(),
+        };
+        for kind in [
+            written(Coords::Cartesian, ["10*cosd(360*t)", "10*sind(360*t)", "0"]),
+            written(Coords::Polar, ["10", "360*t", "0"]),
+            written(Coords::Polar, ["10", "45*i", "0"]),
+        ] {
+            let got = curve(NodeKind::ParamCurve(kind), None);
+            assert_eq!(got.len(), circle.len());
+            for (a, b) in got.iter().zip(&circle) {
+                assert!(math::distance(*a, *b) < 1e-9, "{a:?} {b:?}");
+            }
+        }
+        // An open helix: both ends, rising 7 Å a turn.
+        let helix = curve(NodeKind::ParamCurve(ParamCurve::new()), None);
+        assert_eq!(helix.len(), 24);
+        assert!((helix[23][2] - 14.0).abs() < 1e-9);
+        // A variable fed a number: the radius.
+        let mut fed = written(Coords::Polar, ["r", "360*t", "0"]);
+        fed.vars = vec![Var {
+            key: 0,
+            name: "r".into(),
+            value: 1.0,
+        }];
+        let got = curve(NodeKind::ParamCurve(fed), Some(10.0));
+        assert!((math::norm(got[0]) - 10.0).abs() < 1e-9);
     }
 
     /// Points every 2 Å along an open curve: both ends and the evenly spaced points between.
