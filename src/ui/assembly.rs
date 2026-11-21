@@ -1,8 +1,12 @@
-//! The assembly view (集合体): the built assembly in the central area ([`viewer_area`]) with the
-//! node editor under it ([`nodes`]: the graph of nodes that copy the monomers into place) and,
-//! in the right panel ([`panel`]), its monomers, the selected node's settings, the custom
-//! nodes, how it is shown, and exporting and saving it. The model is [`crate::assembly`]; this module only draws it and
+//! The assembly view (集合体): the built assembly in the central area ([`viewer_area`]) and, in
+//! the right panel ([`panel`]), its monomers, the steps that copy them, how it is shown, and
+//! exporting and saving it. The model is [`crate::assembly`]; this module only draws it and
 //! turns clicks into edits.
+//!
+//! The steps can also be seen and edited as a graph of nodes in the node editor under the
+//! viewer ([`nodes`]), opened from the panel. There an assembly can branch and merge; one
+//! that a list of steps cannot hold is edited in the node editor, the panel showing the
+//! selected node's settings ([`node_panel`]) in place of the steps.
 //!
 //! In the viewer: drag to orbit, Shift+drag or right/middle drag to pan, wheel to zoom,
 //! double-click empty space to reframe, click an atom to select its molecule. A selected
@@ -12,9 +16,9 @@
 //! of selecting, for the distance, angle or dihedral between them ([`crate::assembly::measure`]).
 
 mod contacts;
-mod labels;
 mod node_panel;
 mod nodes;
+mod pipeline;
 mod place;
 mod style;
 
@@ -144,8 +148,14 @@ pub struct AssemblyView {
     pub interactions: super::interactions::ShowInteractions,
     /// The panel's tab.
     pub tab: PanelTab,
+    /// The step whose card shows its parameters (one at most).
+    pub expanded: Option<usize>,
     /// The node editor under the viewer.
     pub nodes: nodes::NodeEditorView,
+    /// The open card and the selected step node last seen, to keep them together while the
+    /// node editor shows the steps.
+    #[serde(skip)]
+    step_sync: (Option<usize>, Option<usize>),
     /// The monomer whose name is being edited, and whether its field still has to take focus.
     #[serde(skip)]
     renaming: Option<(usize, bool)>,
@@ -316,25 +326,13 @@ pub fn viewer_area(
     }
 }
 
-/// The node editor at the bottom of the central area (or a bar to open it), drawn first so it
-/// takes its keys before the viewer.
+/// The node editor at the bottom of the central area, when it is open; drawn first so it takes
+/// its keys before the viewer.
 fn node_editor_area(ui: &mut egui::Ui, doc: &mut Document, view: &mut AssemblyView) {
     let frame = egui::Frame::NONE
         .fill(dark::BACKDROP)
         .inner_margin(egui::Margin::symmetric(6, 4));
     if !view.nodes.open {
-        egui::Panel::bottom("assembly_nodes_closed")
-            .frame(frame)
-            .resizable(false)
-            .show(ui, |ui| {
-                if ui
-                    .small_button(t!("assembly.editor.open"))
-                    .on_hover_text(t!("assembly.editor.open_tip"))
-                    .clicked()
-                {
-                    view.nodes.open = true;
-                }
-            });
         return;
     }
     let available = ui.available_height();
@@ -895,6 +893,14 @@ enum Change {
     RemoveComponent(usize),
     SetBase(usize),
     ClearOrient(usize),
+    AddStep(Step),
+    RemoveStep(usize),
+    /// Move the step at the first index to the second (the others close up).
+    MoveStep(usize, usize),
+    /// Insert a copy of the step right after it.
+    DuplicateStep(usize),
+    /// Switch the step on or off.
+    ToggleStep(usize),
     /// Put a node of monomer `i` into the graph.
     AddMonomerNode(usize),
 }
@@ -1020,7 +1026,51 @@ fn measure_section(
     ui.add_space(4.0);
 }
 
-/// The 構築 tab: the monomers, the selected node and the custom nodes, and the hand placement.
+/// The 構築 tab: the monomers, the steps' pipeline and the box adding one (or, for an assembly
+/// steps cannot hold, the selected node and the custom nodes), and the hand placement.
+/// A quiet button under the steps that shows them as nodes in the node editor (or hides it).
+fn node_editor_toggle(ui: &mut egui::Ui, view: &mut AssemblyView) {
+    ui.add_space(2.0);
+    let (text, tip) = if view.nodes.open {
+        (t!("assembly.editor.hide"), t!("assembly.editor.close"))
+    } else {
+        (t!("assembly.editor.show"), t!("assembly.editor.show_tip"))
+    };
+    if ui
+        .add(egui::Button::new(RichText::new(text).size(11.5)).frame(false))
+        .on_hover_text(tip)
+        .clicked()
+    {
+        view.nodes.open = !view.nodes.open;
+    }
+}
+
+/// While the node editor shows the steps, opening a card selects its node and selecting a
+/// step's node opens its card.
+fn sync_steps(state: &AssemblyState, view: &mut AssemblyView) {
+    if !view.nodes.open {
+        // Nothing seen: the open card is selected when the editor opens.
+        view.step_sync = (None, None);
+        return;
+    }
+    let len = state.design.steps.len();
+    let step_of = |id: crate::assembly::graph::NodeId| {
+        (0..len).find(|&k| crate::assembly::graph::chain_step_id(k) == id)
+    };
+    let selected = view.nodes.rt.single().and_then(step_of);
+    let (card, node) = view.step_sync;
+    if selected.is_some() && selected != node {
+        view.expanded = selected;
+    } else if view.expanded != card {
+        view.nodes.rt.selected = view
+            .expanded
+            .map(crate::assembly::graph::chain_step_id)
+            .into_iter()
+            .collect();
+    }
+    view.step_sync = (view.expanded, view.nodes.rt.single().and_then(step_of));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_tab(
     ui: &mut egui::Ui,
@@ -1035,7 +1085,19 @@ fn build_tab(
     style::caption(ui, look, t!("assembly.view.section_monomers"));
     components_section(ui, state, view, look, has_model, out, changes);
     if !state.is_empty() {
-        node_panel::section(ui, state, &mut view.nodes, look, ink, out);
+        if state.design.is_linear() {
+            sync_steps(state, view);
+            ui.add_space(8.0);
+            pipeline::pipeline(ui, state, view, look, ink, changes);
+            ui.add_space(8.0);
+            pipeline::add_box(ui, look, state, changes);
+            node_editor_toggle(ui, view);
+            if !state.design.defs.is_empty() {
+                node_panel::custom_nodes(ui, state, &mut view.nodes, look, ink, out);
+            }
+        } else {
+            node_panel::section(ui, state, &mut view.nodes, look, ink, out);
+        }
         ui.add_space(8.0);
         if ui
             .button(t!("assembly.view.scan"))
@@ -1362,6 +1424,47 @@ fn apply(change: Change, doc: &mut Document, model_name: &str, view: &mut Assemb
         }
         Change::SetBase(i) => state.edit(|d| d.base = i),
         Change::ClearOrient(i) => state.edit(|d| d.components[i].orient = None),
+        Change::AddStep(step) => {
+            let at = state.edit(|d| {
+                d.steps.push(step);
+                d.steps.len() - 1
+            });
+            view.expanded = Some(at);
+        }
+        Change::RemoveStep(i) => {
+            state.edit(|d| d.steps.remove(i));
+            view.expanded = match view.expanded {
+                Some(e) if e == i => None,
+                Some(e) if e > i => Some(e - 1),
+                e => e,
+            };
+        }
+        Change::MoveStep(from, to) => {
+            if from == to || from.max(to) >= state.design.steps.len() {
+                return;
+            }
+            state.edit(|d| {
+                let step = d.steps.remove(from);
+                d.steps.insert(to, step);
+            });
+            view.expanded = view
+                .expanded
+                .map(|e| pipeline::index_after_move(e, from, to));
+        }
+        Change::DuplicateStep(i) => {
+            if let Some(step) = state.design.steps.get(i).cloned() {
+                state.edit(|d| d.steps.insert(i + 1, step));
+                view.expanded = Some(i + 1);
+            }
+        }
+        Change::ToggleStep(i) => {
+            if i < state.design.steps.len() {
+                state.edit(|d| {
+                    let on = d.steps[i].enabled_mut();
+                    *on = !*on;
+                });
+            }
+        }
         Change::AddMonomerNode(i) => {
             let component = state.design.component_id(i);
             let pos = state
@@ -1410,7 +1513,9 @@ fn components_section(
         style::dashed_box(ui, inner.response.rect, look.line);
         return;
     }
-    let several = state.design.components.len() > 1 && state.design.is_linear();
+    let several = state.design.components.len() > 1;
+    let linear = state.design.is_linear();
+    let nodes_in_use = view.nodes.open || !linear;
     let base = state.design.base;
     let mut renamed = false;
     let mut stop_renaming = false;
@@ -1456,7 +1561,7 @@ fn components_section(
                             }
                         }
                     }
-                    if several && base == i {
+                    if several && linear && base == i {
                         ui.label(
                             RichText::new(t!("assembly.view.base"))
                                 .size(10.5)
@@ -1501,10 +1606,10 @@ fn components_section(
                             if ui.button(t!("assembly.view.rename")).clicked() {
                                 view.renaming = Some((i, true));
                             }
-                            if several
+                            if linear
                                 && ui
                                     .add_enabled(
-                                        base != i,
+                                        several && base != i,
                                         egui::Button::new(t!("assembly.view.set_base")),
                                     )
                                     .on_hover_text(t!("assembly.view.set_base_tip"))
@@ -1512,10 +1617,11 @@ fn components_section(
                             {
                                 changes.push(Change::SetBase(i));
                             }
-                            if ui
-                                .button(t!("assembly.view.add_monomer_node"))
-                                .on_hover_text(t!("assembly.view.add_monomer_node_tip"))
-                                .clicked()
+                            if nodes_in_use
+                                && ui
+                                    .button(t!("assembly.view.add_monomer_node"))
+                                    .on_hover_text(t!("assembly.view.add_monomer_node_tip"))
+                                    .clicked()
                             {
                                 changes.push(Change::AddMonomerNode(i));
                             }
@@ -2576,45 +2682,143 @@ mod tests {
     }
 
     #[test]
-    fn step_nodes_summarise_their_parameters() {
+    fn the_pipeline_shows_each_steps_count_and_summary() {
         let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
         let steps = vec![array(7, 3.2), Step::new_ring()];
         let doc = doc_with(steps.clone());
-        assert_eq!(doc.assembly.design.running_counts(), vec![7, 42]);
-        assert_eq!(labels::summary(&steps[0]), "7個 · z 3.20Å");
-        assert_eq!(labels::summary(&steps[1]), "6個 · r 5.00Å");
-        assert_eq!(labels::summary(&Step::new_lattice()), "P1 · 1×1×1");
+        let counts = doc.assembly.design.running_counts();
+        assert_eq!(counts, vec![7, 42]);
+        assert_eq!(
+            pipeline::count_text(&steps[0], 1, counts[0]),
+            "× 7 → 7 分子"
+        );
+        assert_eq!(
+            pipeline::count_text(&steps[1], counts[0], counts[1]),
+            "× 6 → 42 分子"
+        );
+        assert_eq!(pipeline::summary(&steps[0]), "7個 · z 3.20Å");
+        assert_eq!(pipeline::summary(&steps[1]), "6個 · r 5.00Å");
+        assert_eq!(pipeline::summary(&Step::new_lattice()), "P1 · 1×1×1");
+        let mut off = steps[1].clone();
+        *off.enabled_mut() = false;
+        assert_eq!(pipeline::count_text(&off, 7, 7), "飛ばす → 7 分子");
 
-        // A move copies nothing.
+        // A move copies nothing: no factor, and the count stays.
         let mut transform = Step::new_transform();
-        assert_eq!(labels::summary(&transform), "移動なし");
+        assert_eq!(pipeline::summary(&transform), "移動なし");
+        assert_eq!(pipeline::count_text(&transform, 7, 7), "→ 7 分子");
         if let Step::Transform(t) = &mut transform {
             t.offset = [0.0, 0.0, 2.5];
             t.euler_deg = [0.0, 90.0, 0.0];
         }
-        assert_eq!(labels::summary(&transform), "z 2.50Å · 重心まわりに回転");
+        assert_eq!(pipeline::summary(&transform), "z 2.50Å · 重心まわりに回転");
         let doc = doc_with(vec![array(7, 3.2), transform, Step::new_ring()]);
         assert_eq!(doc.assembly.design.running_counts(), vec![7, 7, 42]);
         assert_eq!(formula(&water()), "H2O");
 
         // An arc moves the molecules and copies nothing either.
         let mut bend = Step::new_bend();
-        assert_eq!(labels::summary(&bend), "r 20.00Å · φ 0°");
+        assert_eq!(pipeline::summary(&bend), "r 20.00Å · φ 0°");
+        assert_eq!(pipeline::count_text(&bend, 7, 7), "→ 7 分子");
         if let Step::Bend(b) = &mut bend {
             b.direction_deg = 90.0;
             b.orient = BendOrient::Keep;
         }
-        assert_eq!(labels::summary(&bend), "r 20.00Å · φ 90° · 向き維持");
+        assert_eq!(pipeline::summary(&bend), "r 20.00Å · φ 90° · 向き維持");
         let doc = doc_with(vec![array(7, 3.2), bend]);
         assert_eq!(doc.assembly.design.running_counts(), vec![7, 7]);
         assert_eq!(bend_curvature_text(20.0), "2.86°/Å · 一周 125.7 Å");
         assert_eq!(bend_curvature_text(0.0), "—（まっすぐ）");
     }
 
+    #[test]
+    fn a_dropped_card_moves_its_step_as_one_undo_step() {
+        let _lang = crate::i18n::ScopedLanguage::new(crate::i18n::Lang::Ja);
+        // Dropping in the gap a card is next to does not move it.
+        assert_eq!(pipeline::drop_target(1, 1), None);
+        assert_eq!(pipeline::drop_target(1, 2), None);
+        assert_eq!(pipeline::drop_target(0, 3), Some(2));
+        assert_eq!(pipeline::drop_target(2, 0), Some(0));
+        let cards: Vec<egui::Rect> = (0..3)
+            .map(|k| egui::Rect::from_min_size(egui::pos2(0.0, 50.0 * k as f32), vec2(100.0, 40.0)))
+            .collect();
+        assert_eq!(pipeline::gap_at(&cards, 5.0), 0);
+        assert_eq!(pipeline::gap_at(&cards, 30.0), 1);
+        assert_eq!(pipeline::gap_at(&cards, 500.0), 3);
+
+        let mut doc = doc_with(vec![array(2, 3.0), Step::new_ring(), Step::new_stack()]);
+        let mut view = AssemblyView {
+            expanded: Some(0),
+            ..Default::default()
+        };
+        let before = doc.assembly.design.steps.clone();
+        apply(Change::MoveStep(0, 2), &mut doc, "m", &mut view);
+        let labels: Vec<_> = doc.assembly.design.steps.iter().map(Step::label).collect();
+        assert_eq!(labels, ["環状", "積層・らせん", "配列"]);
+        assert_eq!(view.expanded, Some(2), "the open card moves with its step");
+        assert!(doc.assembly.undo());
+        assert_eq!(doc.assembly.design.steps, before, "one undo step");
+        assert_eq!(pipeline::index_after_move(1, 0, 2), 0);
+        assert_eq!(pipeline::index_after_move(1, 2, 0), 2);
+        assert_eq!(pipeline::index_after_move(0, 2, 1), 0);
+    }
+
+    #[test]
+    fn duplicate_delete_and_toggle_are_undoable() {
+        let mut doc = doc_with(vec![array(2, 3.0), Step::new_ring()]);
+        let mut view = AssemblyView::default();
+        let start = doc.assembly.design.steps.clone();
+
+        apply(Change::DuplicateStep(0), &mut doc, "m", &mut view);
+        assert_eq!(doc.assembly.design.steps.len(), 3);
+        assert_eq!(doc.assembly.design.steps[1], start[0]);
+        assert_eq!(view.expanded, Some(1));
+        assert_eq!(doc.assembly.design.running_counts(), vec![2, 4, 24]);
+
+        apply(Change::ToggleStep(1), &mut doc, "m", &mut view);
+        assert!(!doc.assembly.design.steps[1].enabled());
+        assert_eq!(doc.assembly.design.running_counts(), vec![2, 2, 12]);
+
+        apply(Change::RemoveStep(1), &mut doc, "m", &mut view);
+        assert_eq!(doc.assembly.design.steps, start);
+        assert_eq!(view.expanded, None, "the open card was deleted");
+
+        // Undo walks back through delete, toggle and duplicate one at a time.
+        assert!(doc.assembly.undo());
+        assert!(!doc.assembly.design.steps[1].enabled());
+        assert!(doc.assembly.undo());
+        assert!(doc.assembly.design.steps[1].enabled());
+        assert_eq!(doc.assembly.design.steps.len(), 3);
+        assert!(doc.assembly.undo());
+        assert_eq!(doc.assembly.design.steps, start);
+    }
+
     /// Duplicating, bypassing and deleting step nodes are undoable one at a time, and keep
     /// a design of steps one.
+    /// The node editor starts hidden; shown, an open card and its step's node go together.
     #[test]
-    fn duplicate_bypass_and_delete_are_undoable() {
+    fn an_open_card_and_its_step_node_go_together() {
+        use crate::assembly::graph::chain_step_id;
+        let doc = doc_with(vec![array(2, 3.0), Step::new_ring()]);
+        let mut view = AssemblyView::default();
+        assert!(!view.nodes.open, "the steps look as they always did");
+        view.expanded = Some(1);
+        sync_steps(&doc.assembly, &mut view);
+        assert!(view.nodes.rt.selected.is_empty());
+
+        view.nodes.open = true;
+        sync_steps(&doc.assembly, &mut view);
+        assert_eq!(view.nodes.rt.selected, [chain_step_id(1)].into());
+        view.nodes.rt.selected = [chain_step_id(0)].into();
+        sync_steps(&doc.assembly, &mut view);
+        assert_eq!(view.expanded, Some(0));
+        view.expanded = None;
+        sync_steps(&doc.assembly, &mut view);
+        assert!(view.nodes.rt.selected.is_empty());
+    }
+
+    #[test]
+    fn step_nodes_duplicate_bypass_and_delete_undoably() {
         use crate::assembly::graph::chain_step_id;
         let mut doc = doc_with(vec![array(2, 3.0), Step::new_ring()]);
         let mut view = AssemblyView::default();
@@ -2653,6 +2857,41 @@ mod tests {
         assert!(!state.design.steps[1].enabled());
         assert!(state.undo());
         assert_eq!(state.design.steps, start);
+    }
+
+    /// Both tabs, with every card open in turn (the crystal's included), draw headless.
+    #[test]
+    fn both_tabs_draw_headless_with_each_card_open() {
+        let ctx = egui::Context::default();
+        let mut doc = doc_with(vec![
+            array(7, 3.2),
+            Step::new_ring(),
+            Step::new_stack(),
+            Step::new_lattice(),
+            Step::new_transform(),
+        ]);
+        doc.assembly.edit(|d| d.components.push(water()));
+        let mut view = AssemblyView::default();
+        let mut commands = Vec::new();
+        for (tab, expanded) in [
+            (PanelTab::Build, None),
+            (PanelTab::Build, Some(0)),
+            (PanelTab::Build, Some(1)),
+            (PanelTab::Build, Some(2)),
+            (PanelTab::Build, Some(3)),
+            (PanelTab::Build, Some(4)),
+            (PanelTab::Display, None),
+        ] {
+            view.tab = tab;
+            view.expanded = expanded;
+            view.renaming = Some((1, true));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                panel(ui, Some(&mut doc), &mut view, &mut commands);
+            });
+            output.textures_delta.clear();
+            assert_eq!(view.expanded, expanded);
+        }
+        assert!(commands.is_empty());
     }
 
     /// Both tabs, with every node selected in turn (the crystal's included), draw headless.

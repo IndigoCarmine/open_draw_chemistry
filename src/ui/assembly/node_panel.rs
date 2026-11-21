@@ -27,6 +27,12 @@ pub(super) fn section(
     out: &mut Vec<Command>,
 ) {
     style::caption(ui, look, t!("assembly.panel.section_node"));
+    // Only an assembly steps cannot hold comes here: say why there are no step cards.
+    ui.label(
+        RichText::new(t!("assembly.panel.graph_note"))
+            .size(11.5)
+            .color(look.muted),
+    );
     if !view.open && ui.button(t!("assembly.panel.open_editor")).clicked() {
         view.open = true;
     }
@@ -768,7 +774,7 @@ fn def_editor(ui: &mut Ui, state: &mut AssemblyState, def_id: &DefId, look: &Loo
 }
 
 /// The design's custom nodes, with how each stands to the library, and the library's.
-fn custom_nodes(
+pub(super) fn custom_nodes(
     ui: &mut Ui,
     state: &mut AssemblyState,
     view: &mut NodeEditorView,

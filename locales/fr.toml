@@ -881,6 +881,16 @@ pair = "{a} – {b}{image} : {distance} Å"
 pick_tip = "Cliquez pour sélectionner la première molécule"
 more = { one = "{n} paire de plus", many = "{n} de paires de plus", other = "{n} paires de plus" }
 
+[assembly.pipeline]
+drag_tip = "Glisser pour réordonner"
+collapse = "Masquer les paramètres"
+expand = "Afficher les paramètres"
+remove = "Supprimer cette étape"
+lattice_single = "Il ne peut y avoir qu'une seule étape Cristal"
+duplicate = "Dupliquer cette étape (insérée juste après)"
+enabled_tip = "Utilisée (cliquer pour l'ignorer)"
+disabled_tip = "Ignorée (cliquer pour l'utiliser)"
+
 [assembly.pipeline.summary]
 rotated_centroid = "tourné autour du centroïde"
 rotated_origin = "tourné autour de l’origine"
@@ -891,6 +901,22 @@ slip = "décalage {value}Å"
 operations = { one = "{n} opération", many = "{n} d'opérations", other = "{n} opérations" }
 no_spacing = "espacement 0Å"
 orientation_kept = "orientation conservée"
+
+[assembly.pipeline.count]
+skipped = { one = "Ignorée → {n} molécule", many = "Ignorée → {n} de molécules", other = "Ignorée → {n} molécules" }
+cannot_build = { one = "Construction impossible → {n} molécule", many = "Construction impossible → {n} de molécules", other = "Construction impossible → {n} molécules" }
+result = { one = "→ {n} molécule", many = "→ {n} de molécules", other = "→ {n} molécules" }
+times = { one = "× {factor} → {n} molécule", many = "× {factor} → {n} de molécules", other = "× {factor} → {n} molécules" }
+
+[assembly.pipeline.add]
+title = "+ Ajouter une étape"
+array_tip = "Aligne tout ce qui précède avec un espacement et une rotation fixes"
+ring_tip = "Dispose les molécules sur un cercle autour de l'axe z (une rosette)"
+stack_tip = "Empile tout ce qui précède selon z. La torsion et le décalage en font une hélice"
+lattice_tip = "Prend tout ce qui précède comme unité asymétrique, construit la maille élémentaire à partir des paramètres de maille et des opérations de symétrie du groupe d'espace, puis la répète"
+transform_tip = "Déplace et tourne une fois tout ce qui est construit jusqu’ici, sans le copier"
+bend_tip = "Courbe tout ce qui est construit jusqu’ici sur un arc de cercle. Chaque molécule se déplace d’un bloc rigide"
+lattice_exists = "Il y a déjà une étape Cristal"
 
 [assembly.symop.system]
 triclinic = "Triclinique (sans contrainte)"

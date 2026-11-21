@@ -881,6 +881,16 @@ pair = "{a} – {b}{image}: {distance} Å"
 pick_tip = "Klicken, um das erste Molekül auszuwählen"
 more = { one = "{n} weiteres Paar", other = "{n} weitere Paare" }
 
+[assembly.pipeline]
+drag_tip = "Ziehen zum Umsortieren"
+collapse = "Parameter ausblenden"
+expand = "Parameter einblenden"
+remove = "Diesen Schritt löschen"
+lattice_single = "Es kann nur einen Kristallschritt geben"
+duplicate = "Diesen Schritt duplizieren (direkt danach eingefügt)"
+enabled_tip = "Aktiv (klicken zum Überspringen)"
+disabled_tip = "Übersprungen (klicken zum Aktivieren)"
+
 [assembly.pipeline.summary]
 rotated_centroid = "um Schwerpunkt gedreht"
 rotated_origin = "um Ursprung gedreht"
@@ -891,6 +901,22 @@ slip = "Versatz {value}Å"
 operations = { one = "{n} Operation", other = "{n} Operationen" }
 no_spacing = "Abstand 0Å"
 orientation_kept = "Ausrichtung beibehalten"
+
+[assembly.pipeline.count]
+skipped = { one = "Übersprungen → {n} Molekül", other = "Übersprungen → {n} Moleküle" }
+cannot_build = { one = "Nicht baubar → {n} Molekül", other = "Nicht baubar → {n} Moleküle" }
+result = { one = "→ {n} Molekül", other = "→ {n} Moleküle" }
+times = { one = "× {factor} → {n} Molekül", other = "× {factor} → {n} Moleküle" }
+
+[assembly.pipeline.add]
+title = "+ Schritt hinzufügen"
+array_tip = "Reiht alles Bisherige mit festem Abstand und fester Drehung auf"
+ring_tip = "Ordnet die Moleküle auf einem Kreis um die z-Achse an (Rosette)"
+stack_tip = "Stapelt alles Bisherige entlang z. Drehung und Versatz ergeben eine Helix"
+lattice_tip = "Nimmt alles Bisherige als asymmetrische Einheit, baut die Elementarzelle aus den Gitterkonstanten und den Symmetrieoperationen der Raumgruppe und wiederholt sie"
+transform_tip = "Verschiebt und dreht alles bisher Gebaute einmal, ohne es zu kopieren"
+bend_tip = "Biegt alles bisher Gebaute auf einen Kreisbogen. Jedes Molekül bewegt sich als starres Ganzes"
+lattice_exists = "Es gibt bereits einen Kristallschritt"
 
 [assembly.symop.system]
 triclinic = "Triklin (keine Bedingungen)"

@@ -239,6 +239,23 @@ impl Graph {
 
     /// The steps of a chain [`Graph::chain`] could have made, with its monomer: `None` when
     /// the graph is not such a chain.
+    /// The nodes of a chain ([`Graph::as_chain`]) in order: the monomer, the steps, the output.
+    pub fn chain_order(&self) -> Option<Vec<NodeId>> {
+        self.as_chain()?;
+        let output = self.output()?;
+        let mut order = vec![output];
+        let mut at = self.link_into(output, InKey::Set(0))?.from;
+        loop {
+            order.push(at);
+            match self.link_into(at, InKey::Set(0)) {
+                Some(link) => at = link.from,
+                None => break,
+            }
+        }
+        order.reverse();
+        Some(order)
+    }
+
     pub fn as_chain(&self) -> Option<(u64, Vec<Step>)> {
         let output = self.output()?;
         let mut steps = Vec::new();

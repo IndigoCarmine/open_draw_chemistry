@@ -885,6 +885,16 @@ pair = "{a} – {b}{image}: {distance} Å"
 pick_tip = "Clique para selecionar a primeira molécula"
 more = { one = "Mais {n} par", other = "Mais {n} pares" }
 
+[assembly.pipeline]
+drag_tip = "Arraste para reordenar"
+collapse = "Ocultar parâmetros"
+expand = "Mostrar parâmetros"
+remove = "Excluir esta etapa"
+lattice_single = "Só pode haver uma etapa de cristal"
+duplicate = "Duplicar esta etapa (inserida logo depois dela)"
+enabled_tip = "Em uso (clique para pular)"
+disabled_tip = "Ignorada (clique para usar)"
+
 [assembly.pipeline.summary]
 rotated_centroid = "girado em torno do centroide"
 rotated_origin = "girado em torno da origem"
@@ -895,6 +905,22 @@ slip = "desl. {value}Å"
 operations = { one = "{n} operação", other = "{n} operações" }
 no_spacing = "espaçamento 0Å"
 orientation_kept = "orientação mantida"
+
+[assembly.pipeline.count]
+skipped = { one = "Ignorada → {n} molécula", other = "Ignorada → {n} moléculas" }
+cannot_build = { one = "Não é possível construir → {n} molécula", other = "Não é possível construir → {n} moléculas" }
+result = { one = "→ {n} molécula", other = "→ {n} moléculas" }
+times = { one = "× {factor} → {n} molécula", other = "× {factor} → {n} moléculas" }
+
+[assembly.pipeline.add]
+title = "+ Adicionar etapa"
+array_tip = "Alinha tudo o que veio antes com espaçamento e rotação fixos"
+ring_tip = "Dispõe as moléculas em uma circunferência em torno do eixo z (uma roseta)"
+stack_tip = "Empilha tudo o que veio antes ao longo de z. Giro e deslocamento a transformam em uma hélice"
+lattice_tip = "Toma tudo o que veio antes como unidade assimétrica, constrói a célula unitária a partir das constantes da célula e das operações de simetria do grupo espacial, e a repete"
+transform_tip = "Move e gira uma vez tudo o que foi construído até agora, sem copiar"
+bend_tip = "Curva tudo o que foi construído até agora sobre um arco de círculo. Cada molécula se move como um todo rígido"
+lattice_exists = "Já existe uma etapa de cristal"
 
 [assembly.symop.system]
 triclinic = "Triclínico (sem restrições)"

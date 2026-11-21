@@ -19,10 +19,14 @@ pub(super) struct Look {
     pub muted: Color32,
     /// The brand orange.
     pub accent: Color32,
+    /// The running counts between the steps: between muted and the accent.
+    pub node: Color32,
     pub card: Color32,
     pub border: Color32,
-    /// Dashed outlines.
+    /// The pipeline's line and hollow nodes.
     pub line: Color32,
+    /// The panel's own background.
+    pub back: Color32,
     /// An icon button under the pointer.
     pub hover: Color32,
     /// A delete button under the pointer.
@@ -54,9 +58,19 @@ impl Look {
             ink: v.widgets.noninteractive.fg_stroke.color,
             muted,
             accent,
+            node: mix(
+                muted,
+                if dark_mode {
+                    accent
+                } else {
+                    theme::ORANGE_TEXT
+                },
+                0.4,
+            ),
             card,
             border,
             line,
+            back: v.panel_fill,
             hover: v.widgets.hovered.weak_bg_fill,
             danger,
         }
@@ -69,6 +83,12 @@ impl Look {
     pub fn mono(&self, text: impl Into<String>, color: Color32) -> RichText {
         RichText::new(text).monospace().size(11.5).color(color)
     }
+}
+
+/// `a` moved towards `b` by `t` (0 to 1), in gamma space.
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let m = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
 /// A small grey caption over a group ("単量体").

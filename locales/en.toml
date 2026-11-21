@@ -1224,6 +1224,18 @@ pick_tip = "Click to select the first molecule"
 # Below the clash list: how many pairs were not listed.
 more = { one = "{n} more pair", other = "{n} more pairs" }
 
+[assembly.pipeline]
+drag_tip = "Drag to reorder"
+collapse = "Hide parameters"
+expand = "Show parameters"
+remove = "Delete this step"
+lattice_single = "There can be only one crystal step"
+duplicate = "Duplicate this step (inserted right after it)"
+# Tooltip of a step's on/off switch while the step is used.
+enabled_tip = "In use (click to skip)"
+# Tooltip of a step's on/off switch while the step is skipped.
+disabled_tip = "Skipped (click to use)"
+
 [assembly.pipeline.summary]
 # Very short: the move/rotate step turns the structure about its centroid.
 rotated_centroid = "rotated about centroid"
@@ -1243,6 +1255,27 @@ operations = { one = "{n} operation", other = "{n} operations" }
 no_spacing = "spacing 0Å"
 # Very short: the arc step keeps each molecule's orientation.
 orientation_kept = "orientation kept"
+
+[assembly.pipeline.count]
+# After a step card: the step is skipped; {n} molecules so far.
+skipped = { one = "Skipped → {n} molecule", other = "Skipped → {n} molecules" }
+# After a step card: the crystal step's settings are invalid.
+cannot_build = { one = "Can't build → {n} molecule", other = "Can't build → {n} molecules" }
+# After a step card: molecules so far (when there is no whole factor).
+result = { one = "→ {n} molecule", other = "→ {n} molecules" }
+# After a step card: {factor} is how many times the step multiplies the molecules.
+times = { one = "× {factor} → {n} molecule", other = "× {factor} → {n} molecules" }
+
+[assembly.pipeline.add]
+# Heading of the box with one button per kind of step.
+title = "+ Add step"
+array_tip = "Lines up everything so far at a fixed spacing and rotation"
+ring_tip = "Arranges the molecules on a circle around the z axis (a rosette)"
+stack_tip = "Stacks everything so far along z. Twist and slip make it a helix"
+lattice_tip = "Takes everything so far as the asymmetric unit, builds the unit cell from the cell constants and the space group's symmetry operations, and repeats it"
+transform_tip = "Moves and turns everything built so far once, without copying it"
+bend_tip = "Bends everything built so far onto a circular arc. Each molecule moves as a rigid whole"
+lattice_exists = "There already is a crystal step"
 
 [assembly.symop.system]
 # Crystal systems of the space-group presets, with the cell each needs.
@@ -1749,8 +1782,9 @@ group = "Group"
 group_tip = "Gather the selected nodes into a custom node (Ctrl+G). Its inputs and outputs are the wires that cross the selection"
 add = "Add"
 add_tip = "Add a node (right-click or Shift+A on the canvas)"
-open = "Node editor"
-open_tip = "Show the graph of nodes that builds the assembly"
+show = "Edit as nodes…"
+show_tip = "Show the steps as a graph of nodes under the viewer. There the assembly can also branch, merge several monomers, choose molecules by expressions and gather nodes into nodes of your own"
+hide = "Hide the node editor"
 empty_hint = "Add a monomer, then right-click to add nodes"
 value_tip = "Drag left or right to change it (Ctrl: finer). Click to type a number or an expression without names, such as 360/7; Enter sets it, Esc puts it back"
 vector_tip = "Drag left or right to change x, up or down to change y (with Shift: z; Ctrl: finer). Click to type three numbers separated by commas (x, y, z), or one for all three, each maybe an expression without names such as 360/7; Enter sets them, Esc puts them back"
@@ -1771,6 +1805,7 @@ geometry = "Curves and points"
 [assembly.panel]
 section_node = "Node"
 open_editor = "Open the node editor"
+graph_note = "This assembly branches or merges, which a list of steps cannot show: it is edited in the node editor. Click a node there to see its settings here."
 no_node = "Click a node in the node editor to see its settings here"
 nodes_selected = { one = "{n} node selected", other = "{n} nodes selected" }
 label_hint = "Name"

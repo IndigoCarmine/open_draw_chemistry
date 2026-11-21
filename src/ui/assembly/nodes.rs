@@ -59,7 +59,7 @@ pub struct NodeEditorView {
 impl Default for NodeEditorView {
     fn default() -> Self {
         Self {
-            open: true,
+            open: false,
             height: 260.0,
             maximized: false,
             rt: Runtime::default(),
@@ -284,7 +284,7 @@ pub(super) fn subtitle(kind: &NodeKind, design: &Design) -> Option<String> {
             .component_index(*component)
             .and_then(|i| design.components.get(i))
             .map_or_else(|| "?".to_owned(), |c| c.name.clone()),
-        NodeKind::Op(step) => super::labels::summary(step),
+        NodeKind::Op(step) => super::pipeline::summary(step),
         NodeKind::Select(s) => s.expr.clone(),
         NodeKind::Repeat(r) => {
             let parts: Vec<String> = r
@@ -2014,9 +2014,17 @@ mod tests {
         s.settle();
         assert_eq!(s.revision(), revision);
         assert!(std::sync::Arc::ptr_eq(&built, &s.built().unwrap()));
-        assert!(!s.design.is_linear());
+        assert!(s.design.is_linear(), "a moved chain is still steps");
+        let moved = |s: &AssemblyState| {
+            s.design
+                .effective_graph()
+                .node(chain_step_id(0))
+                .unwrap()
+                .pos
+        };
+        let at = moved(&s);
         assert!(s.undo());
-        assert!(s.design.is_linear(), "undo brings the steps back");
+        assert_ne!(moved(&s), at, "undo puts the node back");
     }
 
     #[test]

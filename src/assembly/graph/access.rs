@@ -42,7 +42,15 @@ pub fn graph_at<'a>(
 /// steps becomes a graph, which keeps them.
 pub fn edit_layout_at(design: &mut Design, scope: &[NodeId], f: impl FnOnce(&mut Graph)) {
     if scope.is_empty() {
-        f(design.graph_mut());
+        match design.graph.as_mut() {
+            Some(graph) => f(graph),
+            // A chain stays steps: only where its nodes are drawn is kept.
+            None => {
+                let mut graph = design.effective_graph().into_owned();
+                f(&mut graph);
+                design.chain_layout = graph.nodes.iter().map(|n| n.pos).collect();
+            }
+        }
     } else {
         edit_at(design, scope, |g, _, _| f(g));
     }
@@ -68,28 +76,17 @@ pub fn edit_at<R>(
             }
             Some(r)
         }
-        None if design.graph.is_some() => {
-            let mut graph = design.graph.take().expect("checked");
-            let r = f(&mut graph, &mut design.defs, None);
-            design.graph = Some(graph);
-            Some(r)
-        }
+        // A graph that is (again) a chain of a monomer and steps is kept as steps, so the
+        // panel shows it as such and the file opens in older releases.
         None => {
-            let mut graph = design.effective_graph().into_owned();
+            let mut graph = design
+                .graph
+                .take()
+                .unwrap_or_else(|| design.effective_graph().into_owned());
             let r = f(&mut graph, &mut design.defs, None);
-            // Where the nodes of a chain are drawn is not kept: it is laid out again.
-            let linear = graph
-                .as_chain()
-                .and_then(|(monomer, steps)| Some((design.component_index(monomer)?, steps)));
-            match linear {
-                Some((base, steps)) => {
-                    design.base = base;
-                    design.steps = steps;
-                }
-                None => {
-                    design.steps.clear();
-                    design.graph = Some(graph);
-                }
+            if !design.take_chain(&graph) {
+                design.steps.clear();
+                design.graph = Some(graph);
             }
             Some(r)
         }
@@ -120,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn a_parameter_change_keeps_the_steps_a_move_makes_a_graph() {
+    fn a_chain_stays_steps_until_it_branches() {
         let mut d = design();
         edit_at(&mut d, &[], |g, _, _| {
             let n = g.node_mut(chain_step_id(0)).unwrap();
@@ -135,11 +132,33 @@ mod tests {
         .unwrap();
         assert!(d.is_linear());
         assert_eq!(d.steps, vec![Step::new_stack()]);
+        // Moving a node keeps the steps, and where the node is drawn.
         edit_layout_at(&mut d, &[], |g| {
             g.node_mut(chain_step_id(0)).unwrap().pos[1] += 40.0;
         });
+        assert!(d.is_linear());
+        assert_eq!(
+            d.effective_graph().node(chain_step_id(0)).unwrap().pos[1],
+            40.0
+        );
+        // A loose node makes a graph; taking it away makes the steps again, drawn where they
+        // were.
+        let loose = edit_at(&mut d, &[], |g, _, _| {
+            g.add(
+                crate::assembly::graph::NodeKind::Value { value: 1.0 },
+                [0.0; 2],
+            )
+        })
+        .unwrap();
         assert!(!d.is_linear());
         assert!(d.steps.is_empty());
+        edit_at(&mut d, &[], |g, _, _| ops::remove(g, &[loose].into())).unwrap();
+        assert!(d.is_linear());
+        assert_eq!(d.steps, vec![Step::new_stack()]);
+        assert_eq!(
+            d.effective_graph().node(chain_step_id(0)).unwrap().pos[1],
+            40.0
+        );
     }
 
     #[test]

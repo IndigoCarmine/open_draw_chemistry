@@ -960,6 +960,16 @@ pair = "{a} – {b}{image}：{distance} Å"
 pick_tip = "クリックで前の分子を選択"
 more = "ほか {n} 組"
 
+[assembly.pipeline]
+drag_tip = "ドラッグで並べ替え"
+collapse = "パラメータを閉じる"
+expand = "パラメータを開く"
+remove = "この手順を削除"
+lattice_single = "結晶の手順は 1 つだけです"
+duplicate = "この手順を複製（すぐ後ろに入れます）"
+enabled_tip = "使っています（クリックで飛ばす）"
+disabled_tip = "飛ばしています（クリックで使う）"
+
 [assembly.pipeline.summary]
 rotated_centroid = "重心まわりに回転"
 rotated_origin = "原点まわりに回転"
@@ -970,6 +980,22 @@ slip = "ずれ {value}Å"
 operations = "{n} 操作"
 no_spacing = "間隔 0Å"
 orientation_kept = "向き維持"
+
+[assembly.pipeline.count]
+skipped = "飛ばす → {n} 分子"
+cannot_build = "作れません → {n} 分子"
+result = "→ {n} 分子"
+times = "× {factor} → {n} 分子"
+
+[assembly.pipeline.add]
+title = "＋ 手順を追加"
+array_tip = "それまでの全体を一定の間隔と回転で並べます"
+ring_tip = "分子を z 軸まわりの円に並べます（ロゼット）"
+stack_tip = "それまでの全体を z 方向に積み重ねます。ねじれとずれでらせんになります"
+lattice_tip = "それまでの全体を非対称単位として、格子定数と空間群の対称操作で単位胞を作り、繰り返します"
+transform_tip = "それまでの全体を複製せずに 1 回だけ動かし、回します"
+bend_tip = "それまでの全体を円弧に沿って曲げて並べ直します。各分子は剛体のまま動きます"
+lattice_exists = "結晶の手順はすでにあります"
 
 [assembly.symop.system]
 triclinic = "三斜晶（制約なし）"
@@ -1366,8 +1392,9 @@ group = "グループ化"
 group_tip = "選択したノードを自作ノードにまとめます（Ctrl+G）。選択範囲をまたぐワイヤがその入出力になります"
 add = "追加"
 add_tip = "ノードを追加（キャンバスで右クリックか Shift+A）"
-open = "ノードエディタ"
-open_tip = "集合体を組み立てるノードのグラフを表示します"
+show = "ノードで編集…"
+show_tip = "手順をノードのグラフとしてビューアの下に表示します。そこでは分岐や複数の単量体の合流、式による分子の選択、ノードをまとめた自作ノードもできます"
+hide = "ノードエディタを隠す"
 empty_hint = "単量体を追加してから、右クリックでノードを追加します"
 value_tip = "左右にドラッグで値を変えます（Ctrl で細かく）。クリックすると数値か名前を含まない式（360/7 など）を入力でき、Enter で確定、Esc で元に戻します"
 vector_tip = "左右にドラッグで x、上下で y を変えます（Shift を押しながら上下で z、Ctrl で細かく）。クリックすると 3 つの数値をカンマ区切り（x, y, z）か 3 つ共通の 1 つで入力でき（名前を含まない式も可）、Enter で確定、Esc で元に戻します"
@@ -1388,6 +1415,7 @@ geometry = "カーブと点"
 [assembly.panel]
 section_node = "ノード"
 open_editor = "ノードエディタを開く"
+graph_note = "この集合体には手順の一覧では表せない分岐や合流があるため、ノードエディタで編集します。そこでノードをクリックすると、ここに設定が表示されます。"
 no_node = "ノードエディタでノードをクリックすると、ここに設定が表示されます"
 nodes_selected = { other = "{n} 個のノードを選択中" }
 label_hint = "名前"

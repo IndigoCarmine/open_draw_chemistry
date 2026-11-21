@@ -747,6 +747,10 @@ pub struct Design {
     /// The custom nodes the graph uses (see [`graph::defs`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub defs: Vec<NodeDef>,
+    /// Where the node editor draws the chain of a design still made of steps: the monomer,
+    /// each step and the output, in order. Not saved; ignored when the steps no longer match.
+    #[serde(skip)]
+    pub chain_layout: Vec<[f32; 2]>,
     #[serde(skip)]
     #[doc(hidden)]
     pub eval_cache: EvalCache,
@@ -795,8 +799,36 @@ impl Design {
     pub fn effective_graph(&self) -> Cow<'_, Graph> {
         match &self.graph {
             Some(g) => Cow::Borrowed(g),
-            None => Cow::Owned(Graph::chain(self.component_id(self.base), &self.steps)),
+            None => {
+                let mut chain = Graph::chain(self.component_id(self.base), &self.steps);
+                if self.chain_layout.len() == chain.nodes.len() {
+                    for (node, pos) in chain.nodes.iter_mut().zip(&self.chain_layout) {
+                        node.pos = *pos;
+                    }
+                }
+                Cow::Owned(chain)
+            }
         }
+    }
+
+    /// Make the design steps again when `graph` (its top level, as edited) is a chain of a
+    /// monomer and steps, keeping where its nodes are drawn. Returns whether it did.
+    pub fn take_chain(&mut self, graph: &Graph) -> bool {
+        let Some((monomer, steps)) = graph.as_chain() else {
+            return false;
+        };
+        let Some(base) = self.component_index(monomer) else {
+            return false;
+        };
+        let order = graph.chain_order().unwrap_or_default();
+        self.chain_layout = order
+            .iter()
+            .filter_map(|id| graph.node(*id).map(|n| n.pos))
+            .collect();
+        self.base = base;
+        self.steps = steps;
+        self.graph = None;
+        true
     }
 
     /// Whether the assembly is still a monomer and a list of steps (no graph of its own).

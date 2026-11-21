@@ -884,6 +884,16 @@ pair = "{a} – {b}{image}: {distance} Å"
 pick_tip = "Fai clic per selezionare la prima molecola"
 more = { one = "Ancora {n} coppia", other = "Altre {n} coppie" }
 
+[assembly.pipeline]
+drag_tip = "Trascina per riordinare"
+collapse = "Nascondi parametri"
+expand = "Mostra parametri"
+remove = "Elimina questo passaggio"
+lattice_single = "Può esserci un solo passaggio cristallo"
+duplicate = "Duplica questo passaggio (inserito subito dopo)"
+enabled_tip = "In uso (clic per saltarlo)"
+disabled_tip = "Saltato (clic per usarlo)"
+
 [assembly.pipeline.summary]
 rotated_centroid = "ruotato attorno al baricentro"
 rotated_origin = "ruotato attorno all’origine"
@@ -894,6 +904,22 @@ slip = "scorr. {value}Å"
 operations = { one = "{n} operazione", other = "{n} operazioni" }
 no_spacing = "spaziatura 0Å"
 orientation_kept = "orientamento mantenuto"
+
+[assembly.pipeline.count]
+skipped = { one = "Saltato → {n} molecola", other = "Saltato → {n} molecole" }
+cannot_build = { one = "Impossibile costruire → {n} molecola", other = "Impossibile costruire → {n} molecole" }
+result = { one = "→ {n} molecola", other = "→ {n} molecole" }
+times = { one = "× {factor} → {n} molecola", other = "× {factor} → {n} molecole" }
+
+[assembly.pipeline.add]
+title = "+ Aggiungi passaggio"
+array_tip = "Allinea tutto ciò che precede con spaziatura e rotazione fisse"
+ring_tip = "Dispone le molecole su una circonferenza attorno all’asse z (una rosetta)"
+stack_tip = "Impila tutto ciò che precede lungo z. Torsione e scorrimento ne fanno un’elica"
+lattice_tip = "Prende tutto ciò che precede come unità asimmetrica, costruisce la cella elementare dalle costanti di cella e dalle operazioni di simmetria del gruppo spaziale, e la ripete"
+transform_tip = "Sposta e ruota una volta tutto ciò che è stato costruito finora, senza copiarlo"
+bend_tip = "Piega tutto ciò che è stato costruito finora su un arco di cerchio. Ogni molecola si muove come un blocco rigido"
+lattice_exists = "C’è già un passaggio cristallo"
 
 [assembly.symop.system]
 triclinic = "Triclino (nessun vincolo)"

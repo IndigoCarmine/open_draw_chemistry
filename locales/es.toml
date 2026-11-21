@@ -884,6 +884,16 @@ pair = "{a} – {b}{image}: {distance} Å"
 pick_tip = "Haz clic para seleccionar la primera molécula"
 more = { one = "{n} par más", other = "{n} pares más" }
 
+[assembly.pipeline]
+drag_tip = "Arrastra para reordenar"
+collapse = "Ocultar parámetros"
+expand = "Mostrar parámetros"
+remove = "Eliminar este paso"
+lattice_single = "Solo puede haber un paso de cristal"
+duplicate = "Duplicar este paso (se inserta justo después)"
+enabled_tip = "En uso (clic para omitir)"
+disabled_tip = "Omitido (clic para usar)"
+
 [assembly.pipeline.summary]
 rotated_centroid = "girado sobre el centroide"
 rotated_origin = "girado sobre el origen"
@@ -894,6 +904,22 @@ slip = "despl. {value}Å"
 operations = { one = "{n} operación", other = "{n} operaciones" }
 no_spacing = "espaciado 0Å"
 orientation_kept = "orientación mantenida"
+
+[assembly.pipeline.count]
+skipped = { one = "Omitido → {n} molécula", other = "Omitido → {n} moléculas" }
+cannot_build = { one = "No se puede construir → {n} molécula", other = "No se puede construir → {n} moléculas" }
+result = { one = "→ {n} molécula", other = "→ {n} moléculas" }
+times = { one = "× {factor} → {n} molécula", other = "× {factor} → {n} moléculas" }
+
+[assembly.pipeline.add]
+title = "+ Añadir paso"
+array_tip = "Alinea todo lo anterior con un espaciado y una rotación fijos"
+ring_tip = "Dispone las moléculas en una circunferencia alrededor del eje z (una roseta)"
+stack_tip = "Apila todo lo anterior a lo largo de z. El giro y el desplazamiento lo convierten en una hélice"
+lattice_tip = "Toma todo lo anterior como unidad asimétrica, construye la celda unidad a partir de las constantes de celda y las operaciones de simetría del grupo espacial, y la repite"
+transform_tip = "Mueve y gira una vez todo lo construido hasta ahora, sin copiarlo"
+bend_tip = "Curva todo lo construido hasta ahora sobre un arco de circunferencia. Cada molécula se mueve como un todo rígido"
+lattice_exists = "Ya hay un paso de cristal"
 
 [assembly.symop.system]
 triclinic = "Triclínico (sin restricciones)"

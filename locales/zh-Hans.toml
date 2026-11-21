@@ -902,6 +902,18 @@ pick_tip = "点击以选中第一个分子"
 more = "还有 {n} 对"
 
 # Very short texts in a step card's one-line summary.
+[assembly.pipeline]
+drag_tip = "拖动以调整顺序"
+collapse = "隐藏参数"
+expand = "显示参数"
+remove = "删除此步骤"
+lattice_single = "只能有一个晶体步骤"
+duplicate = "复制此步骤（插入到其后）"
+enabled_tip = "使用中（点击跳过）"
+disabled_tip = "已跳过（点击使用）"
+
+# Very short texts in a step card's one-line summary.
+
 [assembly.pipeline.summary]
 rotated_centroid = "绕重心旋转"
 rotated_origin = "绕原点旋转"
@@ -912,6 +924,22 @@ slip = "错位 {value}Å"
 operations = "{n} 个操作"
 no_spacing = "间距 0Å"
 orientation_kept = "朝向保持"
+
+[assembly.pipeline.count]
+skipped = "已跳过 → {n} 个分子"
+cannot_build = "无法构建 → {n} 个分子"
+result = "→ {n} 个分子"
+times = "× {factor} → {n} 个分子"
+
+[assembly.pipeline.add]
+title = "+ 添加步骤"
+array_tip = "将目前为止的全部内容按固定间距和旋转排列"
+ring_tip = "将分子沿绕 z 轴的圆排列（玫瑰花结）"
+stack_tip = "将目前为止的全部内容沿 z 方向堆叠。加上扭转和错位即成螺旋"
+lattice_tip = "将目前为止的全部内容作为不对称单元，根据晶胞参数和空间群的对称操作构建晶胞并重复"
+transform_tip = "将此前构建的整体移动并旋转一次，不复制"
+bend_tip = "将此前构建的整体沿圆弧弯曲重新排列。各分子作为刚体移动"
+lattice_exists = "已有晶体步骤"
 
 [assembly.symop.system]
 triclinic = "三斜晶系（无约束）"
