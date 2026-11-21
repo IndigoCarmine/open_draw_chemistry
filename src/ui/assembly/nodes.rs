@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::assembly::AssemblyState;
 use crate::assembly::graph::defs::{self, NodeDef, Port};
+use crate::assembly::graph::expr::eval_const;
 use crate::assembly::graph::kinds::{Category, GroupRef, NodeKind, PortValue, SocketType};
 use crate::assembly::graph::{
     Evaluation, Graph, InKey, Node, NodeId, OutKey, Shown, access, library, ops,
@@ -177,6 +178,8 @@ pub(super) enum GraphEdit {
     Bypass(BTreeSet<NodeId>),
     Group(BTreeSet<NodeId>),
     Ungroup(NodeId),
+    /// Set the value of an unwired input (or of a number or triple node, `InKey::Value`).
+    SetValue(NodeId, InKey, PortValue),
     /// Add custom node `def` (with the custom nodes it uses) from the library to the design,
     /// and a node using it at `pos`.
     AddFromLibrary(Box<library::Entry>, [f32; 2]),
@@ -206,8 +209,10 @@ struct Row {
     side: Side,
     ty: SocketType,
     label: String,
-    /// The value of an unwired input.
+    /// The value of an unwired input, as text and as typed into its box.
     value: Option<String>,
+    edit: Option<PortValue>,
+    unit: &'static str,
     /// Canvas y of the row's middle, from the node's top.
     y: f32,
     /// A socket offered for a new port or merge input.
@@ -227,6 +232,8 @@ struct Laid {
     rect: Rect,
     title: String,
     subtitle: Option<String>,
+    /// The value of a number or triple node, typed in on its subtitle's line.
+    own: Option<PortValue>,
     rows: Vec<Row>,
     category: Category,
     bypass: bool,
@@ -288,6 +295,7 @@ pub(super) fn subtitle(kind: &NodeKind, design: &Design) -> Option<String> {
         NodeKind::SetAttr(a) => format!("{} = {}", a.name, a.expr),
         NodeKind::Expression(e) => e.expr.clone(),
         NodeKind::Value { value } => number_text(*value),
+        NodeKind::Vector { value } => value_text(PortValue::Vec3(*value), ""),
         _ => return None,
     })
     .filter(|s| !s.is_empty())
@@ -312,6 +320,8 @@ fn lay(
             ty: o.ty,
             label: o.label,
             value: None,
+            edit: None,
+            unit: "",
             y,
             new: false,
         });
@@ -323,6 +333,8 @@ fn lay(
             ty: SocketType::Set,
             label: String::new(),
             value: None,
+            edit: None,
+            unit: "",
             y,
             new: true,
         });
@@ -336,7 +348,7 @@ fn lay(
             InKey::Field(_) => " Å",
             _ => "",
         };
-        let value = (!wired && i.ty != SocketType::Set)
+        let edit = (!wired && i.ty != SocketType::Set)
             .then(|| {
                 node.kind
                     .inline(i.key)
@@ -351,13 +363,14 @@ fn lay(
                         _ => None,
                     })
             })
-            .flatten()
-            .map(|v| value_text(v, unit));
+            .flatten();
         rows.push(Row {
             side: Side::In(i.key),
             ty: i.ty,
             label: i.label,
-            value,
+            value: edit.map(|v| value_text(v, unit)),
+            edit,
+            unit,
             y,
             new: false,
         });
@@ -374,6 +387,8 @@ fn lay(
             ty: SocketType::Set,
             label: String::new(),
             value: None,
+            edit: None,
+            unit: "",
             y,
             new: true,
         });
@@ -393,6 +408,11 @@ fn lay(
         } else {
             node.label.clone()
         },
+        own: match node.kind {
+            NodeKind::Value { value } => Some(PortValue::Number(value)),
+            NodeKind::Vector { value } => Some(PortValue::Vec3(value)),
+            _ => None,
+        },
         subtitle,
         rows,
         category: node.kind.category(),
@@ -401,6 +421,122 @@ fn lay(
         error: issue(&ev.errors),
         warning: issue(&ev.warnings),
     }
+}
+
+/// The zoom from which unwired values are drawn as boxes to type into.
+const BOX_ZOOM: f32 = 0.6;
+
+/// Where the box of an unwired input's value goes, the node being at `r` on the screen.
+fn value_box(r: Rect, row: &Row, z: f32) -> Rect {
+    let width = if row.ty == SocketType::Vec3 {
+        96.0
+    } else {
+        58.0
+    };
+    let unit = if row.unit.is_empty() { 0.0 } else { 12.0 };
+    let right = r.right() - (6.0 + unit) * z;
+    Rect::from_min_max(
+        pos2(right - width * z, r.top() + (row.y - ROW_H / 2.0 + 1.5) * z),
+        pos2(right, r.top() + (row.y + ROW_H / 2.0 - 1.5) * z),
+    )
+}
+
+/// Where the box of a number or triple node's value goes (the subtitle's line).
+fn own_box(r: Rect, z: f32) -> Rect {
+    let top = r.top() + (HEADER_H + 1.5) * z;
+    Rect::from_min_max(
+        pos2(r.left() + 7.0 * z, top),
+        pos2(r.right() - 7.0 * z, top + (ROW_H - 3.0) * z),
+    )
+}
+
+/// A value typed in: a number or, for a triple, three numbers separated by commas (or one
+/// for all three). Each may be an expression without names, such as `360/7`.
+fn parse_value(text: &str, ty: SocketType) -> Option<PortValue> {
+    let number = |s: &str| eval_const(s).filter(|x| x.is_finite());
+    if ty != SocketType::Vec3 {
+        return number(text).map(PortValue::Number);
+    }
+    // Commas inside brackets (`max(1, 2)`) belong to a function.
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0i32, 0);
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&text[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    match parts.as_slice() {
+        [one] => number(one).map(|x| PortValue::Vec3([x; 3])),
+        [x, y, z] => Some(PortValue::Vec3([number(x)?, number(y)?, number(z)?])),
+        _ => None,
+    }
+}
+
+/// The box of a value on the canvas. What is typed is kept while the box has the focus and
+/// set when it lets go of it (Enter, a click elsewhere); Esc puts the value back. Returns
+/// the new value, and whether the box took the focus this frame.
+fn value_field(
+    ui: &mut Ui,
+    id: egui::Id,
+    rect: Rect,
+    value: PortValue,
+    z: f32,
+) -> (Option<PortValue>, bool) {
+    let ty = match value {
+        PortValue::Number(_) => SocketType::Number,
+        PortValue::Vec3(_) => SocketType::Vec3,
+    };
+    let shown = value_text(value, "");
+    let mut text = if ui.memory(|m| m.has_focus(id)) {
+        ui.data_mut(|d| d.get_temp::<String>(id))
+            .unwrap_or_else(|| shown.clone())
+    } else {
+        shown
+    };
+    let color = if parse_value(&text, ty).is_some() {
+        dark::TEXT
+    } else {
+        ERROR
+    };
+    let tip = match ty {
+        SocketType::Vec3 => t!("assembly.editor.vector_tip"),
+        _ => t!("assembly.editor.value_tip"),
+    };
+    let response = ui
+        .put(
+            rect,
+            egui::TextEdit::singleline(&mut text)
+                .id(id)
+                .font(FontId::monospace(10.5 * z))
+                .text_color(color)
+                .background_color(dark::CANVAS_BACK)
+                .align(Align2::RIGHT_CENTER)
+                .margin(egui::Margin::symmetric((3.0 * z).round() as i8, 0))
+                .min_size(rect.size())
+                .desired_width(rect.width()),
+        )
+        .on_hover_text(tip);
+    let mut new = None;
+    if response.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, text));
+    } else if response.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(id));
+        let cancel = ui.input(|i| i.key_pressed(Key::Escape));
+        if !cancel
+            && let Some(v) = parse_value(&text, ty)
+            && v != value
+        {
+            new = Some(v);
+        }
+    }
+    (new, response.gained_focus())
 }
 
 fn header_color(c: Category) -> Color32 {
@@ -663,7 +799,7 @@ fn canvas(
     let mut node_hits = Vec::new();
     for l in &order {
         let selected = view.rt.selected.contains(&l.id);
-        draw_node(&painter, l, v, selected);
+        draw_node(&painter, l, v, selected, v.zoom >= BOX_ZOOM);
         let r = ui.interact(
             v.rect(l.rect),
             ui.scope_id().with(("node", l.id)),
@@ -684,6 +820,36 @@ fn canvas(
                 Sense::drag(),
             );
             socket_hits.push((l.id, row.side, row.ty, r));
+        }
+    }
+
+    // Unwired values: boxes to type into.
+    if v.zoom >= BOX_ZOOM {
+        let mut boxes = ui.new_child(egui::UiBuilder::new().max_rect(area));
+        boxes.set_clip_rect(area.intersect(ui.clip_rect()));
+        let base = ui.scope_id().with(("value", &scope));
+        for l in &order {
+            let r = v.rect(l.rect);
+            let mut fields: Vec<(InKey, Rect, PortValue)> = Vec::new();
+            if let Some(own) = l.own {
+                fields.push((InKey::Value, own_box(r, v.zoom), own));
+            }
+            for row in &l.rows {
+                if let (Some(value), Side::In(key)) = (row.edit, row.side) {
+                    fields.push((key, value_box(r, row, v.zoom), value));
+                }
+            }
+            for (key, rect, value) in fields {
+                let id = base.with((l.id, format!("{key:?}")));
+                let (new, focused) = value_field(&mut boxes, id, rect, value, v.zoom);
+                if let Some(new) = new {
+                    edits.push(GraphEdit::SetValue(l.id, key, new));
+                }
+                if focused && !view.rt.selected.contains(&l.id) {
+                    view.rt.selected = [l.id].into();
+                    view.rt.menu = None;
+                }
+            }
         }
     }
 
@@ -1051,7 +1217,7 @@ fn wire(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, zoom: f32) {
     painter.add(shape);
 }
 
-fn draw_node(painter: &egui::Painter, l: &Laid, v: View, selected: bool) {
+fn draw_node(painter: &egui::Painter, l: &Laid, v: View, selected: bool, boxes: bool) {
     let r = v.rect(l.rect);
     let z = v.zoom;
     let radius = CornerRadius::same((6.0 * z).round().clamp(1.0, 10.0) as u8);
@@ -1115,7 +1281,7 @@ fn draw_node(painter: &egui::Painter, l: &Laid, v: View, selected: bool) {
             c,
         );
     }
-    if let Some(sub) = &l.subtitle {
+    if let Some(sub) = l.subtitle.as_ref().filter(|_| !(boxes && l.own.is_some())) {
         painter.with_clip_rect(r.shrink(3.0)).text(
             pos2(r.left() + 7.0 * z, head.bottom() + ROW_H * z / 2.0 + 1.0),
             Align2::LEFT_CENTER,
@@ -1152,15 +1318,28 @@ fn draw_node(painter: &egui::Painter, l: &Laid, v: View, selected: bool) {
                 );
             }
         }
-        let clip = painter.with_clip_rect(r.shrink(2.0));
-        clip.text(
+        let typed = boxes && row.edit.is_some();
+        let mut clip = r.shrink(2.0);
+        if typed {
+            clip.max.x = value_box(r, row, z).left() - 3.0 * z;
+        }
+        painter.with_clip_rect(clip).text(
             pos2(lx, y),
             align,
             &row.label,
             FontId::proportional(11.0 * z),
             dark::TEXT.gamma_multiply(0.9),
         );
-        if let Some(value) = &row.value {
+        let clip = painter.with_clip_rect(r.shrink(2.0));
+        if typed {
+            clip.text(
+                pos2(r.right() - 5.0 * z, y),
+                Align2::RIGHT_CENTER,
+                row.unit.trim(),
+                FontId::proportional(10.5 * z),
+                dark::MUTED,
+            );
+        } else if let Some(value) = &row.value {
             clip.text(
                 pos2(r.right() - 8.0 * z, y),
                 Align2::RIGHT_CENTER,
@@ -1463,6 +1642,18 @@ fn apply_to(
                 ops::group(graph, defs, owner, &ids, &name).map_err(|e| e.to_string())?;
             Ok(Some([node].into()))
         }
+        GraphEdit::SetValue(id, key, value) => {
+            if let Some(n) = graph.node_mut(id) {
+                match (&mut n.kind, key) {
+                    (NodeKind::Value { value: v }, InKey::Value) => *v = value.number(),
+                    (NodeKind::Vector { value: v }, InKey::Value) => *v = value.vec3(),
+                    (kind, key) => {
+                        kind.set_inline(key, value);
+                    }
+                }
+            }
+            Ok(None)
+        }
         GraphEdit::Ungroup(node) => {
             let snapshot = defs.clone();
             match ops::ungroup(graph, &snapshot, node) {
@@ -1723,6 +1914,45 @@ mod tests {
         let (_, owner) = access::graph_at(&s.design, &rt.scope).unwrap();
         assert_eq!(owner.unwrap().outputs.len(), outputs + 1);
         assert!(s.design.evaluation().errors.is_empty());
+    }
+
+    #[test]
+    fn typed_values_read_numbers_expressions_and_triples() {
+        let n = |s| parse_value(s, SocketType::Number);
+        let v = |s| parse_value(s, SocketType::Vec3);
+        assert_eq!(n(" 360/7 "), Some(PortValue::Number(360.0 / 7.0)));
+        assert_eq!(n("1/0"), None);
+        assert_eq!(n("i"), None);
+        assert_eq!(
+            v("1, 2*2, max(1, 3)"),
+            Some(PortValue::Vec3([1.0, 4.0, 3.0]))
+        );
+        assert_eq!(v("2"), Some(PortValue::Vec3([2.0; 3])));
+        assert_eq!(v("1, 2"), None);
+    }
+
+    /// A value typed on the canvas sets the input, keeps a chain a chain, and is one undo step.
+    #[test]
+    fn setting_a_typed_value_is_one_undo_step() {
+        use crate::assembly::graph::StepField;
+        let mut s = state();
+        let mut rt = Runtime::default();
+        let count = |s: &AssemblyState| s.design.molecule_count();
+        let before = count(&s);
+        apply(
+            &mut s,
+            &mut rt,
+            GraphEdit::SetValue(
+                chain_step_id(0),
+                InKey::Field(StepField::RingCount),
+                PortValue::Number(8.0),
+            ),
+        );
+        assert_eq!(rt.report, None);
+        assert!(s.design.is_linear());
+        assert_eq!(count(&s) * 6, before * 8, "the ring of 6 is a ring of 8");
+        assert!(s.undo());
+        assert_eq!(count(&s), before);
     }
 
     /// The editor draws headless, inside a custom node too, with the add menu open.
