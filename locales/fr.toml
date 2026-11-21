@@ -445,7 +445,6 @@ equilibrium_arrow = "Flèche d'équilibre"
 bracket = "Crochet"
 insert_reaction_table = "Insérer un tableau de réaction"
 bond = "Liaison"
-planned = "{name} (bientôt disponible)"
 
 [palette.heading]
 draw = "Dessin"

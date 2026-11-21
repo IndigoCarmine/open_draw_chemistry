@@ -37,7 +37,11 @@ pub fn status_bar(ui: &mut egui::Ui, doc: Option<&Document>, message: &str) {
 
         if let Some(doc) = doc {
             let editor = &doc.editor;
-            pair(ui, t!("status_bar.tool"), tool_name(editor));
+            pair(
+                ui,
+                t!("status_bar.tool"),
+                tool_name(editor, doc.canvas_tools.active()),
+            );
             pair(ui, t!("status_bar.element"), &editor.current_element);
             ui.label(small(t!(
                 "status_bar.counts",

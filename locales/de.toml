@@ -445,7 +445,6 @@ equilibrium_arrow = "Gleichgewichtspfeil"
 bracket = "Klammer"
 insert_reaction_table = "Reaktionstabelle einfügen"
 bond = "Bindung"
-planned = "{name} (demnächst)"
 
 [palette.heading]
 draw = "Zeichnen"

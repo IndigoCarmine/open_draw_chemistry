@@ -720,6 +720,8 @@ impl OpenDrawApp {
             Command::OpenConformers => self.conformer_window.open = true,
             Command::InsertReactionTable => {
                 if let Some(doc) = self.active_doc_mut() {
+                    // They leave the Select tool on, to edit what they put in with a double-click.
+                    doc.canvas_tools.select(&mut doc.editor, None);
                     let message = crate::ui::palette::insert_reaction_table(&mut doc.editor);
                     self.status = message.to_owned();
                 }
@@ -736,6 +738,8 @@ impl OpenDrawApp {
             }
             Command::Bracket(usage) => {
                 if let Some(doc) = self.active_doc_mut() {
+                    // They leave the Select tool on, to edit what they put in with a double-click.
+                    doc.canvas_tools.select(&mut doc.editor, None);
                     self.status = crate::ui::palette::bracket_selection(&mut doc.editor, usage);
                 }
             }
@@ -1620,6 +1624,7 @@ impl eframe::App for OpenDrawApp {
                         ui::palette::palette(
                             ui,
                             &mut doc.editor,
+                            &mut doc.canvas_tools,
                             &mut self.custom_element,
                             &mut commands,
                         )

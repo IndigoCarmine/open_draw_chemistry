@@ -463,7 +463,6 @@ equilibrium_arrow = "平衡箭頭"
 bracket = "括號"
 insert_reaction_table = "插入反應表"
 bond = "鍵"
-planned = "{name}（即將推出）"
 
 [palette.heading]
 draw = "繪製"

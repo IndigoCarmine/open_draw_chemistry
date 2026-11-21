@@ -12,6 +12,7 @@ use crate::three_d::{Export3d, ForceField};
 
 pub mod appearance;
 pub mod assembly;
+pub mod canvas_tools;
 pub mod conformer;
 pub mod format_bar;
 pub mod fragments;

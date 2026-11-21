@@ -5,6 +5,7 @@ use chembuider_rs::molecule::{ArrowKind, BracketShape, BracketUsage, PageObject}
 use chembuider_rs::{BondOrder, BondStereo, ChemStructEditor, Tool};
 use egui::vec2;
 
+use super::canvas_tools::{CanvasTool, CanvasTools, RingKind};
 use super::icons::{self, Frame, Icon};
 use super::{Command, periodic_table};
 
@@ -44,9 +45,9 @@ enum Action {
     /// Opens the bracket chooser ([`bracket_menu`]): what the brackets put around the selected
     /// atoms mean, and their shape.
     BracketMenu,
-    /// Shown for the design's later tools (rings, chains, brackets) but not available yet: the
-    /// editor widget has no mouse tool for them.
-    Planned,
+    /// A ring or chain tool, which the app works around the editor widget
+    /// ([`super::canvas_tools`]).
+    Canvas(CanvasTool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,10 +114,19 @@ const BUTTONS: [(Icon, Action); 17] = [
     (Icon::Wedge, Action::Bond(BondKind::Wedge)),
     (Icon::Hash, Action::Bond(BondKind::Hash)),
     (Icon::Wavy, Action::Bond(BondKind::Wavy)),
-    (Icon::Chain, Action::Planned),
-    (Icon::Benzene, Action::Planned),
-    (Icon::Cyclopentane, Action::Planned),
-    (Icon::Cyclohexane, Action::Planned),
+    (Icon::Chain, Action::Canvas(CanvasTool::Chain)),
+    (
+        Icon::Benzene,
+        Action::Canvas(CanvasTool::Ring(RingKind::Benzene)),
+    ),
+    (
+        Icon::Cyclopentane,
+        Action::Canvas(CanvasTool::Ring(RingKind::Cyclopentane)),
+    ),
+    (
+        Icon::Cyclohexane,
+        Action::Canvas(CanvasTool::Ring(RingKind::Cyclohexane)),
+    ),
     (Icon::Text, Action::Tool(PaletteTool::Text)),
     (
         Icon::Arrow,
@@ -157,9 +167,12 @@ fn button_name(icon: Icon) -> &'static str {
     }
 }
 
-/// Whether `action` is the editor's current state.
-fn is_selected(editor: &ChemStructEditor, action: Action) -> bool {
+/// Whether `action` is the editor's current state, `canvas` the ring or chain tool that is on.
+fn is_selected(editor: &ChemStructEditor, canvas: Option<CanvasTool>, action: Action) -> bool {
     match action {
+        Action::Canvas(tool) => canvas == Some(tool),
+        // Under a ring or chain tool the editor is on its Select tool.
+        _ if canvas.is_some() => false,
         Action::Tool(tool) => editor.tool == tool.tool(),
         Action::Bond(kind) => {
             let (order, stereo) = kind.order_and_stereo();
@@ -167,7 +180,7 @@ fn is_selected(editor: &ChemStructEditor, action: Action) -> bool {
                 && editor.current_bond_order == order
                 && editor.current_bond_stereo == stereo
         }
-        Action::Command(_) | Action::BracketMenu | Action::Planned => false,
+        Action::Command(_) | Action::BracketMenu => false,
     }
 }
 
@@ -180,14 +193,30 @@ fn apply(editor: &mut ChemStructEditor, action: Action) {
             editor.current_bond_stereo = stereo;
             editor.set_tool(Tool::Bond);
         }
-        Action::Command(_) | Action::BracketMenu | Action::Planned => {}
+        Action::Command(_) | Action::BracketMenu | Action::Canvas(_) => {}
+    }
+}
+
+/// A palette button pressed: [`apply`], with the ring and chain tools turned on or off.
+fn press(editor: &mut ChemStructEditor, canvas: &mut CanvasTools, action: Action) {
+    match action {
+        Action::Canvas(tool) => canvas.select(editor, Some(tool)),
+        Action::Tool(_) | Action::Bond(_) => {
+            canvas.select(editor, None);
+            apply(editor, action);
+        }
+        Action::Command(_) | Action::BracketMenu => apply(editor, action),
     }
 }
 
 /// Name of the editor's current tool, for the status bar: the palette button that
 /// is selected, or the bare tool when the bond style is one the palette does not offer.
-pub fn tool_name(editor: &ChemStructEditor) -> &'static str {
-    if let Some((icon, _)) = BUTTONS.iter().find(|(_, a)| is_selected(editor, *a)) {
+/// `canvas` is the ring or chain tool that is on.
+pub fn tool_name(editor: &ChemStructEditor, canvas: Option<CanvasTool>) -> &'static str {
+    if let Some((icon, _)) = BUTTONS
+        .iter()
+        .find(|(_, a)| is_selected(editor, canvas, *a))
+    {
         return button_name(*icon);
     }
     match editor.tool {
@@ -358,6 +387,7 @@ pub fn bracket_shape(editor: &mut ChemStructEditor, shape: BracketShape) -> Stri
 pub fn palette(
     ui: &mut egui::Ui,
     editor: &mut ChemStructEditor,
+    canvas: &mut CanvasTools,
     custom_element: &mut String,
     out: &mut Vec<Command>,
 ) {
@@ -377,22 +407,15 @@ pub fn palette(
                 .spacing([gap, gap])
                 .show(ui, |ui| {
                     for (i, (icon, action)) in BUTTONS.into_iter().enumerate() {
-                        let planned = action == Action::Planned;
-                        let name = button_name(icon);
-                        let tip = if planned {
-                            t!("palette.tool.planned", name = name)
-                        } else {
-                            name.to_owned()
-                        };
-                        let selected = is_selected(editor, action);
+                        let selected = is_selected(editor, canvas.active(), action);
                         let response = icons::icon_button_with_glyph(
                             ui,
                             icon,
                             (cell, (BASE_ICON_SIZE * PALETTE_SCALE).round()),
                             Frame::Tile,
                             selected,
-                            !planned,
-                            &tip,
+                            true,
+                            button_name(icon),
                         );
                         if action == Action::BracketMenu {
                             egui::Popup::menu(&response)
@@ -407,7 +430,7 @@ pub fn palette(
                         } else if response.clicked() {
                             match action {
                                 Action::Command(command) => out.push(command.command()),
-                                _ => apply(editor, action),
+                                _ => press(editor, canvas, action),
                             }
                         }
                         if i % 2 == 1 {
@@ -429,6 +452,7 @@ pub fn palette(
                             .add_sized(cell, egui::Button::selectable(selected, text))
                             .clicked()
                         {
+                            canvas.select(editor, None);
                             set_element(editor, symbol);
                         }
                         if i % 2 == 1 {
@@ -536,7 +560,13 @@ mod tests {
                     .exact_size(PALETTE_WIDTH)
                     .frame(egui::Frame::new().inner_margin(PALETTE_MARGIN))
                     .show(ui, |ui| {
-                        palette(ui, &mut editor, &mut String::new(), &mut Vec::new())
+                        palette(
+                            ui,
+                            &mut editor,
+                            &mut CanvasTools::default(),
+                            &mut String::new(),
+                            &mut Vec::new(),
+                        )
                     })
                     .response
                     .rect;
@@ -634,14 +664,14 @@ mod tests {
         apply(&mut editor, Action::Bond(BondKind::Triple));
         assert_eq!(editor.current_bond_order, BondOrder::Triple);
         assert_eq!(editor.current_bond_stereo, BondStereo::None);
-        assert!(is_selected(&editor, Action::Bond(BondKind::Triple)));
-        assert!(!is_selected(&editor, Action::Bond(BondKind::Single)));
-        assert_eq!(tool_name(&editor), "Triple bond");
+        assert!(is_selected(&editor, None, Action::Bond(BondKind::Triple)));
+        assert!(!is_selected(&editor, None, Action::Bond(BondKind::Single)));
+        assert_eq!(tool_name(&editor, None), "Triple bond");
 
         apply(&mut editor, Action::Bond(BondKind::Hash));
         assert_eq!(editor.current_bond_order, BondOrder::Single);
         assert_eq!(editor.current_bond_stereo, BondStereo::WedgeDown);
-        assert_eq!(tool_name(&editor), "Hashed wedge");
+        assert_eq!(tool_name(&editor, None), "Hashed wedge");
     }
 
     #[test]
@@ -649,21 +679,54 @@ mod tests {
         let mut editor = ChemStructEditor::default();
         select_arrow_tool(&mut editor, ArrowKind::Equilibrium);
         assert_eq!(editor.tool, Tool::Arrow(ArrowKind::Equilibrium));
-        assert_eq!(tool_name(&editor), "Equilibrium arrow");
+        assert_eq!(tool_name(&editor, None), "Equilibrium arrow");
         select_arrow_tool(&mut editor, ArrowKind::Reaction);
-        assert_eq!(tool_name(&editor), "Reaction arrow");
+        assert_eq!(tool_name(&editor, None), "Reaction arrow");
         select_text_tool(&mut editor);
         assert_eq!(editor.tool, Tool::Text);
-        assert_eq!(tool_name(&editor), "Text");
-        let planned: Vec<&str> = BUTTONS
-            .iter()
-            .filter(|(_, a)| *a == Action::Planned)
-            .map(|(icon, _)| button_name(*icon))
-            .collect();
-        assert_eq!(
-            planned,
-            ["Chain", "Benzene ring", "Cyclopentane", "Cyclohexane"]
-        );
+        assert_eq!(tool_name(&editor, None), "Text");
+    }
+
+    /// The chain and ring buttons (once shown as coming soon) turn on their tools, with the
+    /// editor on its Select tool under them, and the Select button turns them off again.
+    #[test]
+    fn the_chain_and_ring_buttons_turn_on_their_tools() {
+        for (icon, tool, name) in [
+            (Icon::Chain, CanvasTool::Chain, "Chain"),
+            (
+                Icon::Benzene,
+                CanvasTool::Ring(RingKind::Benzene),
+                "Benzene ring",
+            ),
+            (
+                Icon::Cyclopentane,
+                CanvasTool::Ring(RingKind::Cyclopentane),
+                "Cyclopentane",
+            ),
+            (
+                Icon::Cyclohexane,
+                CanvasTool::Ring(RingKind::Cyclohexane),
+                "Cyclohexane",
+            ),
+        ] {
+            let (_, action) = BUTTONS.iter().find(|(i, _)| *i == icon).unwrap();
+            let mut editor = ChemStructEditor::default();
+            let mut canvas = CanvasTools::default();
+            press(&mut editor, &mut canvas, *action);
+            assert_eq!(canvas.active(), Some(tool));
+            assert_eq!(editor.tool, Tool::Select);
+            let selected: Vec<Icon> = BUTTONS
+                .iter()
+                .filter(|(_, a)| is_selected(&editor, canvas.active(), *a))
+                .map(|(i, _)| *i)
+                .collect();
+            assert_eq!(selected, [icon], "only {name} shows selected");
+            assert_eq!(tool_name(&editor, canvas.active()), name);
+
+            press(&mut editor, &mut canvas, Action::Tool(PaletteTool::Select));
+            assert_eq!(canvas.active(), None);
+            assert_eq!(tool_name(&editor, canvas.active()), "Select");
+        }
     }
 
     /// CH2–CH2 with a bond leaving each side (polyethylene's repeat unit), its middle selected.
@@ -762,14 +825,15 @@ mod tests {
     #[test]
     fn exactly_one_button_is_selected_for_each_available_action() {
         for (icon, action) in BUTTONS {
-            if matches!(action, Action::Planned | Action::BracketMenu) {
+            if matches!(action, Action::BracketMenu) {
                 continue;
             }
             let mut editor = ChemStructEditor::default();
-            apply(&mut editor, action);
+            let mut canvas = CanvasTools::default();
+            press(&mut editor, &mut canvas, action);
             let selected = BUTTONS
                 .iter()
-                .filter(|(_, a)| is_selected(&editor, *a))
+                .filter(|(_, a)| is_selected(&editor, canvas.active(), *a))
                 .count();
             assert_eq!(selected, 1, "{}", button_name(icon));
         }
