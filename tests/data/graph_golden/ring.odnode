@@ -1,0 +1,126 @@
+{
+  "format": "odasm-node",
+  "version": 1,
+  "def": {
+    "id": "00112233445566778899aabbccddeeff",
+    "name": "rosette stack",
+    "description": "ring then stack",
+    "revision": 2,
+    "inputs": [
+      {
+        "key": 0,
+        "name": "Molecules",
+        "ty": "Set"
+      },
+      {
+        "key": 2,
+        "name": "Radius",
+        "ty": "Number",
+        "default": {
+          "Number": 5.0
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "key": 1,
+        "name": "Molecules",
+        "ty": "Set"
+      }
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": 0,
+          "kind": {
+            "Op": {
+              "Ring": {
+                "enabled": true,
+                "n": 6,
+                "radius": 5.0,
+                "tilt_deg": 0.0
+              }
+            }
+          },
+          "pos": [
+            220.0,
+            0.0
+          ]
+        },
+        {
+          "id": 1,
+          "kind": {
+            "Op": {
+              "Stack": {
+                "enabled": true,
+                "n": 10,
+                "rise": 3.5,
+                "twist_deg": 0.0,
+                "slip": 0.0
+              }
+            }
+          },
+          "pos": [
+            440.0,
+            0.0
+          ]
+        },
+        {
+          "id": 2,
+          "kind": "GroupInput",
+          "pos": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "id": 3,
+          "kind": "GroupOutput",
+          "pos": [
+            660.0,
+            0.0
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": 2,
+          "out": {
+            "Port": 0
+          },
+          "to": 0,
+          "input": {
+            "Set": 0
+          }
+        },
+        {
+          "from": 0,
+          "out": "Set",
+          "to": 1,
+          "input": {
+            "Set": 0
+          }
+        },
+        {
+          "from": 1,
+          "out": "Set",
+          "to": 3,
+          "input": {
+            "Port": 1
+          }
+        },
+        {
+          "from": 2,
+          "out": {
+            "Port": 2
+          },
+          "to": 0,
+          "input": {
+            "Field": "RingRadius"
+          }
+        }
+      ],
+      "next_id": 4
+    }
+  }
+}
