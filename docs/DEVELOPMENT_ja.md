@@ -31,6 +31,21 @@ cargo run -- path/to/file.cdx     # ファイルの指定は省略可
 Windows 版は Visual C++ ランタイム（`msvcp140.dll`・`vcruntime140.dll`・`vcruntime140_1.dll`）を
 アプリと同じフォルダに同梱しているので、`vc_redist.x64.exe` を入れていないまっさらな Windows でも動きます。
 
+### ワークスペース
+
+リポジトリは Cargo ワークスペースです。ルートがアプリで、ほかでも使えるよう切り出したクレートが
+`crates/` にあります。
+
+- [`crates/flow_nodes_rs`](../crates/flow_nodes_rs)（BSD-3-Clause）：分子集合体ビルダーのノードエディタを
+  支えるノードグラフの基盤です。グラフ、カスタムノード、編集操作、評価器、式、ノードライブラリ、egui の
+  エディタ部品を含みます。化学のことは何も知らず、集合体のノード種別（`src/assembly/graph/`）はその使い道の
+  ひとつです。例は単体で動きます：`cargo run -p flow_nodes_rs --example calc`、
+  `cargo run -p flow_nodes_rs --example editor --features egui`。
+
+CI と同じ確認はワークスペース全体に対して行います：`cargo test --workspace --all-targets`、
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`。
+`tests/graph_golden.rs` はノードグラフの保存形式を固定しています。変更なしで通る必要があります。
+
 ## ラベルの略号（フラグメント）
 
 `Ph` や `THF` のようなラベルは、同じ名前のフラグメントがあれば `x` で構造に展開されます。

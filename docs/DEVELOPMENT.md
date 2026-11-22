@@ -31,6 +31,22 @@ cargo run -- path/to/file.cdx     # the file is optional
 The Windows packages carry the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`,
 `vcruntime140_1.dll`) app-local, so they run on a clean Windows without `vc_redist.x64.exe`.
 
+### The workspace
+
+The repository is a Cargo workspace: the app at the root, and crates split out of it under
+`crates/` to be reused elsewhere:
+
+- [`crates/flow_nodes_rs`](../crates/flow_nodes_rs) (BSD-3-Clause): the node graphs behind the
+  assembly builder's node editor — graphs, custom nodes, the edits, the evaluator, expressions,
+  the node library and the egui editor widget. It knows nothing of chemistry; the assembly's
+  kinds of node (`src/assembly/graph/`) are one use of it. Its examples run on their own:
+  `cargo run -p flow_nodes_rs --example calc` and
+  `cargo run -p flow_nodes_rs --example editor --features egui`.
+
+Check the whole workspace as CI does: `cargo test --workspace --all-targets` and
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+`tests/graph_golden.rs` pins how node graphs are saved; it must pass unchanged.
+
 ## Label abbreviations (fragments)
 
 A label such as `Ph` or `THF` expands into a structure (`x`) when a fragment of that name
