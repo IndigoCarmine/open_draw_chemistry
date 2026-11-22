@@ -22,6 +22,8 @@
 //! [`eval::Problem`], …) with English `Display`s, and every label comes from the application.
 
 pub mod def;
+#[cfg(feature = "egui")]
+pub mod editor;
 pub mod eval;
 pub mod expr;
 pub mod field;

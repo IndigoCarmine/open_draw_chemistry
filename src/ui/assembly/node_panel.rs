@@ -37,8 +37,8 @@ pub(super) fn section(
     if !view.open && ui.button(t!("assembly.panel.open_editor")).clicked() {
         view.open = true;
     }
-    let scope = view.rt.scope.clone();
-    let selected: Vec<NodeId> = view.rt.selected.iter().copied().collect();
+    let scope = view.rt.editor.scope.clone();
+    let selected: Vec<NodeId> = view.rt.editor.selected.iter().copied().collect();
     style::card(ui, look, false, 0.0, |ui| match selected.as_slice() {
         [] => {
             ui.label(look.muted(t!("assembly.panel.no_node")));
@@ -47,7 +47,7 @@ pub(super) fn section(
         many => {
             ui.label(RichText::new(tn!("assembly.panel.nodes_selected", many.len())).size(12.5));
             ui.horizontal_wrapped(|ui| {
-                let chosen = view.rt.selected.clone();
+                let chosen = view.rt.editor.selected.clone();
                 if ui.button(t!("assembly.editor.group")).clicked() {
                     nodes::apply(state, &mut view.rt, GraphEdit::Group(chosen.clone()));
                 }
@@ -154,8 +154,8 @@ fn node_card(
                 .on_hover_text(t!("assembly.panel.enter_tip"))
                 .clicked()
             {
-                view.rt.scope.push(id);
-                view.rt.selected.clear();
+                view.rt.editor.scope.push(id);
+                view.rt.editor.selected.clear();
             }
             if ui.button(t!("assembly.panel.ungroup")).clicked() {
                 edit = Some(GraphEdit::Ungroup(id));
@@ -1032,7 +1032,7 @@ fn run(
     let rt = &mut view.rt;
     match action {
         Action::AddNode(id) => {
-            let pos = free_pos(state, &rt.scope);
+            let pos = free_pos(state, &rt.editor.scope);
             let kind = NodeKind::Group(crate::assembly::graph::kinds::GroupRef {
                 def: id,
                 inputs: Default::default(),
@@ -1094,7 +1094,7 @@ fn run(
         }
         Action::RemoveDef(id) => state.edit(|d| d.defs.retain(|def| def.id != id)),
         Action::Adopt(entry) => {
-            let pos = free_pos(state, &rt.scope);
+            let pos = free_pos(state, &rt.editor.scope);
             nodes::apply(state, rt, GraphEdit::AddFromLibrary(entry, pos));
         }
         Action::Delete(id) => {

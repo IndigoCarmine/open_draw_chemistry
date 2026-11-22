@@ -1062,7 +1062,7 @@ fn sync_steps(state: &AssemblyState, view: &mut AssemblyView) {
     if selected.is_some() && selected != node {
         view.expanded = selected;
     } else if view.expanded != card {
-        view.nodes.rt.selected = view
+        view.nodes.rt.editor.selected = view
             .expanded
             .map(crate::assembly::graph::chain_step_id)
             .into_iter()
@@ -1476,7 +1476,7 @@ fn apply(change: Change, doc: &mut Document, model_name: &str, view: &mut Assemb
                 .fold(0.0f32, f32::max)
                 + 160.0;
             view.nodes.open = true;
-            view.nodes.rt.scope.clear();
+            view.nodes.rt.editor.scope.clear();
             nodes::apply(
                 state,
                 &mut view.nodes.rt,
@@ -2804,17 +2804,17 @@ mod tests {
         assert!(!view.nodes.open, "the steps look as they always did");
         view.expanded = Some(1);
         sync_steps(&doc.assembly, &mut view);
-        assert!(view.nodes.rt.selected.is_empty());
+        assert!(view.nodes.rt.editor.selected.is_empty());
 
         view.nodes.open = true;
         sync_steps(&doc.assembly, &mut view);
-        assert_eq!(view.nodes.rt.selected, [chain_step_id(1)].into());
-        view.nodes.rt.selected = [chain_step_id(0)].into();
+        assert_eq!(view.nodes.rt.editor.selected, [chain_step_id(1)].into());
+        view.nodes.rt.editor.selected = [chain_step_id(0)].into();
         sync_steps(&doc.assembly, &mut view);
         assert_eq!(view.expanded, Some(0));
         view.expanded = None;
         sync_steps(&doc.assembly, &mut view);
-        assert!(view.nodes.rt.selected.is_empty());
+        assert!(view.nodes.rt.editor.selected.is_empty());
     }
 
     #[test]
@@ -2848,7 +2848,7 @@ mod tests {
             nodes::GraphEdit::Duplicate([chain_step_id(0)].into()),
         );
         assert!(!state.design.is_linear(), "a loose copy makes it a graph");
-        assert_eq!(view.nodes.rt.selected.len(), 1);
+        assert_eq!(view.nodes.rt.editor.selected.len(), 1);
 
         // Undo walks back through duplicate, delete and bypass one at a time.
         assert!(state.undo());
@@ -2907,7 +2907,7 @@ mod tests {
         ]);
         doc.assembly.edit(|d| d.components.push(water()));
         let mut view = AssemblyView::default();
-        view.nodes.rt.library = Some(Vec::new());
+        view.nodes.rt.library = std::cell::OnceCell::from(Vec::new());
         let mut commands = Vec::new();
         let ids: Vec<_> = doc
             .assembly
@@ -2923,7 +2923,7 @@ mod tests {
         rounds.push((PanelTab::Display, None));
         for (tab, selected) in rounds {
             view.tab = tab;
-            view.nodes.rt.selected = selected.into_iter().collect();
+            view.nodes.rt.editor.selected = selected.into_iter().collect();
             view.renaming = Some((1, true));
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 panel(ui, Some(&mut doc), &mut view, &mut commands);
