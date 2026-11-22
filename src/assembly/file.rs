@@ -533,7 +533,7 @@ mod graph_tests {
         ops::connect(g, &defs, None, merge, OutKey::Set, out, InKey::Set(0)).unwrap();
         d.defs = defs;
         // A custom node no longer used is not saved.
-        d.defs.push(graph::NodeDef::new("unused"));
+        d.defs.push(graph::defs::new_def("unused"));
 
         let text = to_string(&d);
         assert!(text.contains("\"version\": 5"));

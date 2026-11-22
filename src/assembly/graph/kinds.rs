@@ -1,11 +1,11 @@
 //! What each kind of node is: its settings, the sockets it takes and gives, and the values of
 //! its inputs that no link feeds.
 
-use std::collections::BTreeMap;
-
+use flow_nodes_rs::schema::Role;
+use flow_nodes_rs::{InDecl as FlowIn, OutDecl as FlowOut, ValueHint};
 use serde::{Deserialize, Serialize};
 
-use super::defs::{DefId, NodeDef};
+use super::defs::NodeDef;
 use super::field::StepField;
 use super::{InKey, OutKey};
 use crate::assembly::math::Vec3;
@@ -25,11 +25,28 @@ pub enum SocketType {
     Points,
 }
 
+impl flow_nodes_rs::SocketType for SocketType {
+    /// The same type, or a number into a triple (all three set to it).
+    fn feeds(self, to: SocketType) -> bool {
+        self == to || (self == SocketType::Number && to == SocketType::Vec3)
+    }
+
+    /// Numbers and triples; molecules, curves and points have none.
+    fn has_value(self) -> bool {
+        matches!(self, SocketType::Number | SocketType::Vec3)
+    }
+
+    /// Molecules: a switched-off step passes them on.
+    fn is_primary(self) -> bool {
+        self == SocketType::Set
+    }
+}
+
 impl SocketType {
     /// Whether an output of this type may feed an input of `to`: the same type, or a number
     /// into a triple (all three set to it).
     pub fn feeds(self, to: SocketType) -> bool {
-        self == to || (self == SocketType::Number && to == SocketType::Vec3)
+        flow_nodes_rs::SocketType::feeds(self, to)
     }
 }
 
@@ -216,12 +233,7 @@ pub struct InstanceOnPoints {
 }
 
 /// A custom node in use: which definition, and the values of its inputs no link feeds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GroupRef {
-    pub def: DefId,
-    #[serde(default)]
-    pub inputs: BTreeMap<u32, PortValue>,
-}
+pub type GroupRef = flow_nodes_rs::GroupRef<PortValue>;
 
 /// One kind of node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -272,25 +284,12 @@ pub enum NodeKind {
     Output,
 }
 
-/// An input socket.
-#[derive(Debug, Clone, PartialEq)]
-pub struct InDecl {
-    pub key: InKey,
-    pub ty: SocketType,
-    pub label: String,
-    /// Degrees rather than ångström (or a plain number).
-    pub angle: bool,
-    /// Ångström.
-    pub length: bool,
-}
+/// An input socket. Its hint tells degrees ([`ValueHint::Angle`]) and ångström
+/// ([`ValueHint::Length`]) from counts and plain numbers.
+pub type InDecl = FlowIn<InKey, SocketType>;
 
 /// An output socket.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OutDecl {
-    pub key: OutKey,
-    pub ty: SocketType,
-    pub label: String,
-}
+pub type OutDecl = FlowOut<OutKey, SocketType>;
 
 /// Where a node is listed in the add menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,28 +308,20 @@ pub enum Category {
 const XYZ: [&str; 3] = ["x", "y", "z"];
 
 fn input(key: InKey, ty: SocketType, label: impl Into<String>) -> InDecl {
-    InDecl {
-        key,
-        ty,
-        label: label.into(),
-        angle: false,
-        length: false,
-    }
+    let hint = if key == InKey::Count {
+        ValueHint::Count
+    } else {
+        ValueHint::Plain
+    };
+    InDecl::new(key, ty, label).hint(hint)
 }
 
 fn length_input(key: InKey, label: impl Into<String>) -> InDecl {
-    InDecl {
-        length: true,
-        ..input(key, SocketType::Number, label)
-    }
+    input(key, SocketType::Number, label).hint(ValueHint::Length)
 }
 
 fn output(key: OutKey, ty: SocketType, label: impl Into<String>) -> OutDecl {
-    OutDecl {
-        key,
-        ty,
-        label: label.into(),
-    }
+    OutDecl::new(key, ty, label)
 }
 
 fn var_inputs(vars: &[Var]) -> impl Iterator<Item = InDecl> + '_ {
@@ -396,6 +387,17 @@ impl NodeKind {
     /// The input sockets, in order. `owner` is the custom node whose graph the node is in
     /// (its outputs are a group output node's inputs).
     pub fn inputs(&self, defs: &[NodeDef], owner: Option<&NodeDef>) -> Vec<InDecl> {
+        flow_nodes_rs::schema::inputs(self, defs, owner)
+    }
+
+    /// The output sockets, in order. `owner` as for [`NodeKind::inputs`] (its inputs are a
+    /// group input node's outputs).
+    pub fn outputs(&self, defs: &[NodeDef], owner: Option<&NodeDef>) -> Vec<OutDecl> {
+        flow_nodes_rs::schema::outputs(self, defs, owner)
+    }
+
+    /// The input sockets of the kinds that are not custom-node ones, in order.
+    fn own_inputs(&self) -> Vec<InDecl> {
         let set = || {
             input(
                 InKey::Set(0),
@@ -473,22 +475,23 @@ impl NodeKind {
                     SocketType::Number,
                     t!("assembly.node.socket.selection"),
                 ),
-                InDecl {
-                    angle: true,
-                    ..input(
-                        InKey::Param(1),
-                        SocketType::Vec3,
-                        t!("assembly.node.socket.rotation"),
-                    )
-                },
+                input(
+                    InKey::Param(1),
+                    SocketType::Vec3,
+                    t!("assembly.node.socket.rotation"),
+                )
+                .hint(ValueHint::Angle),
             ],
             NodeKind::Op(step) => std::iter::once(set())
-                .chain(StepField::of(step).into_iter().map(|f| InDecl {
-                    key: InKey::Field(f),
-                    ty: f.ty(),
-                    label: f.label().into(),
-                    angle: f.is_angle(),
-                    length: !f.is_angle() && !f.is_count(),
+                .chain(StepField::of(step).into_iter().map(|f| {
+                    let hint = if f.is_angle() {
+                        ValueHint::Angle
+                    } else if f.is_count() {
+                        ValueHint::Count
+                    } else {
+                        ValueHint::Length
+                    };
+                    InDecl::new(InKey::Field(f), f.ty(), f.label()).hint(hint)
                 }))
                 .collect(),
             NodeKind::Merge { inputs } => (0..*inputs)
@@ -525,29 +528,13 @@ impl NodeKind {
                     t!("assembly.node.socket.vector"),
                 )]
             }
-            NodeKind::Group(g) => super::defs::find(defs, &g.def)
-                .map(|d| {
-                    d.inputs
-                        .iter()
-                        .map(|p| input(InKey::Port(p.key), p.ty, p.name.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            NodeKind::GroupOutput => owner
-                .map(|d| {
-                    d.outputs
-                        .iter()
-                        .map(|p| input(InKey::Port(p.key), p.ty, p.name.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
             NodeKind::Output => vec![set()],
+            NodeKind::Group(_) | NodeKind::GroupOutput => Vec::new(),
         }
     }
 
-    /// The output sockets, in order. `owner` as for [`NodeKind::inputs`] (its inputs are a
-    /// group input node's outputs).
-    pub fn outputs(&self, defs: &[NodeDef], owner: Option<&NodeDef>) -> Vec<OutDecl> {
+    /// The output sockets of the kinds that are not custom-node ones, in order.
+    fn own_outputs(&self) -> Vec<OutDecl> {
         let set = || {
             output(
                 OutKey::Set,
@@ -603,23 +590,10 @@ impl NodeKind {
             NodeKind::Separate { .. } => (0..3)
                 .map(|i| output(OutKey::Axis(i), SocketType::Number, XYZ[usize::from(i)]))
                 .collect(),
-            NodeKind::Group(g) => super::defs::find(defs, &g.def)
-                .map(|d| {
-                    d.outputs
-                        .iter()
-                        .map(|p| output(OutKey::Port(p.key), p.ty, p.name.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            NodeKind::GroupInput => owner
-                .map(|d| {
-                    d.inputs
-                        .iter()
-                        .map(|p| output(OutKey::Port(p.key), p.ty, p.name.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            NodeKind::GroupOutput | NodeKind::Output => Vec::new(),
+            NodeKind::Group(_)
+            | NodeKind::GroupInput
+            | NodeKind::GroupOutput
+            | NodeKind::Output => Vec::new(),
         }
     }
 
@@ -779,6 +753,82 @@ impl NodeKind {
             NodeKind::CurveToPoints(CurveToPoints::new()),
             NodeKind::InstanceOnPoints(InstanceOnPoints::new()),
         ]
+    }
+}
+
+impl flow_nodes_rs::NodeKind for NodeKind {
+    type In = InKey;
+    type Out = OutKey;
+    type Socket = SocketType;
+    type Value = PortValue;
+
+    fn role(&self) -> Role<'_, PortValue> {
+        match self {
+            NodeKind::Group(g) => Role::Group(g),
+            NodeKind::GroupInput => Role::GroupInput,
+            NodeKind::GroupOutput => Role::GroupOutput,
+            NodeKind::Output => Role::Output,
+            _ => Role::Plain,
+        }
+    }
+
+    fn group(r: GroupRef) -> Self {
+        NodeKind::Group(r)
+    }
+
+    fn group_input() -> Self {
+        NodeKind::GroupInput
+    }
+
+    fn group_output() -> Self {
+        NodeKind::GroupOutput
+    }
+
+    fn port_in(key: u32) -> InKey {
+        InKey::Port(key)
+    }
+
+    fn as_port_in(key: InKey) -> Option<u32> {
+        match key {
+            InKey::Port(k) => Some(k),
+            _ => None,
+        }
+    }
+
+    fn port_out(key: u32) -> OutKey {
+        OutKey::Port(key)
+    }
+
+    fn as_port_out(key: OutKey) -> Option<u32> {
+        match key {
+            OutKey::Port(k) => Some(k),
+            _ => None,
+        }
+    }
+
+    fn own_inputs(&self) -> Vec<InDecl> {
+        NodeKind::own_inputs(self)
+    }
+
+    fn own_outputs(&self) -> Vec<OutDecl> {
+        NodeKind::own_outputs(self)
+    }
+
+    fn inline(&self, key: InKey) -> Option<PortValue> {
+        NodeKind::inline(self, key)
+    }
+
+    fn set_inline(&mut self, key: InKey, value: PortValue) -> bool {
+        NodeKind::set_inline(self, key, value)
+    }
+
+    /// A monomer is the design's own molecule, so it stays at the top level.
+    fn groupable(&self) -> bool {
+        !matches!(self, NodeKind::Monomer { .. })
+    }
+
+    fn top_level_only(&self) -> bool {
+        matches!(self, NodeKind::Monomer { .. })
     }
 }
 

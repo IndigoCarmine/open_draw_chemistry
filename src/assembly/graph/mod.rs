@@ -3,17 +3,17 @@
 //! Nodes can be gathered into custom nodes ([`defs::NodeDef`]) with inputs and outputs of
 //! their own, kept in the design and in the user's library ([`library`]).
 //!
-//! Pure code like the rest of [`crate::assembly`]:
+//! The machinery — graphs, custom nodes, the edits, the evaluator, expressions, the library —
+//! is the `flow_nodes_rs` crate; this module is the assembly's kinds of node on top of it:
 //!
-//! - [`kinds`]: what each node is, its sockets and settings;
+//! - [`kinds`]: what each node is, its sockets and settings (the crate's `NodeKind`);
 //! - [`field`]: the numbers of the building steps as sockets;
-//! - [`expr`]: the expressions typed into nodes;
-//! - [`eval`]: the graph evaluated into placed molecules;
-//! - [`ops`]: the edits the node editor makes (connect, group, …);
-//! - [`defs`], [`library`]: custom nodes and where they are kept.
+//! - [`eval`]: how each kind computes its molecules (the crate's `Evaluate`);
+//! - [`expr`], [`ops`], [`defs`], [`library`]: the crate's, worded in the UI language;
+//! - [`access`]: the graph being edited, found in the design by its scope.
 //!
 //! A design made of a monomer and a list of steps (every file before version 5) is the chain
-//! [`Graph::chain`] makes; it becomes a graph of its own only when the graph is edited.
+//! [`ChainGraph::chain`] makes; it becomes a graph of its own only when the graph is edited.
 
 pub mod access;
 pub mod defs;
@@ -24,21 +24,22 @@ pub mod kinds;
 pub mod library;
 pub mod ops;
 
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 
 pub use defs::{DefId, NodeDef};
 pub use eval::{Evaluation, Issue, Scope, Set, Shown};
 pub use field::StepField;
+pub use flow_nodes_rs::NodeId;
 pub use kinds::{NodeKind, PortValue, SocketType};
 
 use crate::assembly::model::Step;
 
-/// A node, unique within its graph: ids are never handed out twice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct NodeId(pub u64);
+/// One node: what it is, where it is drawn, and whether it is bypassed.
+pub type Node = flow_nodes_rs::Node<NodeKind>;
+/// A wire: output `out` of node `from` feeds input `input` of node `to`.
+pub type Link = flow_nodes_rs::Link<InKey, OutKey>;
+/// Nodes and the wires between them.
+pub type Graph = flow_nodes_rs::Graph<NodeKind>;
 
 /// An input socket of a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -83,48 +84,28 @@ pub enum OutKey {
     Points,
 }
 
-/// One node: what it is, where it is drawn, and whether it is bypassed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Node {
-    pub id: NodeId,
-    pub kind: NodeKind,
-    /// The top-left corner on the canvas.
-    #[serde(default)]
-    pub pos: [f32; 2],
-    /// Passes its molecules through unchanged (a step switched off).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub bypass: bool,
-    /// A name the user gave it, shown instead of the kind's.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub label: String,
-}
-
-/// A wire: output `out` of node `from` feeds input `input` of node `to`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Link {
-    pub from: NodeId,
-    pub out: OutKey,
-    pub to: NodeId,
-    pub input: InKey,
-}
-
-/// Nodes and the wires between them.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct Graph {
-    pub nodes: Vec<Node>,
-    #[serde(default)]
-    pub links: Vec<Link>,
-    /// The id the next node gets.
-    #[serde(default)]
-    pub next_id: u64,
-}
-
 /// Horizontal distance between the nodes of a chain.
-pub const CHAIN_SPACING: f32 = 220.0;
+pub const CHAIN_SPACING: f32 = flow_nodes_rs::SPACING;
 
-impl Graph {
+/// The assembly's own ways of making and reading graphs: a monomer into the output, and the
+/// chain of a monomer and a list of steps (how designs before version 5 are read).
+pub trait ChainGraph: Sized {
     /// A monomer straight into the output.
-    pub fn new(monomer: Option<u64>) -> Graph {
+    fn new(monomer: Option<u64>) -> Self;
+    /// The graph a monomer and a list of steps make: the monomer (id 1), each step in turn
+    /// (step `k` is node `k + 2`, bypassed when the step is switched off) and the output.
+    fn chain(monomer: u64, steps: &[Step]) -> Self;
+    /// The nodes of a chain ([`ChainGraph::as_chain`]) in order: the monomer, the steps, the
+    /// output.
+    fn chain_order(&self) -> Option<Vec<NodeId>>;
+    /// The monomer and steps of a chain [`ChainGraph::chain`] could have made: `None` when the
+    /// graph is not such a chain.
+    fn as_chain(&self) -> Option<(u64, Vec<Step>)>;
+}
+
+impl ChainGraph for Graph {
+    /// A monomer straight into the output.
+    fn new(monomer: Option<u64>) -> Graph {
         let mut g = Graph::default();
         let out = g.add(NodeKind::Output, [CHAIN_SPACING, 0.0]);
         if let Some(component) = monomer {
@@ -141,7 +122,7 @@ impl Graph {
 
     /// The graph a monomer and a list of steps make: the monomer (id 1), each step in turn
     /// (step `k` is node `k + 2`, bypassed when the step is switched off) and the output.
-    pub fn chain(monomer: u64, steps: &[Step]) -> Graph {
+    fn chain(monomer: u64, steps: &[Step]) -> Graph {
         let mut nodes = Vec::with_capacity(steps.len() + 2);
         nodes.push(Node {
             id: NodeId(1),
@@ -186,61 +167,10 @@ impl Graph {
         }
     }
 
-    pub fn node(&self, id: NodeId) -> Option<&Node> {
-        self.nodes.iter().find(|n| n.id == id)
-    }
-
-    pub fn node_mut(&mut self, id: NodeId) -> Option<&mut Node> {
-        self.nodes.iter_mut().find(|n| n.id == id)
-    }
-
-    /// The link feeding input `input` of node `to`.
-    pub fn link_into(&self, to: NodeId, input: InKey) -> Option<&Link> {
-        self.links.iter().find(|l| l.to == to && l.input == input)
-    }
-
-    /// The output node.
-    pub fn output(&self) -> Option<NodeId> {
-        self.nodes
-            .iter()
-            .find(|n| matches!(n.kind, NodeKind::Output))
-            .map(|n| n.id)
-    }
-
-    /// The group output node (inside a custom node).
-    pub fn group_output(&self) -> Option<NodeId> {
-        self.nodes
-            .iter()
-            .find(|n| matches!(n.kind, NodeKind::GroupOutput))
-            .map(|n| n.id)
-    }
-
-    /// A fresh id.
-    pub fn alloc_id(&mut self) -> NodeId {
-        let floor = self.nodes.iter().map(|n| n.id.0 + 1).max().unwrap_or(0);
-        self.next_id = self.next_id.max(floor);
-        let id = NodeId(self.next_id);
-        self.next_id += 1;
-        id
-    }
-
-    /// Add a node at `pos`; returns its id.
-    pub fn add(&mut self, kind: NodeKind, pos: [f32; 2]) -> NodeId {
-        let id = self.alloc_id();
-        self.nodes.push(Node {
-            id,
-            kind,
-            pos,
-            bypass: false,
-            label: String::new(),
-        });
-        id
-    }
-
     /// The steps of a chain [`Graph::chain`] could have made, with its monomer: `None` when
     /// the graph is not such a chain.
     /// The nodes of a chain ([`Graph::as_chain`]) in order: the monomer, the steps, the output.
-    pub fn chain_order(&self) -> Option<Vec<NodeId>> {
+    fn chain_order(&self) -> Option<Vec<NodeId>> {
         self.as_chain()?;
         let output = self.output()?;
         let mut order = vec![output];
@@ -256,7 +186,7 @@ impl Graph {
         Some(order)
     }
 
-    pub fn as_chain(&self) -> Option<(u64, Vec<Step>)> {
+    fn as_chain(&self) -> Option<(u64, Vec<Step>)> {
         let output = self.output()?;
         let mut steps = Vec::new();
         let mut at = self.link_into(output, InKey::Set(0))?.from;
@@ -283,90 +213,6 @@ impl Graph {
                 _ => return None,
             }
         }
-    }
-
-    /// Whether the graph's wiring holds together: ids unique, every link between existing
-    /// sockets of the right types, one link at most per input, one output node at the top
-    /// level (`owner` is `None`) and none inside a custom node, every custom node defined and
-    /// no wire loops. The message is for a damaged file, in English.
-    pub fn validate(&self, defs: &[NodeDef], owner: Option<&NodeDef>) -> Result<(), String> {
-        let mut ids = HashSet::new();
-        for n in &self.nodes {
-            if !ids.insert(n.id) {
-                return Err(format!("node {} appears twice", n.id.0));
-            }
-            match (&n.kind, owner) {
-                (NodeKind::Output, Some(_)) => {
-                    return Err("an output node inside a custom node".into());
-                }
-                (NodeKind::Monomer { .. }, Some(_)) => {
-                    return Err("a monomer node inside a custom node".into());
-                }
-                (NodeKind::GroupInput | NodeKind::GroupOutput, None) => {
-                    return Err("a group input or output outside a custom node".into());
-                }
-                (NodeKind::Group(g), _) if defs::find(defs, &g.def).is_none() => {
-                    return Err(format!("custom node {} is not defined", g.def.0));
-                }
-                _ => {}
-            }
-        }
-        let outputs = self
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.kind, NodeKind::Output))
-            .count();
-        if owner.is_none() && outputs != 1 {
-            return Err(format!("{outputs} output nodes (one is needed)"));
-        }
-        if owner.is_some()
-            && self
-                .nodes
-                .iter()
-                .filter(|n| matches!(n.kind, NodeKind::GroupOutput))
-                .count()
-                > 1
-        {
-            return Err("more than one group output node".into());
-        }
-        let mut fed = HashSet::new();
-        for l in &self.links {
-            let (Some(from), Some(to)) = (self.node(l.from), self.node(l.to)) else {
-                return Err(format!(
-                    "a link to a missing node ({} → {})",
-                    l.from.0, l.to.0
-                ));
-            };
-            let out = from
-                .kind
-                .outputs(defs, owner)
-                .into_iter()
-                .find(|o| o.key == l.out);
-            let input = to
-                .kind
-                .inputs(defs, owner)
-                .into_iter()
-                .find(|i| i.key == l.input);
-            let (Some(out), Some(input)) = (out, input) else {
-                return Err(format!(
-                    "a link between missing sockets ({} → {})",
-                    l.from.0, l.to.0
-                ));
-            };
-            if !out.ty.feeds(input.ty) {
-                return Err(format!(
-                    "a link of the wrong type ({} → {})",
-                    l.from.0, l.to.0
-                ));
-            }
-            if !fed.insert((l.to, l.input)) {
-                return Err(format!("two links into one input of node {}", l.to.0));
-            }
-        }
-        if let Some(id) = ops::find_cycle(self) {
-            return Err(format!("the links loop back through node {}", id.0));
-        }
-        Ok(())
     }
 }
 

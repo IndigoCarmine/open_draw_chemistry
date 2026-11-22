@@ -1,0 +1,30 @@
+[package]
+name = "flow_nodes_rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "A foundation for Blender-style node graphs: typed sockets, custom nodes (groups), a pull evaluator, expressions, a node library and an egui node editor"
+authors = ["IndigoCarmine"]
+license = "BSD-3-Clause"
+repository = "https://github.com/IndigoCarmine/open_draw_chemistry"
+readme = "README.md"
+keywords = ["node-graph", "node-editor", "egui", "dataflow"]
+categories = ["gui", "data-structures"]
+
+[features]
+default = ["library"]
+# Custom nodes kept on disk, and the fingerprint telling a copy from the library's.
+library = ["dep:sha2", "dep:tempfile"]
+# The node editor widget.
+egui = ["dep:egui"]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = { version = "0.11.1", default-features = false, optional = true }
+tempfile = { version = "3.27.0", optional = true }
+egui = { version = "0.37.0", optional = true }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+

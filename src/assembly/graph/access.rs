@@ -1,27 +1,19 @@
 //! The graph being edited, found by its scope: the design's own graph at the top level, or a
-//! custom node's graph inside the custom nodes the scope enters.
+//! custom node's graph inside the custom nodes the scope enters. The walk is the
+//! `flow_nodes_rs` crate's ([`flow_nodes_rs::scope`]); here the top level is the design's,
+//! which may still be a chain of steps.
 
 use std::borrow::Cow;
 
 use super::defs::{self, DefId, NodeDef};
-use super::{Graph, NodeId, NodeKind};
+use super::{Graph, NodeId};
 use crate::assembly::model::Design;
 
 /// The custom node whose graph `scope` is in (`Some(None)` at the top level), or `None` when
 /// the scope does not lead anywhere (a node on the way was removed, or is not a custom node).
 pub fn scope_def(design: &Design, scope: &[NodeId]) -> Option<Option<DefId>> {
     let top = design.effective_graph();
-    let mut graph: &Graph = &top;
-    let mut def: Option<&NodeDef> = None;
-    for id in scope {
-        let NodeKind::Group(g) = &graph.node(*id)?.kind else {
-            return None;
-        };
-        let d = defs::find(&design.defs, &g.def)?;
-        def = Some(d);
-        graph = &d.graph;
-    }
-    Some(def.map(|d| d.id.clone()))
+    flow_nodes_rs::scope::resolve(&top, &design.defs, scope).map(|d| d.map(|d| d.id.clone()))
 }
 
 /// The graph at `scope`, with the custom node it belongs to.
@@ -66,16 +58,8 @@ pub fn edit_at<R>(
     f: impl FnOnce(&mut Graph, &mut Vec<NodeDef>, Option<&DefId>) -> R,
 ) -> Option<R> {
     match scope_def(design, scope)? {
-        Some(id) => {
-            let k = design.defs.iter().position(|d| d.id == id)?;
-            let mut graph = std::mem::take(&mut design.defs[k].graph);
-            let r = f(&mut graph, &mut design.defs, Some(&id));
-            // `f` may have added custom nodes, never removed one.
-            if let Some(def) = defs::find_mut(&mut design.defs, &id) {
-                def.graph = graph;
-            }
-            Some(r)
-        }
+        // `f` may add custom nodes, never remove one.
+        Some(id) => flow_nodes_rs::scope::edit_def(&mut design.defs, &id, f),
         // A graph that is (again) a chain of a monomer and steps is kept as steps, so the
         // panel shows it as such and the file opens in older releases.
         None => {
@@ -127,7 +111,7 @@ mod tests {
         assert!(d.is_linear());
         assert!(!d.steps[0].enabled());
         edit_at(&mut d, &[], |g, _, _| {
-            ops::remove(g, &[chain_step_id(0)].into());
+            ops::remove(g, &[], None, &[chain_step_id(0)].into());
         })
         .unwrap();
         assert!(d.is_linear());
@@ -152,7 +136,10 @@ mod tests {
         .unwrap();
         assert!(!d.is_linear());
         assert!(d.steps.is_empty());
-        edit_at(&mut d, &[], |g, _, _| ops::remove(g, &[loose].into())).unwrap();
+        edit_at(&mut d, &[], |g, _, _| {
+            ops::remove(g, &[], None, &[loose].into())
+        })
+        .unwrap();
         assert!(d.is_linear());
         assert_eq!(d.steps, vec![Step::new_stack()]);
         assert_eq!(
@@ -175,7 +162,7 @@ mod tests {
         let ring = inner
             .nodes
             .iter()
-            .find(|n| matches!(n.kind, NodeKind::Op(_)))
+            .find(|n| matches!(n.kind, crate::assembly::graph::NodeKind::Op(_)))
             .unwrap()
             .id;
         edit_at(&mut d, &[node], |g, _, owner| {

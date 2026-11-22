@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::graph::{self, Evaluation, Graph, NodeDef, OutKey, Shown};
 use super::math::{self, Cell, Rigid, Vec3};
 use super::symop::{self, SymOp};
+use crate::assembly::graph::ChainGraph;
 use crate::three_d::{Atom3d, Bond3d, Model3d};
 
 /// How many undo steps are kept.

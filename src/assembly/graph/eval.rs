@@ -1,4 +1,5 @@
-//! A graph evaluated into placed molecules.
+//! A graph evaluated into placed molecules: how each kind of node computes (the
+//! `flow_nodes_rs` crate's [`Evaluate`]); the crate's evaluator does the rest.
 //!
 //! The output node pulls what it needs: each node reached is evaluated once (per custom node it
 //! is inside) and remembered, so a set fed to two nodes is made once. A node that cannot be
@@ -21,8 +22,11 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::defs::{self, DefId, NodeDef};
-use super::expr::Expr;
+use flow_nodes_rs::eval::{EvalCx, Evaluate, Problem};
+pub use flow_nodes_rs::field::Field;
+
+use super::defs::NodeDef;
+use super::expr::{self, Expr};
 use super::field::{StepField, count_of};
 use super::kinds::{Coords, CurveSample, EachPivot, NodeKind, PortValue, SocketType, Var};
 use super::{Graph, InKey, NodeId, OutKey};
@@ -34,7 +38,7 @@ use crate::assembly::model::{Component, Crystal, Ids, Instance, Shape, Step, cen
 pub const MAX_INSTANCES: usize = 2_000_000;
 
 /// How deep custom nodes may be nested.
-pub const MAX_DEPTH: usize = 16;
+pub const MAX_DEPTH: usize = flow_nodes_rs::eval::MAX_DEPTH;
 
 /// Molecules, with their attributes and the crystal they belong to.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -135,45 +139,6 @@ pub struct Points {
     pub frames: Vec<Rigid>,
 }
 
-/// A number for each element of whatever uses it.
-#[derive(Debug, Clone)]
-pub enum Field {
-    Const(f64),
-    /// The element's place, from 0.
-    Index,
-    /// An expression of other fields (its variables, in order).
-    Expr(Rc<Expr>, Vec<Field>),
-}
-
-impl Field {
-    /// The values for `len` elements.
-    pub fn column(&self, len: usize) -> Vec<f64> {
-        match self {
-            Field::Const(v) => vec![*v; len],
-            Field::Index => (0..len).map(|k| k as f64).collect(),
-            Field::Expr(expr, args) => {
-                let columns: Vec<Vec<f64>> = args.iter().map(|a| a.column(len)).collect();
-                let mut values = vec![0.0; args.len()];
-                (0..len)
-                    .map(|k| {
-                        for (v, c) in values.iter_mut().zip(&columns) {
-                            *v = c[k];
-                        }
-                        expr.eval(&values)
-                    })
-                    .collect()
-            }
-        }
-    }
-
-    fn constant(&self) -> Option<f64> {
-        match self {
-            Field::Const(v) => Some(*v),
-            _ => None,
-        }
-    }
-}
-
 /// What travels along a wire.
 #[derive(Debug, Clone)]
 pub enum Data {
@@ -236,7 +201,7 @@ impl Data {
 }
 
 /// Where a node is: the custom nodes entered to reach it, outermost first (empty at the top).
-pub type Scope = Vec<NodeId>;
+pub use flow_nodes_rs::Scope;
 
 /// Something wrong with one node.
 #[derive(Debug, Clone, PartialEq)]
@@ -270,19 +235,14 @@ pub struct Evaluation {
     pub shown: HashMap<(Scope, NodeId, OutKey), Shown>,
     /// The molecules each set output of each node reached gave (for previewing one).
     pub sets: HashMap<(Scope, NodeId, OutKey), Arc<Set>>,
+    /// The nodes evaluated (they feed the output) or reported.
+    pub reached: HashSet<(Scope, NodeId)>,
 }
 
 impl Evaluation {
     /// Whether node `node` in `scope` was evaluated (it feeds the output).
     pub fn reached(&self, scope: &[NodeId], node: NodeId) -> bool {
-        self.shown
-            .keys()
-            .any(|(s, n, _)| *n == node && s.as_slice() == scope)
-            || self
-                .errors
-                .iter()
-                .chain(&self.warnings)
-                .any(|i| i.node == node && i.scope == scope)
+        self.reached.contains(&(scope.to_vec(), node))
     }
 
     /// The first error of a crystal that cannot be built.
@@ -312,32 +272,66 @@ pub fn evaluate(source: &Source<'_>, graph: &Graph) -> Evaluation {
         .iter()
         .map(|s| s.as_ref().map_or([0.0; 3], |(p, _)| centroid(p)))
         .collect();
-    let mut ev = Evaluator {
+    let ctx = Ctx {
         src: source,
         centroids,
-        memo: HashMap::new(),
-        visiting: HashSet::new(),
-        bindings: HashMap::new(),
-        def_stack: Vec::new(),
-        out: Evaluation::default(),
     };
-    let scope: Scope = Vec::new();
-    let output = match graph.output() {
-        Some(out) => {
-            ev.mark(&scope, out);
-            ev.set_input(graph, None, &scope, out, InKey::Set(0))
+    let outcome = flow_nodes_rs::eval::evaluate(graph, source.defs, &ctx);
+    let mut out = Evaluation {
+        reached: outcome.reached,
+        ..Evaluation::default()
+    };
+    out.output = outcome
+        .output
+        .into_iter()
+        .find_map(|(k, d)| match (k, d) {
+            (InKey::Set(0), Data::Set(s)) => Some(s),
+            _ => None,
+        })
+        .unwrap_or_default();
+    for issue in outcome.issues {
+        let warning = issue.warning;
+        let (message, lattice) = match issue.problem {
+            Problem::Node(fail) => (fail.message, fail.lattice),
+            Problem::Cycle => (t!("assembly.node.error.cycle").to_owned(), false),
+            Problem::MissingDef => (t!("assembly.node.error.missing_def").to_owned(), false),
+            Problem::Recursion(name) => (t!("assembly.node.error.recursion", name = name), false),
+            Problem::TooDeep(max) => (t!("assembly.node.error.too_deep", max = max), false),
+        };
+        let issue = Issue {
+            scope: issue.scope,
+            node: issue.node,
+            message,
+            lattice,
+        };
+        if warning {
+            out.warnings.push(issue);
+        } else {
+            out.errors.push(issue);
         }
-        None => Arc::new(Set::default()),
-    };
-    let mut result = ev.out;
-    result.output = output;
-    result
+    }
+    for ((scope, id), outputs) in outcome.values {
+        for (key, data) in outputs.iter() {
+            let shown = match data {
+                Data::Set(s) => {
+                    out.sets.insert((scope.clone(), id, *key), s.clone());
+                    Shown::Count(s.len())
+                }
+                Data::Number(v) => Shown::Number(*v),
+                Data::Vec3(v) => Shown::Vec3(*v),
+                Data::Points(p) => Shown::Count(p.frames.len()),
+                Data::Curve(c) => Shown::Count(c.splines.iter().map(|s| s.points.len()).sum()),
+                Data::Field(_) | Data::Field3(_) => Shown::Field,
+            };
+            out.shown.insert((scope.clone(), id, *key), shown);
+        }
+    }
+    out
 }
 
-type Outputs = Rc<Vec<(OutKey, Data)>>;
-
-/// Why a node could not be evaluated.
-struct Fail {
+/// Why a node could not be evaluated (or a warning about it), in the UI language.
+#[derive(Debug, Clone)]
+pub struct Fail {
     message: String,
     lattice: bool,
 }
@@ -351,278 +345,99 @@ impl Fail {
     }
 }
 
-struct Evaluator<'s, 'a> {
+/// What the evaluation of a design's graph refers to: its monomers, with their centroids.
+pub struct Ctx<'s, 'a> {
     src: &'s Source<'a>,
     /// Each component's centroid in its own frame.
     centroids: Vec<Vec3>,
-    memo: HashMap<(Scope, NodeId), Outputs>,
-    visiting: HashSet<(Scope, NodeId)>,
-    /// The values a custom node's inputs have, by the scope inside it.
-    bindings: HashMap<Scope, Rc<Vec<(u32, Data)>>>,
-    def_stack: Vec<DefId>,
-    out: Evaluation,
 }
 
-impl<'s, 'a> Evaluator<'s, 'a> {
-    /// Note that the node was reached (for nodes with no outputs, such as the output node).
-    fn mark(&mut self, scope: &Scope, node: NodeId) {
-        self.out
-            .shown
-            .entry((scope.clone(), node, OutKey::Set))
-            .or_insert(Shown::Count(0));
-    }
+type Cx<'c, 'g, 's, 'a> = EvalCx<'c, 'g, NodeKind, Ctx<'s, 'a>>;
 
-    fn error(&mut self, scope: &Scope, node: NodeId, fail: Fail) {
-        self.out.errors.push(Issue {
-            scope: scope.clone(),
-            node,
-            message: fail.message,
-            lattice: fail.lattice,
-        });
-    }
+fn warn(cx: &mut Cx<'_, '_, '_, '_>, message: impl Into<String>) {
+    cx.warn(Fail::new(message));
+}
 
-    fn warn(&mut self, scope: &Scope, node: NodeId, message: String) {
-        self.out.warnings.push(Issue {
-            scope: scope.clone(),
-            node,
-            message,
-            lattice: false,
-        });
+/// The molecules fed to input `key` (none when unlinked).
+fn set_input(cx: &mut Cx<'_, '_, '_, '_>, key: InKey) -> Arc<Set> {
+    match cx.input(key) {
+        Some(Data::Set(s)) => s,
+        _ => Arc::new(Set::default()),
     }
+}
 
-    /// What feeds input `key` of node `id`, if a link does.
-    fn linked(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        key: InKey,
-    ) -> Option<Data> {
-        let link = *graph.link_into(id, key)?;
-        let outs = self.node(graph, owner, scope, link.from);
-        outs.iter()
-            .find(|(k, _)| *k == link.out)
-            .map(|(_, d)| d.clone())
+/// The value of a number input: what feeds it, else `inline`.
+fn number_input(cx: &mut Cx<'_, '_, '_, '_>, key: InKey, inline: f64) -> f64 {
+    cx.input(key).and_then(|d| d.as_number()).unwrap_or(inline)
+}
+
+/// The value of a number input that may be a field: what feeds it, else `inline`.
+fn field_input(cx: &mut Cx<'_, '_, '_, '_>, key: InKey, inline: f64) -> Field {
+    match cx.input(key) {
+        Some(Data::Field(f)) => (*f).clone(),
+        Some(Data::Field3(f)) => f[0].clone(),
+        Some(d) => Field::Const(d.as_number().unwrap_or(inline)),
+        None => Field::Const(inline),
     }
+}
 
-    /// The molecules fed to input `key` (none when unlinked).
-    fn set_input(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        key: InKey,
-    ) -> Arc<Set> {
-        match self.linked(graph, owner, scope, id, key) {
-            Some(Data::Set(s)) => s,
-            _ => Arc::new(Set::default()),
+/// The value of a triple input that may be a field: what feeds it, else `inline`.
+fn field3_input(cx: &mut Cx<'_, '_, '_, '_>, key: InKey, inline: Vec3) -> [Field; 3] {
+    match cx.input(key) {
+        Some(Data::Field3(f)) => (*f).clone(),
+        Some(Data::Field(f)) => [(*f).clone(), (*f).clone(), (*f).clone()],
+        Some(Data::Vec3(v)) => v.map(Field::Const),
+        Some(Data::Number(v)) => [v; 3].map(Field::Const),
+        _ => inline.map(Field::Const),
+    }
+}
+
+/// The values of an expression node's variables (fields where fields feed them).
+fn var_fields(cx: &mut Cx<'_, '_, '_, '_>, vars: &[Var]) -> Vec<(String, Field)> {
+    vars.iter()
+        .map(|v| (v.name.clone(), field_input(cx, InKey::Var(v.key), v.value)))
+        .collect()
+}
+
+/// The values of an expression node's variables, which must be plain numbers.
+fn var_values(cx: &mut Cx<'_, '_, '_, '_>, vars: &[Var]) -> Result<Vec<(String, f64)>, Fail> {
+    var_fields(cx, vars)
+        .into_iter()
+        .map(|(name, f)| match f.constant() {
+            Some(v) => Ok((name, v)),
+            None => Err(Fail::new(t!("assembly.node.error.field_here"))),
+        })
+        .collect()
+}
+
+/// A field fed to an input that takes one number for all.
+fn check_fields(cx: &mut Cx<'_, '_, '_, '_>, kind: &NodeKind) -> Result<(), Fail> {
+    for decl in cx.inputs() {
+        if matches!(decl.ty, SocketType::Number | SocketType::Vec3)
+            && !takes_field(kind, decl.key)
+            && cx.input(decl.key).is_some_and(|d| d.is_field())
+        {
+            return Err(Fail::new(t!("assembly.node.error.field_here")));
         }
     }
+    Ok(())
+}
 
-    /// The value of a number input: what feeds it, else `inline`.
-    fn number_input(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        key: InKey,
-        inline: f64,
-    ) -> f64 {
-        self.linked(graph, owner, scope, id, key)
-            .and_then(|d| d.as_number())
-            .unwrap_or(inline)
+impl<'s, 'a> Evaluate<Ctx<'s, 'a>> for NodeKind {
+    type Data = Data;
+    type Error = Fail;
+
+    fn default_data(ty: SocketType, value: Option<&PortValue>) -> Data {
+        default_data(ty, value.copied())
     }
 
-    /// The value of a number input that may be a field: what feeds it, else `inline`.
-    fn field_input(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        key: InKey,
-        inline: f64,
-    ) -> Field {
-        match self.linked(graph, owner, scope, id, key) {
-            Some(Data::Field(f)) => (*f).clone(),
-            Some(Data::Field3(f)) => f[0].clone(),
-            Some(d) => Field::Const(d.as_number().unwrap_or(inline)),
-            None => Field::Const(inline),
-        }
+    fn conform(data: Data, ty: SocketType) -> Option<Data> {
+        data.conform(ty)
     }
 
-    /// The value of a triple input that may be a field: what feeds it, else `inline`.
-    fn field3_input(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        key: InKey,
-        inline: Vec3,
-    ) -> [Field; 3] {
-        match self.linked(graph, owner, scope, id, key) {
-            Some(Data::Field3(f)) => (*f).clone(),
-            Some(Data::Field(f)) => [(*f).clone(), (*f).clone(), (*f).clone()],
-            Some(Data::Vec3(v)) => v.map(Field::Const),
-            Some(Data::Number(v)) => [v; 3].map(Field::Const),
-            _ => inline.map(Field::Const),
-        }
-    }
-
-    /// The values of an expression node's variables (fields where fields feed them).
-    fn var_fields(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        vars: &[Var],
-    ) -> Vec<(String, Field)> {
-        vars.iter()
-            .map(|v| {
-                (
-                    v.name.clone(),
-                    self.field_input(graph, owner, scope, id, InKey::Var(v.key), v.value),
-                )
-            })
-            .collect()
-    }
-
-    /// The values of an expression node's variables, which must be plain numbers.
-    fn var_values(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        vars: &[Var],
-    ) -> Result<Vec<(String, f64)>, Fail> {
-        self.var_fields(graph, owner, scope, id, vars)
-            .into_iter()
-            .map(|(name, f)| match f.constant() {
-                Some(v) => Ok((name, v)),
-                None => Err(Fail::new(t!("assembly.node.error.field_here"))),
-            })
-            .collect()
-    }
-
-    /// A field fed to an input that takes one number for all.
-    fn check_fields(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        kind: &NodeKind,
-    ) -> Result<(), Fail> {
-        for decl in kind.inputs(self.src.defs, owner) {
-            if matches!(decl.ty, SocketType::Number | SocketType::Vec3)
-                && !takes_field(kind, decl.key)
-                && self
-                    .linked(graph, owner, scope, id, decl.key)
-                    .is_some_and(|d| d.is_field())
-            {
-                return Err(Fail::new(t!("assembly.node.error.field_here")));
-            }
-        }
-        Ok(())
-    }
-
-    /// Node `id`'s outputs, evaluated once per scope.
-    fn node(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-    ) -> Outputs {
-        let key = (scope.clone(), id);
-        if let Some(done) = self.memo.get(&key) {
-            return done.clone();
-        }
-        let Some(node) = graph.node(id) else {
-            return Rc::new(Vec::new());
-        };
-        if !self.visiting.insert(key.clone()) {
-            self.error(scope, id, Fail::new(t!("assembly.node.error.cycle")));
-            return Rc::new(Vec::new());
-        }
-        let outputs = if node.bypass {
-            self.pass_through(graph, owner, scope, id, &node.kind)
-        } else {
-            let computed = self
-                .check_fields(graph, owner, scope, id, &node.kind)
-                .and_then(|()| self.compute(graph, owner, scope, id, &node.kind));
-            match computed {
-                Ok(outputs) => outputs,
-                Err(fail) => {
-                    self.error(scope, id, fail);
-                    self.pass_through(graph, owner, scope, id, &node.kind)
-                }
-            }
-        };
-        self.visiting.remove(&key);
-        for (out, data) in &outputs {
-            let shown = match data {
-                Data::Set(s) => {
-                    self.out.sets.insert((scope.clone(), id, *out), s.clone());
-                    Shown::Count(s.len())
-                }
-                Data::Number(v) => Shown::Number(*v),
-                Data::Vec3(v) => Shown::Vec3(*v),
-                Data::Points(p) => Shown::Count(p.frames.len()),
-                Data::Curve(c) => Shown::Count(c.splines.iter().map(|s| s.points.len()).sum()),
-                Data::Field(_) | Data::Field3(_) => Shown::Field,
-            };
-            self.out.shown.insert((scope.clone(), id, *out), shown);
-        }
-        let outputs = Rc::new(outputs);
-        self.memo.insert(key, outputs.clone());
-        outputs
-    }
-
-    /// A bypassed or failed node: its first molecule input on its first molecule output, none
-    /// on the others, numbers as they are without it (0).
-    fn pass_through(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        kind: &NodeKind,
-    ) -> Vec<(OutKey, Data)> {
-        let first_set = kind
-            .inputs(self.src.defs, owner)
-            .into_iter()
-            .find(|i| i.ty == SocketType::Set)
-            .map(|i| i.key);
-        let mut through = first_set.map(|key| self.set_input(graph, owner, scope, id, key));
-        kind.outputs(self.src.defs, owner)
-            .into_iter()
-            .map(|o| {
-                let data = match o.ty {
-                    SocketType::Set => {
-                        Data::Set(through.take().unwrap_or_else(|| Arc::new(Set::default())))
-                    }
-                    ty => default_data(ty, None),
-                };
-                (o.key, data)
-            })
-            .collect()
-    }
-
-    fn compute(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        kind: &NodeKind,
-    ) -> Result<Vec<(OutKey, Data)>, Fail> {
+    fn compute(&self, cx: &mut Cx<'_, '_, 's, 'a>) -> Result<Vec<(OutKey, Data)>, Fail> {
+        check_fields(cx, self)?;
+        let ctx = cx.env();
         let set = |s: Set| -> Result<Vec<(OutKey, Data)>, Fail> {
             if s.len() > MAX_INSTANCES {
                 return Err(Fail::new(t!(
@@ -633,18 +448,14 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             }
             Ok(vec![(OutKey::Set, Data::Set(Arc::new(s)))])
         };
-        match kind {
+        match self {
             NodeKind::Monomer { component } => {
-                let Some(c) = self
+                let Some(c) = ctx
                     .src
                     .component_ids
-                    .index(*component, self.src.components.len())
+                    .index(*component, ctx.src.components.len())
                 else {
-                    self.warn(
-                        scope,
-                        id,
-                        t!("assembly.node.error.monomer_missing").to_owned(),
-                    );
+                    warn(cx, t!("assembly.node.error.monomer_missing").to_owned());
                     return set(Set::default());
                 };
                 set(Set {
@@ -659,32 +470,27 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             NodeKind::Op(step) => {
                 let mut step = step.clone();
                 for field in StepField::of(&step) {
-                    if let Some(data) = self.linked(graph, owner, scope, id, InKey::Field(field))
+                    if let Some(data) = cx.input(InKey::Field(field))
                         && let Some(value) = data.as_port_value(field.ty())
                     {
                         field.write(&mut step, value);
                     }
                 }
-                let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
-                set(self.op(&step, &input)?)
+                let input = set_input(cx, InKey::Set(0));
+                set(ctx.op(&step, &input)?)
             }
             NodeKind::Merge { inputs } => {
-                let sets: Vec<Arc<Set>> = (0..*inputs)
-                    .map(|i| self.set_input(graph, owner, scope, id, InKey::Set(i)))
-                    .collect();
+                let sets: Vec<Arc<Set>> =
+                    (0..*inputs).map(|i| set_input(cx, InKey::Set(i))).collect();
                 if sets.iter().skip(1).any(|s| s.crystal.is_some()) {
-                    self.warn(
-                        scope,
-                        id,
-                        t!("assembly.node.error.crystal_dropped").to_owned(),
-                    );
+                    warn(cx, t!("assembly.node.error.crystal_dropped").to_owned());
                 }
                 set(merge(&sets))
             }
             NodeKind::Select(sel) => {
-                let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
-                let vars = self.var_fields(graph, owner, scope, id, &sel.vars);
-                let keep = self.per_item(&input, &vars, &sel.expr, |v| v != 0.0 && !v.is_nan())?;
+                let input = set_input(cx, InKey::Set(0));
+                let vars = var_fields(cx, &sel.vars);
+                let keep = ctx.per_item(&input, &vars, &sel.expr, |v| v != 0.0 && !v.is_nan())?;
                 let (chosen, rest): (Vec<usize>, Vec<usize>) =
                     (0..input.len()).partition(|&k| keep[k]);
                 let mut selected = input.gather(&chosen);
@@ -694,11 +500,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                     {
                         selected.crystal = Some(crystal.clone());
                     } else {
-                        self.warn(
-                            scope,
-                            id,
-                            t!("assembly.node.error.crystal_dropped").to_owned(),
-                        );
+                        warn(cx, t!("assembly.node.error.crystal_dropped").to_owned());
                     }
                 }
                 Ok(vec![
@@ -707,16 +509,9 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 ])
             }
             NodeKind::Repeat(r) => {
-                let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
-                let n = count_of(self.number_input(
-                    graph,
-                    owner,
-                    scope,
-                    id,
-                    InKey::Count,
-                    f64::from(r.n),
-                ));
-                let vars = self.var_values(graph, owner, scope, id, &r.vars)?;
+                let input = set_input(cx, InKey::Set(0));
+                let n = count_of(number_input(cx, InKey::Count, f64::from(r.n)));
+                let vars = var_values(cx, &r.vars)?;
                 let mut names: Vec<String> = vec!["i".into(), "n".into()];
                 names.extend(vars.iter().map(|(name, _)| name.clone()));
                 let resolve = |name: &str| names.iter().rposition(|n| n == name);
@@ -749,15 +544,15 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 set(input.copied(&moves, r.name.trim()))
             }
             NodeKind::MoveEach(m) => {
-                let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
-                let vars = self.var_fields(graph, owner, scope, id, &m.vars);
+                let input = set_input(cx, InKey::Set(0));
+                let vars = var_fields(cx, &m.vars);
                 let columns: Vec<Vec<f64>> = m
                     .offset
                     .iter()
                     .chain(&m.euler_deg)
-                    .map(|src| self.per_item(&input, &vars, src, |v| v))
+                    .map(|src| ctx.per_item(&input, &vars, src, |v| v))
                     .collect::<Result<_, _>>()?;
-                let set_centre = (m.pivot == EachPivot::Set).then(|| self.set_centroid(&input));
+                let set_centre = (m.pivot == EachPivot::Set).then(|| ctx.set_centroid(&input));
                 let mut out = (*input).clone();
                 for (k, inst) in out.items.iter_mut().enumerate() {
                     let o = [columns[0][k], columns[1][k], columns[2][k]];
@@ -767,7 +562,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                     }
                     let pivot = match m.pivot {
                         EachPivot::Origin => [0.0; 3],
-                        EachPivot::Own => self.item_centroid(inst),
+                        EachPivot::Own => ctx.item_centroid(inst),
                         EachPivot::Set => set_centre.unwrap_or([0.0; 3]),
                     };
                     let t = Rigid::translation(math::scale(pivot, -1.0))
@@ -782,9 +577,9 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 if !is_name(name) {
                     return Err(Fail::new(t!("assembly.node.error.bad_name", name = name)));
                 }
-                let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
-                let vars = self.var_fields(graph, owner, scope, id, &a.vars);
-                let values = self.per_item(&input, &vars, &a.expr, |v| v)?;
+                let input = set_input(cx, InKey::Set(0));
+                let vars = var_fields(cx, &a.vars);
+                let values = ctx.per_item(&input, &vars, &a.expr, |v| v)?;
                 let mut out = (*input).clone();
                 out.set_attr(name, values);
                 set(out)
@@ -792,7 +587,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
             NodeKind::Value { value } => Ok(vec![(OutKey::Number, Data::Number(*value))]),
             NodeKind::Vector { value } => Ok(vec![(OutKey::Vec3, Data::Vec3(*value))]),
             NodeKind::Expression(e) => {
-                let vars = self.var_fields(graph, owner, scope, id, &e.vars);
+                let vars = var_fields(cx, &e.vars);
                 let resolve = |name: &str| vars.iter().rposition(|(n, _)| n == name);
                 let expr = Expr::parse(&e.expr, &resolve).map_err(expr_fail)?;
                 let Some(values) = vars
@@ -811,23 +606,14 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 Ok(vec![(OutKey::Number, Data::Number(v))])
             }
             NodeKind::Combine { value } => {
-                let v = [0u8, 1, 2].map(|i| {
-                    self.field_input(
-                        graph,
-                        owner,
-                        scope,
-                        id,
-                        InKey::Axis(i),
-                        value[usize::from(i)],
-                    )
-                });
+                let v = [0u8, 1, 2].map(|i| field_input(cx, InKey::Axis(i), value[usize::from(i)]));
                 match [0, 1, 2].map(|a| v[a].constant()) {
                     [Some(x), Some(y), Some(z)] => Ok(vec![(OutKey::Vec3, Data::Vec3([x, y, z]))]),
                     _ => Ok(vec![(OutKey::Vec3, Data::Field3(Rc::new(v)))]),
                 }
             }
             NodeKind::Separate { value } => {
-                let v = match self.linked(graph, owner, scope, id, InKey::Value) {
+                let v = match cx.input(InKey::Value) {
                     Some(Data::Vec3(v)) => v,
                     Some(Data::Number(n)) => [n; 3],
                     Some(d @ (Data::Field(_) | Data::Field3(_))) => {
@@ -849,15 +635,8 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                     .collect())
             }
             NodeKind::Circle(c) => {
-                let n = count_of(self.number_input(
-                    graph,
-                    owner,
-                    scope,
-                    id,
-                    InKey::Count,
-                    f64::from(c.resolution),
-                ));
-                let r = self.number_input(graph, owner, scope, id, InKey::Param(0), c.radius);
+                let n = count_of(number_input(cx, InKey::Count, f64::from(c.resolution)));
+                let r = number_input(cx, InKey::Param(0), c.radius);
                 if !r.is_finite() {
                     return Err(Fail::new(t!("assembly.node.error.not_a_number")));
                 }
@@ -876,17 +655,10 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 Ok(vec![(OutKey::Curve, Data::Curve(Arc::new(curve)))])
             }
             NodeKind::ParamCurve(c) => {
-                let n = count_of(self.number_input(
-                    graph,
-                    owner,
-                    scope,
-                    id,
-                    InKey::Count,
-                    f64::from(c.resolution),
-                ));
-                let t0 = self.number_input(graph, owner, scope, id, InKey::Param(0), c.t_min);
-                let t1 = self.number_input(graph, owner, scope, id, InKey::Param(1), c.t_max);
-                let vars = self.var_values(graph, owner, scope, id, &c.vars)?;
+                let n = count_of(number_input(cx, InKey::Count, f64::from(c.resolution)));
+                let t0 = number_input(cx, InKey::Param(0), c.t_min);
+                let t1 = number_input(cx, InKey::Param(1), c.t_max);
+                let vars = var_values(cx, &c.vars)?;
                 let mut names: Vec<String> = vec!["t".into(), "i".into(), "n".into()];
                 names.extend(vars.iter().map(|(name, _)| name.clone()));
                 let resolve = |name: &str| names.iter().rposition(|n| n == name);
@@ -928,19 +700,12 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 Ok(vec![(OutKey::Curve, Data::Curve(Arc::new(curve)))])
             }
             NodeKind::CurveToPoints(c) => {
-                let curve = match self.linked(graph, owner, scope, id, InKey::Curve) {
+                let curve = match cx.input(InKey::Curve) {
                     Some(Data::Curve(curve)) => curve,
                     _ => Arc::new(Curve::default()),
                 };
-                let count = count_of(self.number_input(
-                    graph,
-                    owner,
-                    scope,
-                    id,
-                    InKey::Count,
-                    f64::from(c.count),
-                ));
-                let length = self.number_input(graph, owner, scope, id, InKey::Param(0), c.length);
+                let count = count_of(number_input(cx, InKey::Count, f64::from(c.count)));
+                let length = number_input(cx, InKey::Param(0), c.length);
                 let sample = match c.mode {
                     CurveSample::Count => Sample::Count(count as usize),
                     CurveSample::Length if length.is_finite() && length > 1e-3 => {
@@ -968,18 +733,14 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 )])
             }
             NodeKind::InstanceOnPoints(p) => {
-                let points = match self.linked(graph, owner, scope, id, InKey::Points) {
+                let points = match cx.input(InKey::Points) {
                     Some(Data::Points(points)) => points,
                     _ => Arc::new(Points::default()),
                 };
-                let input = self.set_input(graph, owner, scope, id, InKey::Set(0));
+                let input = set_input(cx, InKey::Set(0));
                 let n = points.frames.len();
-                let chosen = self
-                    .field_input(graph, owner, scope, id, InKey::Param(0), p.selection)
-                    .column(n);
-                let turn = self
-                    .field3_input(graph, owner, scope, id, InKey::Param(1), p.rotation_deg)
-                    .map(|f| f.column(n));
+                let chosen = field_input(cx, InKey::Param(0), p.selection).column(n);
+                let turn = field3_input(cx, InKey::Param(1), p.rotation_deg).map(|f| f.column(n));
                 let mut moves = Vec::new();
                 let mut used = Vec::new();
                 for (k, frame) in points.frames.iter().enumerate() {
@@ -1006,11 +767,7 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                     )));
                 }
                 if input.crystal.is_some() {
-                    self.warn(
-                        scope,
-                        id,
-                        t!("assembly.node.error.crystal_dropped").to_owned(),
-                    );
+                    warn(cx, t!("assembly.node.error.crystal_dropped").to_owned());
                 }
                 let mut out = input.copied(&moves, "");
                 out.crystal = None;
@@ -1022,89 +779,16 @@ impl<'s, 'a> Evaluator<'s, 'a> {
                 set(out)
             }
             NodeKind::Index => Ok(vec![(OutKey::Number, Data::Field(Rc::new(Field::Index)))]),
-            NodeKind::Group(g) => self.group(graph, owner, scope, id, &g.def, &g.inputs),
-            NodeKind::GroupInput => {
-                let bound = self.bindings.get(scope).cloned().unwrap_or_default();
-                Ok(owner
-                    .map(|d| {
-                        d.inputs
-                            .iter()
-                            .map(|p| {
-                                let data = bound
-                                    .iter()
-                                    .find(|(k, _)| *k == p.key)
-                                    .map(|(_, d)| d.clone())
-                                    .unwrap_or_else(|| default_data(p.ty, p.default));
-                                (OutKey::Port(p.key), data)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default())
-            }
-            NodeKind::GroupOutput | NodeKind::Output => Ok(Vec::new()),
+            // The crate's evaluator does the custom-node kinds and the output.
+            NodeKind::Group(_)
+            | NodeKind::GroupInput
+            | NodeKind::GroupOutput
+            | NodeKind::Output => Ok(Vec::new()),
         }
     }
+}
 
-    /// A custom node: its inputs bound, its graph evaluated inside it.
-    fn group(
-        &mut self,
-        graph: &Graph,
-        owner: Option<&NodeDef>,
-        scope: &Scope,
-        id: NodeId,
-        def_id: &DefId,
-        inline: &std::collections::BTreeMap<u32, PortValue>,
-    ) -> Result<Vec<(OutKey, Data)>, Fail> {
-        let defs_all = self.src.defs;
-        let Some(def) = defs::find(defs_all, def_id) else {
-            return Err(Fail::new(t!("assembly.node.error.missing_def")));
-        };
-        if self.def_stack.contains(def_id) {
-            return Err(Fail::new(t!(
-                "assembly.node.error.recursion",
-                name = def.name
-            )));
-        }
-        if self.def_stack.len() >= MAX_DEPTH {
-            return Err(Fail::new(t!(
-                "assembly.node.error.too_deep",
-                max = MAX_DEPTH
-            )));
-        }
-        let mut bound = Vec::with_capacity(def.inputs.len());
-        for p in &def.inputs {
-            let data = match self.linked(graph, owner, scope, id, InKey::Port(p.key)) {
-                Some(d) => d
-                    .conform(p.ty)
-                    .unwrap_or_else(|| default_data(p.ty, p.default)),
-                None => match (inline.get(&p.key), p.ty) {
-                    (Some(v), SocketType::Number) => Data::Number(v.number()),
-                    (Some(v), SocketType::Vec3) => Data::Vec3(v.vec3()),
-                    _ => default_data(p.ty, p.default),
-                },
-            };
-            bound.push((p.key, data));
-        }
-        let mut inner = scope.clone();
-        inner.push(id);
-        self.bindings.insert(inner.clone(), Rc::new(bound));
-        self.def_stack.push(def_id.clone());
-        let out_node = def.graph.group_output();
-        let mut outputs = Vec::with_capacity(def.outputs.len());
-        if let Some(out_node) = out_node {
-            self.mark(&inner, out_node);
-        }
-        for p in &def.outputs {
-            let data = out_node
-                .and_then(|o| self.linked(&def.graph, Some(def), &inner, o, InKey::Port(p.key)))
-                .and_then(|d| d.conform(p.ty))
-                .unwrap_or_else(|| default_data(p.ty, p.default));
-            outputs.push((OutKey::Port(p.key), data));
-        }
-        self.def_stack.pop();
-        Ok(outputs)
-    }
-
+impl Ctx<'_, '_> {
     /// A building step applied to `input`.
     fn op(&self, step: &Step, input: &Set) -> Result<Set, Fail> {
         let shapes = self.src.shapes;
@@ -1454,7 +1138,7 @@ fn default_data(ty: SocketType, default: Option<PortValue>) -> Data {
 }
 
 fn expr_fail(e: super::expr::ExprError) -> Fail {
-    Fail::new(e.to_string())
+    Fail::new(expr::message(&e))
 }
 
 /// Whether `name` can be an attribute: a letter or `_`, then letters, digits and `_`.
@@ -2061,7 +1745,7 @@ mod tests {
 
         let defs = d.defs.clone();
         let g = d.graph_mut();
-        ops::remove(g, &[second, merge].into());
+        ops::remove(g, &defs, None, &[second, merge].into());
         ops::ungroup(g, &defs, node).unwrap();
         assert!(same(&before, &d.instances()));
     }

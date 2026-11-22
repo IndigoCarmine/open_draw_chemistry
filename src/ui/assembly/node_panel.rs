@@ -728,7 +728,7 @@ fn check(expr: &str, vars: &[Var], hint: &str, per_item: bool) -> Result<(), Str
     };
     Expr::parse(expr, &|n| known(n).then_some(0))
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| crate::assembly::graph::expr::message(&e))
 }
 
 /// The variables of an expression node: name, value (when unwired), and buttons to remove or

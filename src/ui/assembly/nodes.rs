@@ -30,6 +30,7 @@ use crate::assembly::graph::{
 };
 use crate::assembly::model::Design;
 use crate::theme::dark;
+use flow_nodes_rs::ValueHint;
 
 /// Width of a node on the canvas at zoom 1.
 const NODE_W: f32 = 176.0;
@@ -358,9 +359,9 @@ fn lay(
     }
     for i in node.kind.inputs(defs, owner) {
         let wired = graph.link_into(node.id, i.key).is_some();
-        let unit = if i.angle {
+        let unit = if i.hint == ValueHint::Angle {
             "°"
-        } else if i.length {
+        } else if i.hint == ValueHint::Length {
             " Å"
         } else {
             ""
@@ -392,9 +393,9 @@ fn lay(
                 || matches!(i.key, InKey::Field(f) if f.is_count())
             {
                 Scrub::COUNT
-            } else if i.angle {
+            } else if i.hint == ValueHint::Angle {
                 Scrub::ANGLE
-            } else if i.length {
+            } else if i.hint == ValueHint::Length {
                 Scrub::LENGTH
             } else {
                 Scrub::PLAIN
@@ -1810,7 +1811,8 @@ fn apply_to(
             Ok(None)
         }
         GraphEdit::Remove(ids) => {
-            ops::remove(graph, &ids);
+            let owner_def = owner.and_then(|o| defs::find(defs, o)).cloned();
+            ops::remove(graph, defs, owner_def.as_ref(), &ids);
             Ok(Some(BTreeSet::new()))
         }
         GraphEdit::Duplicate(ids) => {
@@ -1838,8 +1840,8 @@ fn apply_to(
         }
         GraphEdit::Group(ids) => {
             let name = new_group_name(defs);
-            let (_, node) =
-                ops::group(graph, defs, owner, &ids, &name).map_err(|e| e.to_string())?;
+            let (_, node) = ops::group(graph, defs, owner, &ids, &name)
+                .map_err(|e| ops::group_message(e).to_owned())?;
             Ok(Some([node].into()))
         }
         GraphEdit::SetValue(id, key, value) | GraphEdit::DragValue(id, key, value) => {
@@ -1894,7 +1896,7 @@ fn connect(
     owner: Option<&defs::DefId>,
     mut end: End2,
 ) -> Result<(), String> {
-    let missing = || ops::ConnectError::Missing.to_string();
+    let missing = || ops::connect_message(ops::ConnectError::Missing).to_owned();
     // The spare input of a merge.
     if let (
         Some(Node {
@@ -1972,7 +1974,7 @@ fn connect(
         end.to,
         end.input,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| ops::connect_message(e).to_owned())
 }
 
 /// Replace node `node.id` of the graph at `scope` by `node` (an edit from the panel), keeping

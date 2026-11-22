@@ -32,13 +32,24 @@ fn digest(design: &open_draw_chemistry::assembly::Design) -> String {
     for b in &built.bonds {
         text += &format!("{} {} {}\n", b.begin, b.end, b.order);
     }
-    text += &format!("{:?}\n{:?}\n", built.molecule_start, built.component_of_molecule);
+    text += &format!(
+        "{:?}\n{:?}\n",
+        built.molecule_start, built.component_of_molecule
+    );
     text += &format!("{:?}\n", built.crystal.as_ref().map(|c| (c.z, c.reps)));
     let ev = design.evaluation();
-    text += &format!("errors {} warnings {}\n", ev.errors.len(), ev.warnings.len());
+    text += &format!(
+        "errors {} warnings {}\n",
+        ev.errors.len(),
+        ev.warnings.len()
+    );
     let hash = Sha256::digest(text.as_bytes());
     let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-    format!("atoms {}\nmolecules {}\nbuild {hex}\n", built.atoms.len(), built.molecule_count())
+    format!(
+        "atoms {}\nmolecules {}\nbuild {hex}\n",
+        built.atoms.len(),
+        built.molecule_count()
+    )
 }
 
 /// `actual` against fixture `name`; with `GOLDEN_WRITE=1`, the fixture is written instead (only
