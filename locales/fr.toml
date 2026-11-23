@@ -165,6 +165,8 @@ create_assembly_tip = "Utilise le modèle 3D actuel comme monomère pour constru
 title = "Outils"
 periodic_table = "Tableau périodique"
 manage_fragments = "Gérer les fragments"
+node_editing = "Édition par nœuds (avancé)"
+node_editing_tip = "Modifier aussi les étapes de l'assemblage comme un graphe de nœuds : brancher et fusionner, choisir des molécules par des expressions, créer ses propres nœuds. Les étapes fonctionnent sans elle"
 
 [menu.help]
 title = "Aide"

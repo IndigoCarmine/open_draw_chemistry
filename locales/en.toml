@@ -279,6 +279,8 @@ create_assembly_tip = "Use the current 3D model as a monomer to build assemblies
 title = "Tools"
 periodic_table = "Periodic table"
 manage_fragments = "Manage fragments"
+node_editing = "Node editing (advanced)"
+node_editing_tip = "Also edit the assembly's steps as a graph of nodes: branch and merge, choose molecules by expressions, make nodes of your own. The steps work without it"
 
 [menu.help]
 title = "Help"
@@ -1790,6 +1792,9 @@ add_tip = "Add a node (right-click or Shift+A on the canvas)"
 show = "Edit as nodes…"
 show_tip = "Show the steps as a graph of nodes under the viewer. There the assembly can also branch, merge several monomers, choose molecules by expressions and gather nodes into nodes of your own"
 hide = "Hide the node editor"
+needed = "This assembly branches or merges, which a list of steps cannot show. It is still built and shown; to edit it, switch on node editing, an advanced feature."
+enable = "Switch on node editing"
+enable_tip = "The same as Tools ▸ Node editing (advanced): the steps can then also be edited as a graph of nodes"
 empty_hint = "Add a monomer, then right-click to add nodes"
 value_tip = "Drag left or right to change it (Ctrl: finer). Click to type a number or an expression without names, such as 360/7; Enter sets it, Esc puts it back"
 vector_tip = "Drag left or right to change x, up or down to change y (with Shift: z; Ctrl: finer). Click to type three numbers separated by commas (x, y, z), or one for all three, each maybe an expression without names such as 360/7; Enter sets them, Esc puts them back"

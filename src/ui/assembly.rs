@@ -3,10 +3,12 @@
 //! exporting and saving it. The model is [`crate::assembly`]; this module only draws it and
 //! turns clicks into edits.
 //!
-//! The steps can also be seen and edited as a graph of nodes in the node editor under the
-//! viewer ([`nodes`]), opened from the panel. There an assembly can branch and merge; one
-//! that a list of steps cannot hold is edited in the node editor, the panel showing the
-//! selected node's settings ([`node_panel`]) in place of the steps.
+//! Node editing is an advanced feature, switched on in the ツール menu. Then the steps can also
+//! be seen and edited as a graph of nodes in the node editor under the viewer ([`nodes`]),
+//! opened from the panel. There an assembly can branch and merge; one that a list of steps
+//! cannot hold is edited in the node editor, the panel showing the selected node's settings
+//! ([`node_panel`]) in place of the steps. With node editing off, such an assembly is still
+//! built and shown, and the panel offers to switch node editing on.
 //!
 //! In the viewer: drag to orbit, Shift+drag or right/middle drag to pan, wheel to zoom,
 //! double-click empty space to reframe, click an atom to select its molecule. A selected
@@ -280,7 +282,7 @@ pub fn viewer_area(
 
     let Some(doc) = doc else { return };
     node_editor_area(ui, doc, view);
-    if view.nodes.open && view.nodes.maximized {
+    if view.nodes.shown() && view.nodes.maximized {
         return;
     }
     if ui.ctx().memory(|m| m.focused().is_none()) {
@@ -332,7 +334,7 @@ fn node_editor_area(ui: &mut egui::Ui, doc: &mut Document, view: &mut AssemblyVi
     let frame = egui::Frame::NONE
         .fill(dark::BACKDROP)
         .inner_margin(egui::Margin::symmetric(6, 4));
-    if !view.nodes.open {
+    if !view.nodes.shown() {
         return;
     }
     let available = ui.available_height();
@@ -1048,7 +1050,7 @@ fn node_editor_toggle(ui: &mut egui::Ui, view: &mut AssemblyView) {
 /// While the node editor shows the steps, opening a card selects its node and selecting a
 /// step's node opens its card.
 fn sync_steps(state: &AssemblyState, view: &mut AssemblyView) {
-    if !view.nodes.open {
+    if !view.nodes.shown() {
         // Nothing seen: the open card is selected when the editor opens.
         view.step_sync = (None, None);
         return;
@@ -1091,12 +1093,16 @@ fn build_tab(
             pipeline::pipeline(ui, state, view, look, ink, changes);
             ui.add_space(8.0);
             pipeline::add_box(ui, look, state, changes);
-            node_editor_toggle(ui, view);
-            if !state.design.defs.is_empty() {
-                node_panel::custom_nodes(ui, state, &mut view.nodes, look, ink, out);
+            if view.nodes.enabled {
+                node_editor_toggle(ui, view);
+                if !state.design.defs.is_empty() {
+                    node_panel::custom_nodes(ui, state, &mut view.nodes, look, ink, out);
+                }
             }
-        } else {
+        } else if view.nodes.enabled {
             node_panel::section(ui, state, &mut view.nodes, look, ink, out);
+        } else {
+            needs_node_editing(ui, view, look);
         }
         ui.add_space(8.0);
         if ui
@@ -1111,6 +1117,27 @@ fn build_tab(
     style::caption(ui, look, t!("assembly.view.section_placement"));
     style::card(ui, look, false, 0.0, |ui| {
         place::section(ui, state, view, ink)
+    });
+}
+
+/// In place of the steps, for an assembly that branches or merges while node editing is off:
+/// why there are no steps, and a button switching node editing on.
+fn needs_node_editing(ui: &mut egui::Ui, view: &mut AssemblyView, look: &Look) {
+    ui.add_space(8.0);
+    style::card(ui, look, false, 0.0, |ui| {
+        ui.label(
+            RichText::new(t!("assembly.editor.needed"))
+                .size(12.0)
+                .color(look.muted),
+        );
+        ui.add_space(2.0);
+        if ui
+            .button(t!("assembly.editor.enable"))
+            .on_hover_text(t!("assembly.editor.enable_tip"))
+            .clicked()
+        {
+            view.nodes.set_enabled(true);
+        }
     });
 }
 
@@ -1515,7 +1542,7 @@ fn components_section(
     }
     let several = state.design.components.len() > 1;
     let linear = state.design.is_linear();
-    let nodes_in_use = view.nodes.open || !linear;
+    let nodes_in_use = view.nodes.enabled && (view.nodes.open || !linear);
     let base = state.design.base;
     let mut renamed = false;
     let mut stop_renaming = false;
@@ -2801,12 +2828,19 @@ mod tests {
         use crate::assembly::graph::chain_step_id;
         let doc = doc_with(vec![array(2, 3.0), Step::new_ring()]);
         let mut view = AssemblyView::default();
-        assert!(!view.nodes.open, "the steps look as they always did");
+        assert!(!view.nodes.shown(), "the steps look as they always did");
         view.expanded = Some(1);
         sync_steps(&doc.assembly, &mut view);
         assert!(view.nodes.rt.editor.selected.is_empty());
 
         view.nodes.open = true;
+        sync_steps(&doc.assembly, &mut view);
+        assert!(
+            view.nodes.rt.editor.selected.is_empty(),
+            "open but node editing off: nothing is shown"
+        );
+
+        view.nodes.set_enabled(true);
         sync_steps(&doc.assembly, &mut view);
         assert_eq!(view.nodes.rt.editor.selected, [chain_step_id(1)].into());
         view.nodes.rt.editor.selected = [chain_step_id(0)].into();
@@ -2921,7 +2955,13 @@ mod tests {
             vec![(PanelTab::Build, None)];
         rounds.extend(ids.into_iter().map(|id| (PanelTab::Build, Some(id))));
         rounds.push((PanelTab::Display, None));
-        for (tab, selected) in rounds {
+        // With node editing off, then on (the editor open).
+        let rounds = rounds
+            .iter()
+            .map(|&r| (false, r))
+            .chain(rounds.iter().map(|&r| (true, r)));
+        for (enabled, (tab, selected)) in rounds {
+            view.nodes.set_enabled(enabled);
             view.tab = tab;
             view.nodes.rt.editor.selected = selected.into_iter().collect();
             view.renaming = Some((1, true));
@@ -2933,5 +2973,82 @@ mod tests {
         }
         assert!(commands.is_empty());
         assert!(doc.assembly.design.is_linear(), "looking changes nothing");
+    }
+
+    /// The texts drawn in `output`.
+    fn texts(output: &egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Node editing is off until switched on: the steps alone show, and an assembly that
+    /// branches is built and shown but offers to switch node editing on instead of its nodes.
+    #[test]
+    fn node_editing_is_an_advanced_feature_switched_on_by_hand() {
+        use crate::assembly::graph::chain_step_id;
+        let ctx = egui::Context::default();
+        let mut doc = doc_with(vec![array(2, 3.0), Step::new_ring()]);
+        let mut view = AssemblyView::default();
+        view.nodes.rt.library = std::cell::OnceCell::from(Vec::new());
+        assert!(!view.nodes.enabled, "off by default");
+        let mut commands = Vec::new();
+        // Laid out as in the app, the panel at the right. Two frames: a panel shown for the
+        // first time is laid out before it is drawn.
+        let mut draw = |doc: &mut Document, view: &mut AssemblyView| {
+            let mut shown = Vec::new();
+            for _ in 0..2 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 820.0))),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    egui::Panel::right("panel")
+                        .show(ui, |ui| panel(ui, Some(&mut *doc), view, &mut commands));
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        viewer_area(ui, "test", Some(&mut *doc), view, None)
+                    });
+                });
+                output.textures_delta.clear();
+                shown = texts(&output);
+            }
+            shown
+        };
+        let has = |texts: &[String], text: &str| texts.iter().any(|t| t == text);
+
+        // Steps: no way into the nodes, even with the editor left open from before.
+        view.nodes.open = true;
+        let shown = draw(&mut doc, &mut view);
+        assert!(
+            !has(&shown, t!("assembly.editor.show")) && !has(&shown, t!("assembly.editor.hide"))
+        );
+        assert!(!has(&shown, t!("assembly.editor.frame")), "no node editor");
+
+        // A branching assembly: the note and the button in place of the steps.
+        nodes::apply(
+            &mut doc.assembly,
+            &mut view.nodes.rt,
+            nodes::GraphEdit::Duplicate([chain_step_id(0)].into()),
+        );
+        assert!(!doc.assembly.design.is_linear());
+        let shown = draw(&mut doc, &mut view);
+        assert!(has(&shown, t!("assembly.editor.enable")));
+        assert!(!has(&shown, t!("assembly.panel.section_node")));
+        assert!(!has(&shown, t!("assembly.editor.frame")), "no node editor");
+
+        // Switched on: the node's settings and the editor.
+        view.nodes.set_enabled(true);
+        let shown = draw(&mut doc, &mut view);
+        assert!(!has(&shown, t!("assembly.editor.enable")));
+        assert!(has(&shown, t!("assembly.panel.section_node")));
+        assert!(
+            has(&shown, t!("assembly.editor.frame")),
+            "the node editor is open"
+        );
     }
 }

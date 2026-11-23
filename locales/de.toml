@@ -165,6 +165,8 @@ create_assembly_tip = "Das aktuelle 3D-Modell als Monomer verwenden, um Aggregat
 title = "Werkzeuge"
 periodic_table = "Periodensystem"
 manage_fragments = "Fragmente verwalten"
+node_editing = "Knotenbearbeitung (für Fortgeschrittene)"
+node_editing_tip = "Die Schritte des Aggregats auch als Knotengraph bearbeiten: verzweigen und zusammenführen, Moleküle per Ausdruck wählen, eigene Knoten bilden. Die Schritte funktionieren auch ohne"
 
 [menu.help]
 title = "Hilfe"

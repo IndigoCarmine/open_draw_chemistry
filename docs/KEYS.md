@@ -409,9 +409,11 @@ A right-click does nothing.
 | --- | --- | --- |
 | Double-click | A monomer's name | Turn it into a field to rename it. Leaving the field ends it |
 | Drag | The grip (⠿) on the left of a step's card | Reorder the steps |
-| Click | **Edit as nodes…** under the steps | Show the steps in the node editor (4.4); selecting a step's node there opens its card |
+| Click | **Edit as nodes…** under the steps | Show the steps in the node editor (4.4); selecting a step's node there opens its card. There once node editing is switched on (**Tools ▸ Node editing (advanced)**) |
 
 ### 4.4 Node editor
+
+Node editing is an advanced feature, off until switched on with **Tools ▸ Node editing (advanced)**; the steps do not need it. With it off, an assembly that branches (opened from a file, say) is still built and shown, and the panel offers to switch it on in place of the steps.
 
 The node editor is an extension of the steps: **Edit as nodes…** under them shows the same steps as a graph of nodes under the viewer, and the steps and the nodes stay the same assembly. In the editor the assembly can also branch: monomers feed nodes that copy (ring, stack, array, crystal, repeat), move (move/rotate, arc, move each), merge and select molecules, and the Assembly node is what is built. While the graph is still one chain of steps, the panel keeps showing the step cards and the file is saved as before; once it branches, the panel shows the selected node's settings instead, until the graph is a chain again. A wire carries molecules (orange, labelled with how many), a number (grey) or three numbers (violet). The keys work while the cursor is over the editor and not in a text field.
 

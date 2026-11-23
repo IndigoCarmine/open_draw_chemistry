@@ -168,6 +168,8 @@ create_assembly_tip = "Usa el modelo 3D actual como monómero para construir ens
 title = "Herramientas"
 periodic_table = "Tabla periódica"
 manage_fragments = "Gestionar fragmentos"
+node_editing = "Edición con nodos (avanzado)"
+node_editing_tip = "Edita también los pasos del ensamblaje como un grafo de nodos: ramificar y unir, elegir moléculas con expresiones, crear nodos propios. Los pasos funcionan sin ella"
 
 [menu.help]
 title = "Ayuda"

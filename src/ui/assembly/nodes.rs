@@ -42,11 +42,15 @@ pub(super) use flow_nodes_rs::editor::number_text;
 /// next input or output.
 const NEW_PORT: u32 = u32::MAX;
 
-/// The editor's state shared by every document. Whether it is open and its height are kept
-/// between runs.
+/// The editor's state shared by every document. Whether node editing is on, whether the editor
+/// is open and its height are kept between runs.
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct NodeEditorView {
+    /// Node editing, an advanced feature, is switched on (ツール menu). Off, the assembly is
+    /// built from its steps alone: no editor, no custom nodes, and an assembly that branches
+    /// asks for it to be switched on.
+    pub enabled: bool,
     pub open: bool,
     pub height: f32,
     /// Fills the central area instead of the viewer.
@@ -58,10 +62,26 @@ pub struct NodeEditorView {
 impl Default for NodeEditorView {
     fn default() -> Self {
         Self {
+            enabled: false,
             open: false,
             height: 260.0,
             maximized: false,
             rt: Runtime::default(),
+        }
+    }
+}
+
+impl NodeEditorView {
+    /// The editor is on screen: node editing is on and the editor open.
+    pub fn shown(&self) -> bool {
+        self.enabled && self.open
+    }
+
+    /// Switch node editing on or off; switched on, the editor opens.
+    pub fn set_enabled(&mut self, on: bool) {
+        self.enabled = on;
+        if on {
+            self.open = true;
         }
     }
 }

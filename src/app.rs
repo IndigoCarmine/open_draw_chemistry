@@ -623,6 +623,10 @@ impl OpenDrawApp {
             Command::Quit => self.request_quit(ctx),
             Command::ToggleProperties => self.show_properties = !self.show_properties,
             Command::ToggleUpdateCheck => self.check_updates = !self.check_updates,
+            Command::ToggleNodeEditing => {
+                let nodes = &mut self.assembly_view.nodes;
+                nodes.set_enabled(!nodes.enabled);
+            }
             Command::SetView(view) => self.view = view,
             Command::SetLanguage(lang) => {
                 self.language = Some(lang);
@@ -1071,6 +1075,7 @@ impl OpenDrawApp {
             can_flip: editor.is_some_and(|e| e.can_flip_selection()),
             show_properties: self.show_properties,
             check_updates: self.check_updates,
+            node_editing: self.assembly_view.nodes.enabled,
             view: self.view,
             recent: &self.recent,
             can_generate_3d: job.is_some() && !running,
@@ -2041,6 +2046,38 @@ mod tests {
             let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
             assert_eq!(back.check_updates, check_updates);
         }
+    }
+
+    /// Node editing (advanced) is off unless switched on, also for the state files of versions
+    /// from before it was a setting; switched on from the menu it opens the editor, and the
+    /// choice is remembered.
+    #[test]
+    fn node_editing_defaults_off_toggles_and_round_trips() {
+        let older = SavedState("(assembly_view: (nodes: (open: true)))".to_owned());
+        let app: OpenDrawApp = eframe::get_value(&older, eframe::APP_KEY).unwrap();
+        assert!(!app.assembly_view.nodes.enabled);
+        assert!(
+            !app.assembly_view.nodes.shown(),
+            "left open, but not switched on"
+        );
+
+        let ctx = egui::Context::default();
+        let mut app = app_with_one_clean_document();
+        assert!(!app.menu_state().node_editing);
+        app.run(&ctx, Command::ToggleNodeEditing);
+        assert!(app.menu_state().node_editing);
+        assert!(
+            app.assembly_view.nodes.shown(),
+            "switched on, the editor opens"
+        );
+
+        let mut storage = SavedState(String::new());
+        eframe::set_value(&mut storage, eframe::APP_KEY, &app);
+        let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert!(back.assembly_view.nodes.enabled);
+
+        app.run(&ctx, Command::ToggleNodeEditing);
+        assert!(!app.assembly_view.nodes.shown());
     }
 
     /// A file holding one carbon atom, in a fresh directory.

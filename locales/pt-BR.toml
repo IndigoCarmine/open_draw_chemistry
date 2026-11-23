@@ -169,6 +169,8 @@ create_assembly_tip = "Usa o modelo 3D atual como monômero para construir monta
 title = "Ferramentas"
 periodic_table = "Tabela periódica"
 manage_fragments = "Gerenciar fragmentos"
+node_editing = "Edição por nós (avançado)"
+node_editing_tip = "Edite também as etapas da montagem como um grafo de nós: ramificar e unir, escolher moléculas por expressões, criar nós próprios. As etapas funcionam sem ela"
 
 [menu.help]
 title = "Ajuda"

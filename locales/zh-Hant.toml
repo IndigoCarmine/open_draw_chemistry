@@ -176,6 +176,8 @@ create_assembly_tip = "以目前的 3D 模型為單體，建立環、堆疊、�
 title = "工具"
 periodic_table = "元素週期表"
 manage_fragments = "管理片段"
+node_editing = "節點編輯（進階）"
+node_editing_tip = "將組裝體的步驟也作為節點圖編輯：分支與合併、以運算式選擇分子、建立自訂節點。只用步驟時無需開啟"
 
 [menu.help]
 title = "說明"

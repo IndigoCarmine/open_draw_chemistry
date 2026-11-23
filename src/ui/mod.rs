@@ -114,6 +114,8 @@ pub enum Command {
     ToggleProperties,
     /// Turn the update check at startup on or off.
     ToggleUpdateCheck,
+    /// Switch node editing (an advanced feature of the assembly) on or off.
+    ToggleNodeEditing,
     SetView(ViewMode),
     /// Show the UI in this language (and remember the choice).
     SetLanguage(crate::i18n::Lang),

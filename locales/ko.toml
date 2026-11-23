@@ -176,6 +176,8 @@ create_assembly_tip = "현재 3D 모델을 단량체로 고리, 적층, 나선 �
 title = "도구"
 periodic_table = "주기율표"
 manage_fragments = "조각 관리"
+node_editing = "노드 편집 (고급)"
+node_editing_tip = "집합체의 단계를 노드 그래프로도 편집합니다. 분기와 병합, 식으로 분자 선택, 사용자 노드 만들기를 쓸 수 있습니다. 단계만 쓸 때는 꺼 두어도 됩니다"
 
 [menu.help]
 title = "도움말"
