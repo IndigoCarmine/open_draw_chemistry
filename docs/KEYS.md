@@ -282,8 +282,12 @@ These do not work in the Select tool: the [bond keys](#bond-keys), `x` (expand a
 | Curly arrow | Drag from an atom | | Draw a curly arrow from that atom's lone pair (drawn as two dots) to the atom or bond where the drag ends (to empty space: a free end). The arrow bends away from the structure and is left selected |
 | Curly arrow | Drag from a bond | | The same, from the bond's electrons. The tail stands on the bond toward the atom nearer the press: the atom the electrons stay with |
 | Curly arrow | `Shift` held at the release | Ending on an atom | The head points between that atom and the atom the arrow starts from (the bond being formed) |
-| Curly arrow | Click | On a curly arrow | Make it bend to the other side |
-| Any tool | Drag the round handle in the middle of the selected curly arrow | One curly arrow, and nothing else, selected | Bend it: the middle of the arc follows the pointer (across its ends, it bends the other way). `Shift`: keep it a plain arc, only its depth changing |
+| Curly arrow | Click | On a curly arrow | Select it alone, showing its handles |
+| Any tool | Drag the round handle in the middle of the selected curly arrow | One curly arrow, and nothing else, selected, still a plain arc | Bend it: the middle of the arc follows the pointer (across its ends, it bends the other way). `Shift`: keep it a plain arc, only its depth changing |
+| Any tool | Drag one of the two small ring handles (the Bézier control points, each on a thin line from its end of the curve) | One curly arrow selected | Shape it freely: an S, a long U or L round other atoms. The shape is kept relative to the arrow's ends, so it follows the atoms |
+| Any tool | Double-click the curve of a curly arrow | | Add a knot there (a square handle), splitting the curve into two pieces with handles of their own. Drag the knot to route the arrow |
+| Any tool | Double-click a knot / a control point | One curly arrow selected | Take the knot out / make the arrow a plain arc again |
+| Any tool | Drag the diamond handle at either end | One curly arrow selected | Re-point that end: onto an atom (a lone pair at the tail), a bond, or empty space (a free end). `Shift` at the release on an atom: the head points between that atom and the tail's |
 | Text | Click | On a text | Open that text's box |
 | Text | Click | Elsewhere | Open a new text box there |
 
