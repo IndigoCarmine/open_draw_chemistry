@@ -605,6 +605,7 @@ start_failed = "Start fehlgeschlagen: {error}"
 generated = { one = "3D-Modell erzeugt ({formula}, {n} Atom)", other = "3D-Modell erzeugt ({formula}, {n} Atome)" }
 optimized = "Struktur optimiert (E = {energy} {unit})"
 undo_optimize = "Strukturoptimierung"
+fell_back = "{requested} hat keine Parameter für ein Atom dieser Struktur (etwa ein Metall), daher wurde {used} verwendet"
 
 [three_d.molfile]
 note_polymer_unit = "Eine Wiederholeinheit wird 3D (n = 1, mit Endgruppen)"

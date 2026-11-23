@@ -625,6 +625,7 @@ start_failed = "無法開始：{error}"
 generated = "已產生 3D 模型（{formula}，{n} 個原子）"
 optimized = "已完成結構最佳化（E = {energy} {unit}）"
 undo_optimize = "結構最佳化"
+fell_back = "{requested} 沒有此結構中某原子（如金屬）的參數，因此改用了 {used}"
 
 [three_d.molfile]
 note_polymer_unit = "將一個重複單元轉為 3D（n = 1，含末端基）"

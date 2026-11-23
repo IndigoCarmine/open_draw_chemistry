@@ -605,6 +605,7 @@ start_failed = "Démarrage impossible : {error}"
 generated = { one = "Modèle 3D généré ({formula}, {n} atome)", many = "Modèle 3D généré ({formula}, {n} d'atomes)", other = "Modèle 3D généré ({formula}, {n} atomes)" }
 optimized = "Structure optimisée (E = {energy} {unit})"
 undo_optimize = "Optimisation de la structure"
+fell_back = "{requested} n'a pas de paramètres pour un atome de cette structure (un métal, par exemple) : {used} a été utilisé"
 
 [three_d.molfile]
 note_polymer_unit = "Passage en 3D d'un seul motif de répétition (n = 1, avec les groupes terminaux)"

@@ -625,6 +625,7 @@ start_failed = "시작할 수 없습니다: {error}"
 generated = "3D 모델을 생성했습니다({formula}, 원자 {n}개)"
 optimized = "구조를 최적화했습니다(E = {energy} {unit})"
 undo_optimize = "구조 최적화"
+fell_back = "{requested}에는 이 구조의 원자(금속 등)에 대한 매개변수가 없어 {used}을(를) 사용했습니다"
 
 [three_d.molfile]
 note_polymer_unit = "반복 단위 하나를 3D로 만듭니다(n = 1, 말단기 포함)"

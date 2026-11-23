@@ -208,7 +208,22 @@ pub fn generate(
 
 /// [`generate`] from a 2D molfile already made by [`molfile::to_molfile`].
 pub fn generate_from_molfile(molfile: &str, force_field: ForceField) -> Result<Model3d, Error> {
-    engine::generate(molfile, force_field, GENERATE_STEPS)
+    with_uff_fallback(force_field, |ff| {
+        engine::generate(molfile, ff, GENERATE_STEPS)
+    })
+}
+
+/// `work` under `force_field`, or under UFF when `force_field` has no type for one of the
+/// structure's atoms: MMFF94 knows no metal, UFF the whole periodic table, so a complex is
+/// still built and relaxed. The model says which force field it was made with.
+fn with_uff_fallback(
+    force_field: ForceField,
+    work: impl Fn(ForceField) -> Result<Model3d, Error>,
+) -> Result<Model3d, Error> {
+    match work(force_field) {
+        Err(Error::ForceField(_)) if force_field != ForceField::Uff => work(ForceField::Uff),
+        result => result,
+    }
 }
 
 /// Minimise `model` further under `force_field`, which may differ from the one it was made with.
@@ -222,7 +237,9 @@ pub fn optimize_with(
     force_field: ForceField,
     constraints: &[Constraint],
 ) -> Result<Model3d, Error> {
-    engine::optimize(&model.molfile, force_field, OPTIMIZE_STEPS, constraints)
+    with_uff_fallback(force_field, |ff| {
+        engine::optimize(&model.molfile, ff, OPTIMIZE_STEPS, constraints)
+    })
 }
 
 /// The minimiser behind [`optimize_with`]: a relaxed scan minimises each point with it (see

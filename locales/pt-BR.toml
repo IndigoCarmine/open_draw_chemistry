@@ -609,6 +609,7 @@ start_failed = "Não foi possível iniciar: {error}"
 generated = { one = "Modelo 3D gerado ({formula}, {n} átomo)", other = "Modelo 3D gerado ({formula}, {n} átomos)" }
 optimized = "Estrutura otimizada (E = {energy} {unit})"
 undo_optimize = "Otimização da estrutura"
+fell_back = "{requested} não tem parâmetros para um átomo desta estrutura (um metal, por exemplo), então foi usado {used}"
 
 [three_d.molfile]
 note_polymer_unit = "Gerando em 3D uma unidade repetitiva (n = 1, com os grupos terminais)"
