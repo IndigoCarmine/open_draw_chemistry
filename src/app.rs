@@ -592,6 +592,7 @@ impl OpenDrawApp {
                 | Command::FillRing(_)
                 | Command::ClearRingFill
                 | Command::LineColor(_)
+                | Command::LineWidth(_)
                 | Command::TextColor(_)
                 | Command::Shadow(_)
         );
@@ -751,6 +752,7 @@ impl OpenDrawApp {
             Command::FillRing(_)
             | Command::ClearRingFill
             | Command::LineColor(_)
+            | Command::LineWidth(_)
             | Command::TextColor(_)
             | Command::Shadow(_) => {
                 if let Some(doc) = self.active_doc_mut()
