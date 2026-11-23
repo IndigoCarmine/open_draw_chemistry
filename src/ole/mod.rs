@@ -55,8 +55,10 @@ pub fn copy_3d(
     ctx: &egui::Context,
 ) -> Result<&'static str, String> {
     #[cfg(windows)]
-    if clipboard::set_3d(object).is_ok() {
-        return Ok(t!("ole.clipboard.copied_3d_for_office"));
+    match clipboard::set_3d(object) {
+        Ok(()) => return Ok(t!("ole.clipboard.copied_3d_for_office")),
+        // The picture is copied instead; say why the object was not.
+        Err(e) => eprintln!("warn: the 3D view was copied as a picture only: {e}"),
     }
     let pixels = object
         .pixels()

@@ -31,8 +31,8 @@ use chembuider_rs::Molecule;
 use chembuider_rs::config::StyleConfig;
 use chembuider_rs::molecule::{cdx, image, ole};
 use windows::Win32::Foundation::{
-    DATA_S_SAMEFORMATETC, DV_E_FORMATETC, DV_E_TYMED, E_INVALIDARG, E_NOTIMPL, E_POINTER,
-    GlobalFree, HGLOBAL, OLE_E_ADVISENOTSUPPORTED, S_OK,
+    CLIPBRD_E_CANT_OPEN, DATA_S_SAMEFORMATETC, DV_E_FORMATETC, DV_E_TYMED, E_INVALIDARG, E_NOTIMPL,
+    E_POINTER, GlobalFree, HGLOBAL, OLE_E_ADVISENOTSUPPORTED, S_OK,
 };
 use windows::Win32::Graphics::Gdi::{
     CopyEnhMetaFileW, ENHMETAHEADER, GetDC, GetEnhMetaFileBits, GetEnhMetaFileHeader,
@@ -51,6 +51,7 @@ use windows::Win32::System::DataExchange::{METAFILEPICT, RegisterClipboardFormat
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{OleFlushClipboard, OleInitialize, OleSetClipboard};
 use windows::Win32::UI::Shell::SHCreateStdEnumFmtEtc;
+use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_NOREMOVE, PM_QS_SENDMESSAGE, PeekMessageW};
 use windows::core::{BOOL, Error, GUID, HRESULT, HSTRING, Ref, Result, implement};
 
 const CF_DIB: u16 = 8;
@@ -77,21 +78,48 @@ pub fn set_3d(object: &Object3d) -> Result<()> {
 
 /// Put `object` on the clipboard and render every format at once.
 fn publish(object: IDataObject) -> Result<()> {
-    // Another program may hold the clipboard open for a moment; OleSetClipboard does not wait.
-    let mut tries = 0;
-    loop {
-        match unsafe { OleSetClipboard(&object) } {
-            Ok(()) => break,
-            Err(_) if tries < 10 => {
-                tries += 1;
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            Err(e) => return Err(e),
-        }
-    }
+    // Another program may have the clipboard open for a moment, and neither call waits for it.
+    // That program is often Windows' clipboard history (or another viewer), opening it as soon
+    // as the object is published to read its formats, which this thread renders: so while it
+    // waits, this thread answers the messages sent to it, or the reader would hold the clipboard
+    // until it gave up.
+    retry_while_busy(|| unsafe { OleSetClipboard(&object) })?;
     // Render everything now: the copy then survives this app quitting, and nothing is asked of
     // this object later from inside another program's paste.
-    unsafe { OleFlushClipboard() }
+    retry_while_busy(|| unsafe { OleFlushClipboard() })
+}
+
+/// `call`, tried again while the clipboard cannot be opened (`CLIPBRD_E_CANT_OPEN`), for up to
+/// about [`BUSY_FOR`], handling the messages other programs send this thread meanwhile.
+fn retry_while_busy(mut call: impl FnMut() -> Result<()>) -> Result<()> {
+    let start = std::time::Instant::now();
+    loop {
+        match call() {
+            Err(e) if e.code() == CLIPBRD_E_CANT_OPEN && start.elapsed() < BUSY_FOR => {
+                answer_sent_messages(std::time::Duration::from_millis(25));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// How long a clipboard call is retried while the clipboard is busy.
+const BUSY_FOR: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// For `wait`, handle the messages other threads send this one (a clipboard reader asking the
+/// OLE clipboard window to render a format), leaving the posted ones (the window's input) in
+/// the queue.
+fn answer_sent_messages(wait: std::time::Duration) {
+    let until = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < until {
+        let mut msg = MSG::default();
+        // SAFETY: a peek into a local; PM_QS_SENDMESSAGE dispatches sent messages only, and
+        // PM_NOREMOVE leaves the queue as it is.
+        unsafe {
+            let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// OLE on this thread, once. winit has usually done it already (for drag and drop), in which
