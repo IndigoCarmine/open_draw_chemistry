@@ -302,6 +302,26 @@ pub fn menu_bar(
                 item(ui, label, "", state.has_document, command, out);
             }
             ui.separator();
+            {
+                use chembuider_rs::molecule::CurlyKind;
+                for (label, command) in [
+                    (
+                        t!("menu.reaction.add_curly_arrow"),
+                        Command::CurlyTool(CurlyKind::Pair),
+                    ),
+                    (
+                        t!("menu.reaction.add_fishhook_arrow"),
+                        Command::CurlyTool(CurlyKind::Single),
+                    ),
+                    (
+                        t!("menu.reaction.flip_curly_arrow"),
+                        Command::FlipCurlyArrows,
+                    ),
+                ] {
+                    item(ui, label, "", state.has_document, command, out);
+                }
+            }
+            ui.separator();
             item(
                 ui,
                 t!("menu.reaction.insert_table"),

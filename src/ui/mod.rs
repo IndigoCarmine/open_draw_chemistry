@@ -141,6 +141,10 @@ pub enum Command {
     ArrowTool(chembuider_rs::molecule::ArrowKind),
     /// Switch the active document's editor to the text tool (reaction conditions).
     TextTool,
+    /// Switch the active document's editor to the curly arrow tool of this kind.
+    CurlyTool(chembuider_rs::molecule::CurlyKind),
+    /// 巻き矢印を反転: make the selected curly arrows bend the other way.
+    FlipCurlyArrows,
     /// 分子集合体を作成: start the active document's assembly from its 3D model (when it has
     /// no monomer yet) and show the assembly view.
     CreateAssembly,

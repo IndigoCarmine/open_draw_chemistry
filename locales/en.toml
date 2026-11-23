@@ -32,6 +32,8 @@ menu = "Language"
 tooltip = "Language"
 
 [app.status]
+# Reaction > Flip curly arrow with no curly arrow selected.
+no_curly_arrow_selected = "Select a curly arrow to flip"
 # Status bar messages. {path} is a file path, {error} the reason it failed.
 open_failed = "Could not open {path}: {error}"
 # {name} is the opened document's title (usually its file name).
@@ -257,6 +259,10 @@ title = "Format"
 title = "Reaction"
 add_arrow = "Add reaction arrow"
 add_equilibrium_arrow = "Add equilibrium arrow"
+add_curly_arrow = "Add curly arrow (electron pair)"
+add_fishhook_arrow = "Add fish-hook arrow (one electron)"
+# Makes the selected curly arrows bend to the other side.
+flip_curly_arrow = "Flip curly arrow"
 # Text tool for the reaction conditions written over/under an arrow.
 conditions_text = "Reaction conditions text"
 insert_table = "Insert reaction table"
@@ -374,6 +380,7 @@ brackets = "{format} cannot represent brackets (repeat units, multiple groups), 
 # Status bar after opening a file. {items}: a list such as "2 arrows and 1 text"
 editable = "{items} can be edited"
 arrows = { one = "{n} arrow", other = "{n} arrows" }
+curly_arrows = { one = "{n} curly arrow", other = "{n} curly arrows" }
 # Text objects on the page
 texts = { one = "{n} text", other = "{n} texts" }
 tables = { one = "{n} reaction table", other = "{n} reaction tables" }
@@ -605,6 +612,10 @@ cyclohexane = "Cyclohexane"
 text = "Text"
 reaction_arrow = "Reaction arrow"
 equilibrium_arrow = "Equilibrium arrow"
+# Draws electron-pushing arrows of a mechanism: from a lone pair or a bond to an atom or bond.
+curly_arrow = "Curly arrow"
+# A curly arrow with half a head: one electron moving (radical steps).
+fishhook_arrow = "Fish-hook arrow"
 bracket = "Bracket"
 insert_reaction_table = "Insert reaction table"
 # Bond tool with a bond style that has no palette button.

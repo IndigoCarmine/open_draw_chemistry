@@ -13,6 +13,7 @@ menu = "Idioma (Language)"
 tooltip = "Idioma (Language)"
 
 [app.status]
+no_curly_arrow_selected = "Seleccione una flecha curva para invertir"
 open_failed = "No se pudo abrir {path}: {error}"
 opened = "Abierto: {name}"
 opened_summary = "Abierto: {name} ({summary})"
@@ -151,6 +152,9 @@ title = "Formato"
 title = "Reacción"
 add_arrow = "Añadir flecha de reacción"
 add_equilibrium_arrow = "Añadir flecha de equilibrio"
+add_curly_arrow = "Añadir flecha curva (par de electrones)"
+add_fishhook_arrow = "Añadir flecha de anzuelo (un electrón)"
+flip_curly_arrow = "Invertir la curvatura de la flecha"
 conditions_text = "Texto de condiciones de reacción"
 insert_table = "Insertar tabla de reacción"
 
@@ -243,6 +247,7 @@ brackets = "{format} no puede representar corchetes (unidades repetitivas, grupo
 [io.summary]
 editable = "Se pueden editar: {items}"
 arrows = { one = "{n} flecha", other = "{n} flechas" }
+curly_arrows = { one = "{n} flecha curva", other = "{n} flechas curvas" }
 texts = { one = "{n} texto", other = "{n} textos" }
 tables = { one = "{n} tabla de reacción", other = "{n} tablas de reacción" }
 brackets = { one = "{n} corchete", other = "{n} corchetes" }
@@ -446,6 +451,8 @@ cyclohexane = "Ciclohexano"
 text = "Texto"
 reaction_arrow = "Flecha de reacción"
 equilibrium_arrow = "Flecha de equilibrio"
+curly_arrow = "Flecha curva"
+fishhook_arrow = "Flecha de anzuelo"
 bracket = "Corchete"
 insert_reaction_table = "Insertar tabla de reacción"
 bond = "Enlace"
