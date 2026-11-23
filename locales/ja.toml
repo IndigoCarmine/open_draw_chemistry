@@ -480,6 +480,7 @@ wedge_bond = "くさび結合"
 # Stereo bond drawn as a hashed (dashed) wedge.
 hashed_wedge = "破線くさび"
 wavy_bond = "波線結合"
+dative_bond = "配位結合"
 # Tool that draws a carbon chain.
 chain = "鎖"
 benzene = "ベンゼン環"

@@ -90,6 +90,9 @@ enum BondKind {
     Wedge,
     Hash,
     Wavy,
+    /// A dative (coordinate) bond: an arrow from where it is drawn from, a ligand's donor
+    /// atom, to the metal.
+    Dative,
 }
 
 impl BondKind {
@@ -101,11 +104,12 @@ impl BondKind {
             BondKind::Wedge => (BondOrder::Single, BondStereo::WedgeUp),
             BondKind::Hash => (BondOrder::Single, BondStereo::WedgeDown),
             BondKind::Wavy => (BondOrder::Single, BondStereo::Wavy),
+            BondKind::Dative => (BondOrder::Single, BondStereo::Dative),
         }
     }
 }
 
-const BUTTONS: [(Icon, Action); 17] = [
+const BUTTONS: [(Icon, Action); 18] = [
     (Icon::Select, Action::Tool(PaletteTool::Select)),
     (Icon::Eraser, Action::Tool(PaletteTool::Eraser)),
     (Icon::Single, Action::Bond(BondKind::Single)),
@@ -114,6 +118,7 @@ const BUTTONS: [(Icon, Action); 17] = [
     (Icon::Wedge, Action::Bond(BondKind::Wedge)),
     (Icon::Hash, Action::Bond(BondKind::Hash)),
     (Icon::Wavy, Action::Bond(BondKind::Wavy)),
+    (Icon::Dative, Action::Bond(BondKind::Dative)),
     (Icon::Chain, Action::Canvas(CanvasTool::Chain)),
     (
         Icon::Benzene,
@@ -154,6 +159,7 @@ fn button_name(icon: Icon) -> &'static str {
         Icon::Wedge => t!("palette.tool.wedge_bond"),
         Icon::Hash => t!("palette.tool.hashed_wedge"),
         Icon::Wavy => t!("palette.tool.wavy_bond"),
+        Icon::Dative => t!("palette.tool.dative_bond"),
         Icon::Chain => t!("palette.tool.chain"),
         Icon::Benzene => t!("palette.tool.benzene"),
         Icon::Cyclopentane => t!("palette.tool.cyclopentane"),
@@ -672,6 +678,15 @@ mod tests {
         assert_eq!(editor.current_bond_order, BondOrder::Single);
         assert_eq!(editor.current_bond_stereo, BondStereo::WedgeDown);
         assert_eq!(tool_name(&editor, None), "Hashed wedge");
+
+        // The dative bond: an arrow, drawn with the Bond tool like the others.
+        apply(&mut editor, Action::Bond(BondKind::Dative));
+        assert_eq!(editor.tool, Tool::Bond);
+        assert_eq!(editor.current_bond_order, BondOrder::Single);
+        assert_eq!(editor.current_bond_stereo, BondStereo::Dative);
+        assert!(is_selected(&editor, None, Action::Bond(BondKind::Dative)));
+        assert!(!is_selected(&editor, None, Action::Bond(BondKind::Single)));
+        assert_eq!(tool_name(&editor, None), "Dative bond");
     }
 
     #[test]

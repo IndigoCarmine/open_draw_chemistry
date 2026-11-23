@@ -595,6 +595,7 @@ wedge_bond = "Wedge bond"
 # Stereo bond drawn as a hashed (dashed) wedge.
 hashed_wedge = "Hashed wedge"
 wavy_bond = "Wavy bond"
+dative_bond = "Dative bond"
 # Tool that draws a carbon chain.
 chain = "Chain"
 benzene = "Benzene ring"
