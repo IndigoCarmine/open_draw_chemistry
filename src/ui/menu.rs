@@ -27,6 +27,8 @@ pub struct MenuState<'a> {
     pub show_properties: bool,
     /// The update check at startup is on.
     pub check_updates: bool,
+    /// The assembly's node editing (an advanced feature) is on.
+    pub node_editing: bool,
     pub view: ViewMode,
     pub recent: &'a [PathBuf],
     /// A 3D model can be generated now: there is a document and no 3D work is running.
@@ -390,6 +392,16 @@ pub fn menu_bar(
                 Command::ManageFragments,
                 out,
             );
+            ui.separator();
+            let mut on = state.node_editing;
+            if ui
+                .checkbox(&mut on, t!("menu.tools.node_editing"))
+                .on_hover_text(t!("menu.tools.node_editing_tip"))
+                .clicked()
+            {
+                out.push(Command::ToggleNodeEditing);
+                ui.close();
+            }
         });
 
         ui.menu_button(t!("menu.help.title"), |ui| {

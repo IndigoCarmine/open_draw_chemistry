@@ -168,6 +168,8 @@ create_assembly_tip = "Usa il modello 3D corrente come monomero per costruire as
 title = "Strumenti"
 periodic_table = "Tavola periodica"
 manage_fragments = "Gestisci frammenti"
+node_editing = "Modifica a nodi (avanzato)"
+node_editing_tip = "Modifica anche i passaggi dell'assemblaggio come grafo di nodi: ramificare e unire, scegliere molecole con espressioni, creare nodi propri. I passaggi funzionano anche senza"
 
 [menu.help]
 title = "Aiuto"

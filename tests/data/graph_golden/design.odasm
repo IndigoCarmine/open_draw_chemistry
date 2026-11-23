@@ -1,0 +1,788 @@
+{
+  "version": 5,
+  "components": [
+    {
+      "name": "host",
+      "atoms": [
+        {
+          "element": "C",
+          "pos": [
+            0.1,
+            0.2,
+            0.3
+          ]
+        },
+        {
+          "element": "O",
+          "pos": [
+            1.3,
+            0.2,
+            0.3
+          ]
+        },
+        {
+          "element": "H",
+          "pos": [
+            -0.5,
+            0.9,
+            0.3
+          ]
+        }
+      ],
+      "bonds": [
+        {
+          "begin": 0,
+          "end": 1,
+          "order": 2
+        },
+        {
+          "begin": 0,
+          "end": 2,
+          "order": 1
+        }
+      ],
+      "orient": null
+    },
+    {
+      "name": "guest",
+      "atoms": [
+        {
+          "element": "C",
+          "pos": [
+            0.1,
+            0.2,
+            0.3
+          ]
+        },
+        {
+          "element": "O",
+          "pos": [
+            1.5,
+            0.2,
+            0.3
+          ]
+        },
+        {
+          "element": "H",
+          "pos": [
+            -0.5,
+            0.9,
+            0.3
+          ]
+        }
+      ],
+      "bonds": [
+        {
+          "begin": 0,
+          "end": 1,
+          "order": 2
+        },
+        {
+          "begin": 0,
+          "end": 2,
+          "order": 1
+        }
+      ],
+      "orient": null
+    }
+  ],
+  "base": 0,
+  "steps": [],
+  "manual": [],
+  "excluded": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": 1,
+        "kind": {
+          "Monomer": {
+            "component": 0
+          }
+        },
+        "pos": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": 4,
+        "kind": {
+          "Op": {
+            "Bend": {
+              "enabled": true,
+              "radius": 20.0,
+              "direction_deg": 0.0,
+              "pivot": "Centroid",
+              "orient": "Tangent"
+            }
+          }
+        },
+        "pos": [
+          660.0,
+          0.0
+        ],
+        "label": "arc"
+      },
+      {
+        "id": 5,
+        "kind": "Output",
+        "pos": [
+          880.0,
+          0.0
+        ]
+      },
+      {
+        "id": 6,
+        "kind": {
+          "Group": {
+            "def": "00112233445566778899aabbccddeeff",
+            "inputs": {}
+          }
+        },
+        "pos": [
+          330.0,
+          0.0
+        ]
+      },
+      {
+        "id": 7,
+        "kind": {
+          "Value": {
+            "value": 6.5
+          }
+        },
+        "pos": [
+          -200.0,
+          300.0
+        ]
+      },
+      {
+        "id": 8,
+        "kind": {
+          "Expression": {
+            "expr": "a * 2 + b",
+            "vars": [
+              {
+                "key": 0,
+                "name": "a",
+                "value": 1.0
+              },
+              {
+                "key": 1,
+                "name": "b",
+                "value": 0.25
+              }
+            ]
+          }
+        },
+        "pos": [
+          -200.0,
+          400.0
+        ]
+      },
+      {
+        "id": 9,
+        "kind": {
+          "Select": {
+            "expr": "k % 2 == 0",
+            "vars": []
+          }
+        },
+        "pos": [
+          600.0,
+          0.0
+        ]
+      },
+      {
+        "id": 10,
+        "kind": {
+          "MoveEach": {
+            "offset": [
+              "0",
+              "0",
+              "0"
+            ],
+            "euler_deg": [
+              "0",
+              "0",
+              "10 * layer + sin(k)"
+            ],
+            "pivot": "Own",
+            "vars": []
+          }
+        },
+        "pos": [
+          800.0,
+          100.0
+        ]
+      },
+      {
+        "id": 11,
+        "kind": {
+          "SetAttr": {
+            "name": "tag",
+            "expr": "1",
+            "vars": []
+          }
+        },
+        "pos": [
+          800.0,
+          0.0
+        ]
+      },
+      {
+        "id": 12,
+        "kind": "Index",
+        "pos": [
+          600.0,
+          250.0
+        ]
+      },
+      {
+        "id": 13,
+        "kind": {
+          "SetAttr": {
+            "name": "idx",
+            "expr": "v * 2",
+            "vars": [
+              {
+                "key": 0,
+                "name": "v",
+                "value": 0.0
+              }
+            ]
+          }
+        },
+        "pos": [
+          900.0,
+          0.0
+        ]
+      },
+      {
+        "id": 14,
+        "kind": {
+          "Merge": {
+            "inputs": 3
+          }
+        },
+        "pos": [
+          1000.0,
+          0.0
+        ]
+      },
+      {
+        "id": 15,
+        "kind": {
+          "Repeat": {
+            "n": 2,
+            "name": "rep",
+            "offset": [
+              "0",
+              "0",
+              "40 * i"
+            ],
+            "euler_deg": [
+              "0",
+              "0",
+              "0"
+            ],
+            "vars": []
+          }
+        },
+        "pos": [
+          1200.0,
+          0.0
+        ]
+      },
+      {
+        "id": 16,
+        "kind": {
+          "Monomer": {
+            "component": 1
+          }
+        },
+        "pos": [
+          600.0,
+          500.0
+        ]
+      },
+      {
+        "id": 17,
+        "kind": {
+          "ParamCurve": {
+            "coords": "Polar",
+            "exprs": [
+              "10",
+              "360*t",
+              "7*t"
+            ],
+            "t_min": 0.0,
+            "t_max": 2.0,
+            "resolution": 24,
+            "closed": false,
+            "vars": []
+          }
+        },
+        "pos": [
+          600.0,
+          700.0
+        ]
+      },
+      {
+        "id": 18,
+        "kind": {
+          "Circle": {
+            "resolution": 8,
+            "radius": 10.0
+          }
+        },
+        "pos": [
+          600.0,
+          900.0
+        ]
+      },
+      {
+        "id": 19,
+        "kind": {
+          "CurveToPoints": {
+            "mode": "Count",
+            "count": 10,
+            "length": 5.0
+          }
+        },
+        "pos": [
+          800.0,
+          700.0
+        ]
+      },
+      {
+        "id": 20,
+        "kind": {
+          "InstanceOnPoints": {
+            "selection": 1.0,
+            "rotation_deg": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "align": true
+          }
+        },
+        "pos": [
+          900.0,
+          700.0
+        ]
+      },
+      {
+        "id": 21,
+        "kind": {
+          "Combine": {
+            "value": [
+              0.0,
+              0.0,
+              15.0
+            ]
+          }
+        },
+        "pos": [
+          700.0,
+          800.0
+        ]
+      },
+      {
+        "id": 22,
+        "kind": {
+          "Separate": {
+            "value": [
+              1.0,
+              2.0,
+              3.0
+            ]
+          }
+        },
+        "pos": [
+          500.0,
+          800.0
+        ]
+      },
+      {
+        "id": 23,
+        "kind": {
+          "Vector": {
+            "value": [
+              4.0,
+              5.0,
+              6.0
+            ]
+          }
+        },
+        "pos": [
+          300.0,
+          800.0
+        ]
+      },
+      {
+        "id": 24,
+        "kind": {
+          "Op": {
+            "Lattice": {
+              "enabled": true,
+              "cell": {
+                "a": 10.0,
+                "b": 10.0,
+                "c": 10.0,
+                "alpha": 90.0,
+                "beta": 90.0,
+                "gamma": 90.0
+              },
+              "reps": [
+                1,
+                1,
+                1
+              ],
+              "symops": [
+                "x,y,z"
+              ]
+            }
+          }
+        },
+        "pos": [
+          0.0,
+          1200.0
+        ],
+        "bypass": true
+      },
+      {
+        "id": 25,
+        "kind": {
+          "Op": {
+            "Transform": {
+              "enabled": true,
+              "offset": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "euler_deg": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "pivot": "Centroid"
+            }
+          }
+        },
+        "pos": [
+          1100.0,
+          0.0
+        ],
+        "bypass": true
+      }
+    ],
+    "links": [
+      {
+        "from": 6,
+        "out": {
+          "Port": 1
+        },
+        "to": 4,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 1,
+        "out": "Set",
+        "to": 6,
+        "input": {
+          "Port": 0
+        }
+      },
+      {
+        "from": 7,
+        "out": "Number",
+        "to": 6,
+        "input": {
+          "Port": 2
+        }
+      },
+      {
+        "from": 7,
+        "out": "Number",
+        "to": 8,
+        "input": {
+          "Var": 0
+        }
+      },
+      {
+        "from": 8,
+        "out": "Number",
+        "to": 4,
+        "input": {
+          "Field": "BendRadius"
+        }
+      },
+      {
+        "from": 4,
+        "out": "Set",
+        "to": 9,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 9,
+        "out": "Selected",
+        "to": 11,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 9,
+        "out": "Rest",
+        "to": 10,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 11,
+        "out": "Set",
+        "to": 13,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 12,
+        "out": "Number",
+        "to": 13,
+        "input": {
+          "Var": 0
+        }
+      },
+      {
+        "from": 13,
+        "out": "Set",
+        "to": 14,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 10,
+        "out": "Set",
+        "to": 14,
+        "input": {
+          "Set": 1
+        }
+      },
+      {
+        "from": 17,
+        "out": "Curve",
+        "to": 19,
+        "input": "Curve"
+      },
+      {
+        "from": 19,
+        "out": "Points",
+        "to": 20,
+        "input": "Points"
+      },
+      {
+        "from": 16,
+        "out": "Set",
+        "to": 20,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 23,
+        "out": "Vec3",
+        "to": 22,
+        "input": "Value"
+      },
+      {
+        "from": 22,
+        "out": {
+          "Axis": 2
+        },
+        "to": 21,
+        "input": {
+          "Axis": 0
+        }
+      },
+      {
+        "from": 21,
+        "out": "Vec3",
+        "to": 20,
+        "input": {
+          "Param": 1
+        }
+      },
+      {
+        "from": 20,
+        "out": "Set",
+        "to": 14,
+        "input": {
+          "Set": 2
+        }
+      },
+      {
+        "from": 14,
+        "out": "Set",
+        "to": 25,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 25,
+        "out": "Set",
+        "to": 15,
+        "input": {
+          "Set": 0
+        }
+      },
+      {
+        "from": 15,
+        "out": "Set",
+        "to": 5,
+        "input": {
+          "Set": 0
+        }
+      }
+    ],
+    "next_id": 26
+  },
+  "defs": [
+    {
+      "id": "00112233445566778899aabbccddeeff",
+      "name": "rosette stack",
+      "description": "ring then stack",
+      "revision": 2,
+      "stamp": {
+        "revision": 1,
+        "hash": "67eff3f901134556d41364c6f2087d831d41f6a3003ec153d8f75a61808db784"
+      },
+      "inputs": [
+        {
+          "key": 0,
+          "name": "Molecules",
+          "ty": "Set"
+        },
+        {
+          "key": 2,
+          "name": "Radius",
+          "ty": "Number",
+          "default": {
+            "Number": 5.0
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "key": 1,
+          "name": "Molecules",
+          "ty": "Set"
+        }
+      ],
+      "graph": {
+        "nodes": [
+          {
+            "id": 0,
+            "kind": {
+              "Op": {
+                "Ring": {
+                  "enabled": true,
+                  "n": 6,
+                  "radius": 5.0,
+                  "tilt_deg": 0.0
+                }
+              }
+            },
+            "pos": [
+              220.0,
+              0.0
+            ]
+          },
+          {
+            "id": 1,
+            "kind": {
+              "Op": {
+                "Stack": {
+                  "enabled": true,
+                  "n": 10,
+                  "rise": 3.5,
+                  "twist_deg": 0.0,
+                  "slip": 0.0
+                }
+              }
+            },
+            "pos": [
+              440.0,
+              0.0
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "GroupInput",
+            "pos": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "id": 3,
+            "kind": "GroupOutput",
+            "pos": [
+              660.0,
+              0.0
+            ]
+          }
+        ],
+        "links": [
+          {
+            "from": 2,
+            "out": {
+              "Port": 0
+            },
+            "to": 0,
+            "input": {
+              "Set": 0
+            }
+          },
+          {
+            "from": 0,
+            "out": "Set",
+            "to": 1,
+            "input": {
+              "Set": 0
+            }
+          },
+          {
+            "from": 1,
+            "out": "Set",
+            "to": 3,
+            "input": {
+              "Port": 1
+            }
+          },
+          {
+            "from": 2,
+            "out": {
+              "Port": 2
+            },
+            "to": 0,
+            "input": {
+              "Field": "RingRadius"
+            }
+          }
+        ],
+        "next_id": 4
+      }
+    }
+  ]
+}

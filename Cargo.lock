@@ -1410,6 +1410,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 
 [[package]]
+name = "flow_nodes_rs"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2920,6 +2932,7 @@ dependencies = [
  "egui",
  "egui_plot",
  "egui_system_font_provider",
+ "flow_nodes_rs",
  "image",
  "lin_alg",
  "molecule_optimizer_rs",

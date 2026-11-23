@@ -623,6 +623,10 @@ impl OpenDrawApp {
             Command::Quit => self.request_quit(ctx),
             Command::ToggleProperties => self.show_properties = !self.show_properties,
             Command::ToggleUpdateCheck => self.check_updates = !self.check_updates,
+            Command::ToggleNodeEditing => {
+                let nodes = &mut self.assembly_view.nodes;
+                nodes.set_enabled(!nodes.enabled);
+            }
             Command::SetView(view) => self.view = view,
             Command::SetLanguage(lang) => {
                 self.language = Some(lang);
@@ -698,6 +702,8 @@ impl OpenDrawApp {
             Command::AssemblyExport(export) => self.export_assembly(export),
             Command::AssemblySave => self.save_assembly(),
             Command::AssemblyOpen => self.open_assembly(),
+            Command::AssemblyExportNode(id) => self.export_assembly_node(&id),
+            Command::AssemblyImportNode => self.import_assembly_node(),
             Command::Undo | Command::Redo if self.view.is_assembly() => {
                 let Some(doc) = self.active_doc_mut() else {
                     return;
@@ -947,6 +953,54 @@ impl OpenDrawApp {
         };
     }
 
+    fn export_assembly_node(&mut self, id: &assembly::graph::DefId) {
+        use assembly::graph::{defs, library};
+        let Some(doc) = self.active_doc() else { return };
+        let design = &doc.assembly.design;
+        let Some(def) = defs::find(&design.defs, id) else {
+            return;
+        };
+        let text = library::to_string(def, &design.defs);
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(t!("dialog.filter.assembly_node"), &[library::EXTENSION])
+            .set_file_name(format!("{}.{}", def.name, library::EXTENSION))
+            .save_file()
+        else {
+            return;
+        };
+        self.status = match std::fs::write(&path, text) {
+            Ok(()) => t!("app.status.node_exported", path = path.display()),
+            Err(e) => t!("app.status.write_failed", error = e),
+        };
+    }
+
+    fn import_assembly_node(&mut self) {
+        use assembly::graph::library;
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(t!("dialog.filter.assembly_node"), &[library::EXTENSION])
+            .pick_file()
+        else {
+            return;
+        };
+        let read = std::fs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|text| library::from_str(&text));
+        self.status = match read {
+            Ok(entry) => {
+                let mut all = entry.deps.clone();
+                all.push(entry.def.clone());
+                match library::NodeLibrary::default().save(&entry.def, &all) {
+                    Ok(_) => {
+                        self.assembly_view.nodes_reload_library();
+                        t!("app.status.node_imported", name = entry.def.name)
+                    }
+                    Err(e) => t!("app.status.write_failed", error = e),
+                }
+            }
+            Err(e) => t!("app.status.load_failed", path = path.display(), error = e),
+        };
+    }
+
     fn open_assembly(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter(t!("dialog.filter.assembly"), &[assembly::file::EXTENSION])
@@ -1021,6 +1075,7 @@ impl OpenDrawApp {
             can_flip: editor.is_some_and(|e| e.can_flip_selection()),
             show_properties: self.show_properties,
             check_updates: self.check_updates,
+            node_editing: self.assembly_view.nodes.enabled,
             view: self.view,
             recent: &self.recent,
             can_generate_3d: job.is_some() && !running,
@@ -1991,6 +2046,38 @@ mod tests {
             let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
             assert_eq!(back.check_updates, check_updates);
         }
+    }
+
+    /// Node editing (advanced) is off unless switched on, also for the state files of versions
+    /// from before it was a setting; switched on from the menu it opens the editor, and the
+    /// choice is remembered.
+    #[test]
+    fn node_editing_defaults_off_toggles_and_round_trips() {
+        let older = SavedState("(assembly_view: (nodes: (open: true)))".to_owned());
+        let app: OpenDrawApp = eframe::get_value(&older, eframe::APP_KEY).unwrap();
+        assert!(!app.assembly_view.nodes.enabled);
+        assert!(
+            !app.assembly_view.nodes.shown(),
+            "left open, but not switched on"
+        );
+
+        let ctx = egui::Context::default();
+        let mut app = app_with_one_clean_document();
+        assert!(!app.menu_state().node_editing);
+        app.run(&ctx, Command::ToggleNodeEditing);
+        assert!(app.menu_state().node_editing);
+        assert!(
+            app.assembly_view.nodes.shown(),
+            "switched on, the editor opens"
+        );
+
+        let mut storage = SavedState(String::new());
+        eframe::set_value(&mut storage, eframe::APP_KEY, &app);
+        let back: OpenDrawApp = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert!(back.assembly_view.nodes.enabled);
+
+        app.run(&ctx, Command::ToggleNodeEditing);
+        assert!(!app.assembly_view.nodes.shown());
     }
 
     /// A file holding one carbon atom, in a fresh directory.

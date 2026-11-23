@@ -7,10 +7,16 @@
 //! step's `i`-th transform, so a ring followed by a stack gives a stack of rings — the
 //! build_md_rs `make_rosette2` → `make_oligorosette` pipeline.
 
+use std::borrow::Cow;
+use std::hash::Hasher;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
+use super::graph::{self, Evaluation, Graph, NodeDef, OutKey, Shown};
 use super::math::{self, Cell, Rigid, Vec3};
 use super::symop::{self, SymOp};
+use crate::assembly::graph::ChainGraph;
 use crate::three_d::{Atom3d, Bond3d, Model3d};
 
 /// How many undo steps are kept.
@@ -200,7 +206,7 @@ impl Transform {
     }
 
     /// The move of `set`, its centroid taken from `shapes` (as [`Lattice::unit_cell`]).
-    fn of_set(&self, set: &[Instance], shapes: &[Option<Shape>]) -> Rigid {
+    pub(crate) fn of_set(&self, set: &[Instance], shapes: &[Option<Shape>]) -> Rigid {
         let pivot = match self.pivot {
             Pivot::Origin => [0.0; 3],
             Pivot::Centroid => {
@@ -275,7 +281,7 @@ impl Bend {
 
     /// The move of each molecule of `set`, in order, their atoms taken from `shapes` (as
     /// [`Transform::of_set`]). A molecule without a shape is left where it is.
-    fn of_set(&self, set: &[Instance], shapes: &[Option<Shape>]) -> Vec<Rigid> {
+    pub(crate) fn of_set(&self, set: &[Instance], shapes: &[Option<Shape>]) -> Vec<Rigid> {
         let molecules: Vec<Option<Vec<Vec3>>> = set
             .iter()
             .map(|inst| {
@@ -369,6 +375,19 @@ impl Lattice {
     /// every molecule, moved into the cell by its centroid, duplicates dropped. `shapes[c]` is
     /// component `c`'s atoms (`None` skips its molecules).
     pub fn unit_cell(&self, set: &[Instance], shapes: &[Option<Shape>]) -> Vec<Instance> {
+        self.unit_cell_sources(set, shapes)
+            .into_iter()
+            .map(|(inst, _)| inst)
+            .collect()
+    }
+
+    /// [`Lattice::unit_cell`], each molecule with the index in `set` of the one it is a copy
+    /// of.
+    pub fn unit_cell_sources(
+        &self,
+        set: &[Instance],
+        shapes: &[Option<Shape>],
+    ) -> Vec<(Instance, usize)> {
         struct Kept {
             component: usize,
             centroid: Vec3,
@@ -378,7 +397,7 @@ impl Lattice {
         let mut out = Vec::new();
         for op in &self.symops {
             let op = op.cartesian(&self.cell);
-            for inst in set {
+            for (source, inst) in set.iter().enumerate() {
                 let Some(Some((positions, elements))) = shapes.get(inst.component) else {
                     continue;
                 };
@@ -401,10 +420,13 @@ impl Lattice {
                     centroid: frac,
                     atoms,
                 });
-                out.push(Instance {
-                    component: inst.component,
-                    transform: moved.then(&Rigid::translation(shift_cart)),
-                });
+                out.push((
+                    Instance {
+                        component: inst.component,
+                        transform: moved.then(&Rigid::translation(shift_cart)),
+                    },
+                    source,
+                ));
             }
         }
         out
@@ -717,16 +739,178 @@ pub struct Design {
     /// and the step copy it was, by [`Design::excluded`]'s index.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub detached: Vec<(u64, usize)>,
+    /// The graph of nodes the steps' molecules come from, once the assembly has been edited as
+    /// one ([`Design::graph_mut`]). Until then it is the chain of [`Design::base`] and
+    /// [`Design::steps`] ([`Design::effective_graph`]), and an older release can still open
+    /// the file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph: Option<Graph>,
+    /// The custom nodes the graph uses (see [`graph::defs`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub defs: Vec<NodeDef>,
+    /// Where the node editor draws the chain of a design still made of steps: the monomer,
+    /// each step and the output, in order. Not saved; ignored when the steps no longer match.
+    #[serde(skip)]
+    pub chain_layout: Vec<[f32; 2]>,
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub eval_cache: EvalCache,
+}
+
+/// The last evaluation of a design's graph, keyed by a fingerprint of what it depends on.
+/// Not part of the design: clones start empty and every cache compares equal.
+#[derive(Default)]
+pub struct EvalCache(std::sync::Mutex<Option<(u64, Arc<Evaluation>)>>);
+
+impl Clone for EvalCache {
+    fn clone(&self) -> Self {
+        EvalCache::default()
+    }
+}
+
+impl PartialEq for EvalCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for EvalCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EvalCache")
+    }
+}
+
+/// Feeds what serde writes into a hasher.
+struct HashWriter(std::collections::hash_map::DefaultHasher);
+
+impl std::io::Write for HashWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 impl Design {
-    /// How many copies the steps make, counting the excluded ones. Saturates instead of
-    /// overflowing on absurd step counts.
-    fn all_step_copies(&self) -> usize {
-        if self.components.get(self.base).is_none() {
-            return 0;
+    /// The graph the steps' molecules come from: [`Design::graph`], or the chain of the base
+    /// monomer and the steps.
+    pub fn effective_graph(&self) -> Cow<'_, Graph> {
+        match &self.graph {
+            Some(g) => Cow::Borrowed(g),
+            None => {
+                let mut chain = Graph::chain(self.component_id(self.base), &self.steps);
+                if self.chain_layout.len() == chain.nodes.len() {
+                    for (node, pos) in chain.nodes.iter_mut().zip(&self.chain_layout) {
+                        node.pos = *pos;
+                    }
+                }
+                Cow::Owned(chain)
+            }
         }
-        self.running_counts().last().copied().unwrap_or(1)
+    }
+
+    /// Make the design steps again when `graph` (its top level, as edited) is a chain of a
+    /// monomer and steps, keeping where its nodes are drawn. Returns whether it did.
+    pub fn take_chain(&mut self, graph: &Graph) -> bool {
+        let Some((monomer, steps)) = graph.as_chain() else {
+            return false;
+        };
+        let Some(base) = self.component_index(monomer) else {
+            return false;
+        };
+        let order = graph.chain_order().unwrap_or_default();
+        self.chain_layout = order
+            .iter()
+            .filter_map(|id| graph.node(*id).map(|n| n.pos))
+            .collect();
+        self.base = base;
+        self.steps = steps;
+        self.graph = None;
+        true
+    }
+
+    /// Whether the assembly is still a monomer and a list of steps (no graph of its own).
+    pub fn is_linear(&self) -> bool {
+        self.graph.is_none()
+    }
+
+    /// The graph, to edit: made from the base monomer and the steps the first time (the steps
+    /// then live in it, and [`Design::steps`] is empty).
+    pub fn graph_mut(&mut self) -> &mut Graph {
+        if self.graph.is_none() {
+            let chain = Graph::chain(self.component_id(self.base), &self.steps);
+            self.steps.clear();
+            self.graph = Some(chain);
+        }
+        self.graph.as_mut().expect("just made")
+    }
+
+    /// Whether the graph holds a crystal (a lattice node).
+    pub fn has_lattice(&self) -> bool {
+        let is_lattice = |g: &Graph| {
+            g.nodes
+                .iter()
+                .any(|n| matches!(n.kind, graph::NodeKind::Op(Step::Lattice(_))))
+        };
+        is_lattice(&self.effective_graph()) || self.defs.iter().any(|d| is_lattice(&d.graph))
+    }
+
+    /// The graph evaluated: the molecules it makes (before any are excluded), what each node
+    /// gave and what went wrong. Remembered until what it depends on changes.
+    pub fn evaluation(&self) -> Arc<Evaluation> {
+        let key = self.eval_key();
+        if let Ok(cache) = self.eval_cache.0.lock()
+            && let Some((at, ev)) = cache.as_ref()
+            && *at == key
+        {
+            return ev.clone();
+        }
+        let shapes = self.shapes();
+        let source = graph::eval::Source {
+            components: &self.components,
+            component_ids: &self.component_ids,
+            defs: &self.defs,
+            shapes: &shapes,
+        };
+        let ev = Arc::new(graph::eval::evaluate(&source, &self.effective_graph()));
+        if let Ok(mut cache) = self.eval_cache.0.lock() {
+            *cache = Some((key, ev.clone()));
+        }
+        ev
+    }
+
+    /// A fingerprint of what the evaluation depends on: the monomers, the graph (not where its
+    /// nodes are drawn) and the custom nodes.
+    fn eval_key(&self) -> u64 {
+        let mut w = HashWriter(Default::default());
+        let _ = serde_json::to_writer(&mut w, &self.components);
+        let _ = serde_json::to_writer(&mut w, &self.component_ids);
+        let _ = serde_json::to_writer(&mut w, &self.defs);
+        match &self.graph {
+            Some(g) => {
+                w.0.write_u8(1);
+                for n in &g.nodes {
+                    w.0.write_u64(n.id.0);
+                    w.0.write_u8(u8::from(n.bypass));
+                    let _ = serde_json::to_writer(&mut w, &n.kind);
+                }
+                let _ = serde_json::to_writer(&mut w, &g.links);
+            }
+            None => {
+                w.0.write_u8(0);
+                w.0.write_usize(self.base);
+                let _ = serde_json::to_writer(&mut w, &self.steps);
+            }
+        }
+        w.0.finish()
+    }
+
+    /// How many copies the steps make, counting the excluded ones.
+    fn all_step_copies(&self) -> usize {
+        self.evaluation().output.len()
     }
 
     /// How many copies there are after each step (one entry per step, the excluded copies
@@ -734,28 +918,19 @@ impl Design {
     /// that cannot be built, leaves the count as it was. Without a base component every entry
     /// is zero. Saturates instead of overflowing.
     pub fn running_counts(&self) -> Vec<usize> {
-        if self.components.get(self.base).is_none() {
-            return vec![0; self.steps.len()];
+        if self.graph.is_some() {
+            return Vec::new();
         }
-        // A lattice step drops symmetry copies that coincide (special positions), so its
-        // `copies()` is only an upper bound: count what the steps really make.
-        if self
-            .steps
-            .iter()
-            .any(|s| s.enabled() && matches!(s, Step::Lattice(_)))
-        {
-            let mut counts = vec![0; self.steps.len()];
-            self.trace_step_copies(|i, n| counts[i] = n);
-            return counts;
-        }
-        let mut n = 1usize;
-        self.steps
-            .iter()
-            .map(|s| {
-                if s.enabled() {
-                    n = n.saturating_mul(s.copies());
+        let ev = self.evaluation();
+        (0..self.steps.len())
+            .map(|k| {
+                match ev
+                    .shown
+                    .get(&(Vec::new(), graph::chain_step_id(k), OutKey::Set))
+                {
+                    Some(Shown::Count(n)) => *n,
+                    _ => 0,
                 }
-                n
             })
             .collect()
     }
@@ -773,23 +948,35 @@ impl Design {
 
     /// How many atoms the assembly has, without building it.
     pub fn atom_count(&self) -> usize {
-        let from_steps = self
-            .components
-            .get(self.base)
-            .map_or(0, |c| c.atoms.len())
-            .saturating_mul(self.step_molecule_count());
+        let atoms = |c: usize| self.components.get(c).map_or(0, |c| c.atoms.len());
+        let ev = self.evaluation();
+        let from_steps = ev
+            .output
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.excluded.binary_search(i).is_err())
+            .fold(0usize, |n, (_, inst)| {
+                n.saturating_add(atoms(inst.component))
+            });
         self.manual
             .iter()
-            .filter_map(|m| self.components.get(m.component))
-            .fold(from_steps, |n, c| n.saturating_add(c.atoms.len()))
+            .fold(from_steps, |n, m| n.saturating_add(atoms(m.component)))
     }
 
-    /// The first enabled lattice step that cannot be built, and why (in the UI language).
+    /// The first crystal (lattice step or node) that cannot be built, and why (in the UI
+    /// language).
     pub fn lattice_error(&self) -> Option<String> {
-        self.steps.iter().find_map(|s| match s {
-            Step::Lattice(l) if l.enabled => l.check().err(),
-            _ => None,
-        })
+        self.evaluation().lattice_error().map(|i| i.message.clone())
+    }
+
+    /// The first other node that cannot be evaluated, by name, and why (in the UI language).
+    pub fn graph_error(&self) -> Option<(String, String)> {
+        let ev = self.evaluation();
+        let issue = ev.node_error()?;
+        let graph = self.effective_graph();
+        let name = node_name(&graph, &self.defs, &issue.scope, issue.node);
+        Some((name, issue.message.clone()))
     }
 
     /// Each component's atoms as the steps place them (oriented; as read when the
@@ -813,12 +1000,15 @@ impl Design {
     /// last step's copies outermost), with the crystal the last enabled lattice step made.
     /// Lattice steps that cannot be built ([`Design::lattice_error`]) are skipped.
     fn step_copies_with_crystal(&self) -> (Vec<Instance>, Option<Crystal>) {
-        self.trace_step_copies(|_, _| {})
+        let ev = self.evaluation();
+        (ev.output.items.clone(), ev.output.crystal.clone())
     }
 
+    /// What the steps made before they were a graph: kept to check the graph against.
     /// [`Design::step_copies_with_crystal`], telling `after` how many copies there are after
     /// each step, by the step's index (disabled steps included).
-    fn trace_step_copies(
+    #[cfg(test)]
+    pub(crate) fn trace_step_copies(
         &self,
         mut after: impl FnMut(usize, usize),
     ) -> (Vec<Instance>, Option<Crystal>) {
@@ -1058,6 +1248,38 @@ impl Design {
     }
 }
 
+/// The name node `node` of `graph` (inside the custom nodes `scope` enters) is shown by: its
+/// label, or its kind's name, after the custom nodes it is inside.
+pub fn node_name(
+    graph: &Graph,
+    defs: &[NodeDef],
+    scope: &[graph::NodeId],
+    node: graph::NodeId,
+) -> String {
+    let mut g = graph;
+    let mut path = Vec::new();
+    for id in scope {
+        let Some(n) = g.node(*id) else { break };
+        let graph::NodeKind::Group(r) = &n.kind else {
+            break;
+        };
+        path.push(n.kind.title(defs));
+        let Some(def) = graph::defs::find(defs, &r.def) else {
+            break;
+        };
+        g = &def.graph;
+    }
+    let name = g.node(node).map_or_else(String::new, |n| {
+        if n.label.is_empty() {
+            n.kind.title(defs)
+        } else {
+            n.label.clone()
+        }
+    });
+    path.push(name);
+    path.join(" › ")
+}
+
 /// What a lattice step made: the unit cell, its repeats, the operations, the asymmetric unit
 /// they were applied to, and how many molecules one unit cell holds. The steps' molecules
 /// start with the unit cell at the origin (`z` molecules), then its repeats.
@@ -1154,6 +1376,12 @@ impl AssemblyState {
     pub fn touch(&mut self) {
         self.pending = true;
         self.revision += 1;
+    }
+
+    /// Note that only the layout of the design changed (where nodes are drawn): it joins the
+    /// undo history without counting as a change to what is built.
+    pub fn touch_layout(&mut self) {
+        self.pending = true;
     }
 
     /// Close the current gesture: the changes since the last undo step become one.

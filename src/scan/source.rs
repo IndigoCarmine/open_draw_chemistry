@@ -445,10 +445,7 @@ mod tests {
     /// point are moved to where another point places the molecules, held there.
     #[test]
     fn a_placed_point_holds_each_molecule_and_carries_shapes_to_another_point() {
-        let rise = Param::Step {
-            step: 0,
-            field: StepField::StackRise,
-        };
+        let rise = Param::step(0, StepField::StackRise);
         let pose = Param::Pose {
             index: 0,
             field: PoseField::Rotation(2),

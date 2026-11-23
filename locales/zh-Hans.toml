@@ -173,6 +173,8 @@ create_assembly_tip = "以当前 3D 模型为单体，构建环、堆叠、螺�
 title = "工具"
 periodic_table = "元素周期表"
 manage_fragments = "管理片段"
+node_editing = "节点编辑（高级）"
+node_editing_tip = "将组装体的步骤也作为节点图编辑：分支与合并、用表达式选择分子、创建自定义节点。只用步骤时无需开启"
 
 [menu.help]
 title = "帮助"
@@ -901,6 +903,7 @@ pair = "{a} – {b}{image}：{distance} Å"
 pick_tip = "点击以选中第一个分子"
 more = "还有 {n} 对"
 
+# Very short texts in a step card's one-line summary.
 [assembly.pipeline]
 drag_tip = "拖动以调整顺序"
 collapse = "隐藏参数"
@@ -912,6 +915,7 @@ enabled_tip = "使用中（点击跳过）"
 disabled_tip = "已跳过（点击使用）"
 
 # Very short texts in a step card's one-line summary.
+
 [assembly.pipeline.summary]
 rotated_centroid = "绕重心旋转"
 rotated_origin = "绕原点旋转"

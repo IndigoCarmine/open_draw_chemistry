@@ -10,7 +10,14 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/IndigoCarmine/open_draw_chemistry"
 readme = "README.md"
 
+# The app and the crates split out of it (see `crates/`).
+[workspace]
+members = [".", "crates/flow_nodes_rs"]
+
 [dependencies]
+# The node graphs behind the assembly builder's node editor: the graph, custom nodes, the
+# evaluator, expressions, the node library and the editor widget. Split out to be reused.
+flow_nodes_rs = { path = "crates/flow_nodes_rs", features = ["library", "egui"] }
 # `wgpu` because the 3D viewer (moleucle_3dview_rs) renders through it; main.rs selects it.
 eframe = { version = "0.37.0", features = ["persistence", "wgpu"] }
 egui = "0.37.0"

@@ -409,6 +409,60 @@ A right-click does nothing.
 | --- | --- | --- |
 | Double-click | A monomer's name | Turn it into a field to rename it. Leaving the field ends it |
 | Drag | The grip (⠿) on the left of a step's card | Reorder the steps |
+| Click | **Edit as nodes…** under the steps | Show the steps in the node editor (4.4); selecting a step's node there opens its card. There once node editing is switched on (**Tools ▸ Node editing (advanced)**) |
+
+### 4.4 Node editor
+
+Node editing is an advanced feature, off until switched on with **Tools ▸ Node editing (advanced)**; the steps do not need it. With it off, an assembly that branches (opened from a file, say) is still built and shown, and the panel offers to switch it on in place of the steps.
+
+The node editor is an extension of the steps: **Edit as nodes…** under them shows the same steps as a graph of nodes under the viewer, and the steps and the nodes stay the same assembly. In the editor the assembly can also branch: monomers feed nodes that copy (ring, stack, array, crystal, repeat), move (move/rotate, arc, move each), merge and select molecules, and the Assembly node is what is built. While the graph is still one chain of steps, the panel keeps showing the step cards and the file is saved as before; once it branches, the panel shows the selected node's settings instead, until the graph is a chain again. A wire carries molecules (orange, labelled with how many), a number (grey) or three numbers (violet). The keys work while the cursor is over the editor and not in a text field.
+
+| Operation | Condition | Effect |
+| --- | --- | --- |
+| Drag | A node's header or body | Move it (and the other selected nodes) |
+| Click, `Shift`+click | A node | Select it / add it to or take it out of the selection |
+| Drag | Empty space | Select the nodes in a box (`Shift` adds to the selection) |
+| Drag | From a socket | Draw a wire; drop it on a socket of the right kind to connect. A number can feed a triple |
+| Drag | From a wired input | Take the wire off (drop it elsewhere to reconnect it) |
+| Drop a wire | On empty space | Offer the nodes that can take it; the one chosen is wired |
+| Drag to `+` | A merge's spare input; a group input or output node's spare socket | Add an input to the merge / an input or output to the custom node |
+| Double-click | A custom node | Edit inside it |
+| Right drag, middle drag | | Pan |
+| Wheel | | Zoom |
+| Right-click, `Shift`+`A` | | Add a node |
+| `Delete`, `X`, `Backspace` | | Delete the selected nodes (a node between two others is spliced out) |
+| `Ctrl`+`D` | | Duplicate the selected nodes |
+| `M` | | Bypass the selected nodes (their molecules pass through unchanged) / use them again |
+| `Ctrl`+`G` | | Gather the selected nodes into a custom node. The wires crossing the selection become its inputs and outputs |
+| `Ctrl`+`Alt`+`G` | A custom node is selected | Put its nodes back in its place |
+| `Tab` | | Edit inside the selected custom node; with none selected, go back out |
+| `Home` | | Show every node |
+| `Ctrl`+`A` | | Select every node |
+| `Esc` | | Let go of the selection; with nothing selected, go back out of a custom node |
+
+A design that is still a chain (a monomer and steps, as files before version 5 are) is saved as before until the graph is changed in a way a chain cannot hold.
+
+#### Expressions
+
+Select, Repeat, Move each, Set attribute and Expression nodes take expressions, such as `30*i + 5*sin(i)` or `layer % 2 == 0 && z > 0`.
+
+- Operators: `+ - * / % ^` (`%` takes the sign of the divisor, `^` is a power), comparisons `< <= > >= == !=`, `&& || !`, and `c ? a : b`. True is 1, false 0.
+- Functions: `sin cos tan asin acos atan` (radians), `sind cosd tand` (degrees), `atan2 sqrt abs floor ceil round min max pow clamp sign rad deg`. Constants `pi`, `e`.
+- Names: the node's own variables (inputs other nodes can feed), the molecules' attributes (`ring`, `layer`, `row`, `cell`, a repeat's name, `input` after a merge, `copy` and `copies` after any copying node, and those set by Set attribute), `k` (the molecule's place in the set), `count`, `comp` (its monomer, from 0), `x y z` (its centroid), and `i`, `n` (`copy` and `copies`). In a Repeat node, `i` is the copy number and `n` the number of copies.
+- Number fields also take an expression without names, such as `360/7`.
+- An input no wire feeds shows its value in a box on the node (from 60 % zoom). Drag the box left or right to change the value; a triple's box changes x left and right and y up and down (z with `Shift`); `Ctrl` makes it finer. The whole drag is one undo step. Click the box to type a number or such an expression (three separated by commas for a triple, or one for all three) and press Enter; Esc puts it back.
+
+#### Curves, points and the index
+
+- **Circle** makes a closed curve of *Resolution* points about the origin in the xy plane.
+- **Parametric curve** makes a curve through *Resolution* points from three expressions of the parameter `t`, which runs evenly from *t from* to *t to*: x, y, z in Cartesian form, or r, θ (degrees from the x axis towards y), z in polar form. The expressions may also use `i` (the point's index), `n` (the number of points) and the node's variables, which wires can feed. *Closed* joins the last point to the first. For example r = 10, θ = 360*t, z = 7*t with t from 0 to 2 is a helix of two turns.
+- **Curve to points** puts points along curves: *Count* points evenly spaced, one every *Length* Å, or the curve's own points. Each point is turned to follow the curve: its x axis along the curve, its z axis normal to the curve's plane.
+- **Instance on points** puts a copy of the molecules fed to *Instance* on each point, turned by *Rotation* and then (with *Turn with the points*) as the point is. *Selection* chooses the points (not 0). The copies get the attribute `point`, the point's index.
+- **Index** gives a value per element, its place from 0: the point's in instance on points, the molecule's in select, move each and set attribute. Expression and combine nodes fed one give a value per element too (the wire shows ƒ); an input that takes one value for all reports it. For example, *Index* → expression `a % 3 == 0` → *Selection* puts copies on every third point, and *Index* → expression `10 * a` → combine z → *Rotation* turns each copy 10° more than the one before.
+
+#### Custom nodes
+
+A custom node made with `Ctrl`+`G` is kept in the assembly file, so the file opens the same anywhere. Its menu in the Custom nodes section saves it to the library (`OpenDrawChemistry/assembly_nodes` in the user's configuration folder), from which other assemblies can add it, and exports it as a `.odnode` file. When the library's version and the assembly's differ, the section says which changed and offers to take the library's version or make a separate copy.
 
 ---
 

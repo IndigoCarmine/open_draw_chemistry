@@ -1,11 +1,13 @@
-//! Saving and opening an assembly (`.odasm`): JSON holding the monomers, the steps and the
-//! hand-placed molecules, so opening the file builds exactly the same assembly.
+//! Saving and opening an assembly (`.odasm`): JSON holding the monomers, the steps (or the graph
+//! of nodes and the custom nodes it uses) and the hand-placed molecules, so opening the file
+//! builds exactly the same assembly.
 
 use std::fmt;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::graph;
 use super::model::{Design, Step};
 
 /// The file extension.
@@ -16,14 +18,17 @@ pub const EXTENSION: &str = "odasm";
 /// 2 added the crystal step (`Lattice`, with its operations as `x,y,z` text). Version 1 files
 /// read unchanged; an older app opening a version 2 file says it is newer instead of calling
 /// it damaged. 3 added the move/rotate step (`Transform`) the same way, and 4 the arc step
-/// (`Bend`).
-pub const VERSION: u32 = 4;
+/// (`Bend`). 5 added the graph of nodes (`graph`) and custom nodes (`defs`): a design never
+/// edited as a graph is still written as its steps, in the oldest version that holds them.
+pub const VERSION: u32 = 5;
 
 /// The version a file of `design` needs: the oldest one that holds every step it uses, so
 /// an assembly without a move/rotate step still opens in a release that reads only version 2.
 fn version_for(design: &Design) -> u32 {
     let has = |f: fn(&Step) -> bool| design.steps.iter().any(f);
-    if has(|step| matches!(step, Step::Bend(_))) {
+    if design.graph.is_some() || !design.defs.is_empty() {
+        5
+    } else if has(|step| matches!(step, Step::Bend(_))) {
         4
     } else if has(|step| matches!(step, Step::Transform(_))) {
         3
@@ -66,9 +71,15 @@ impl std::error::Error for Error {}
 
 /// `design` as the text of an `.odasm` file.
 pub fn to_string(design: &Design) -> String {
+    let mut design = design.clone();
+    // Only the custom nodes the graph uses (one removed may still be in the design for undo).
+    if let Some(graph) = &design.graph {
+        let used = graph::defs::graph_uses_all(graph, &design.defs);
+        design.defs.retain(|d| used.contains(&d.id));
+    }
     let contents = FileContents {
-        version: version_for(design),
-        design: design.clone(),
+        version: version_for(&design),
+        design,
     };
     serde_json::to_string_pretty(&contents).expect("a design always serialises")
 }
@@ -91,7 +102,15 @@ pub fn from_str(text: &str) -> Result<Design, Error> {
     }
     let contents: FileContents =
         serde_json::from_str(text).map_err(|e| Error::Invalid(e.to_string()))?;
-    Ok(contents.design)
+    let design = contents.design;
+    graph::defs::validate(&design.defs).map_err(Error::Invalid)?;
+    if let Some(graph) = &design.graph {
+        if !design.steps.is_empty() {
+            return Err(Error::Invalid("both steps and a graph".into()));
+        }
+        graph.validate(&design.defs, None).map_err(Error::Invalid)?;
+    }
+    Ok(design)
 }
 
 pub fn save(path: &Path, design: &Design) -> Result<(), Error> {
@@ -445,5 +464,134 @@ mod tests {
         // A damaged operation is reported, not ignored.
         let broken = text.replace("-x,y+1/2,-z+1/2", "-x,y+1/2");
         assert!(matches!(from_str(&broken), Err(Error::Invalid(_))));
+    }
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use crate::assembly::build::build;
+    use crate::assembly::graph::{InKey, NodeId, NodeKind, OutKey, chain_step_id, ops};
+    use crate::assembly::math::Rigid;
+    use crate::assembly::model::{Component, Instance, Step};
+    use crate::three_d::{Atom3d, Bond3d};
+
+    fn design() -> Design {
+        let atom = |e: &str, pos| Atom3d {
+            element: e.into(),
+            pos,
+        };
+        let c = |name: &str| Component {
+            name: name.into(),
+            atoms: vec![atom("C", [0.1, 0.2, 0.3]), atom("O", [1.3, 0.2, 0.3])],
+            bonds: vec![Bond3d {
+                begin: 0,
+                end: 1,
+                order: 2,
+            }],
+            orient: None,
+        };
+        let mut off = Step::new_bend();
+        *off.enabled_mut() = false;
+        Design {
+            components: vec![c("a"), c("b")],
+            steps: vec![Step::new_ring(), Step::new_stack(), off],
+            manual: vec![Instance {
+                component: 1,
+                transform: Rigid::translation([1.0, 2.0, 30.0]),
+            }],
+            excluded: vec![2, 5],
+            ..Default::default()
+        }
+    }
+
+    /// A graph with a second monomer, a custom node and a merge saves as version 5 and opens to
+    /// the same build; the old steps' molecules keep their indices.
+    #[test]
+    fn a_graph_with_custom_nodes_round_trips() {
+        let linear = design();
+        let mut d = linear.clone();
+        let b = d.component_id(1);
+        let mut defs = std::mem::take(&mut d.defs);
+        let g = d.graph_mut();
+        let (_, group) =
+            ops::group(g, &mut defs, None, &[chain_step_id(0)].into(), "ring").unwrap();
+        d.defs = defs.clone();
+        assert_eq!(
+            build(&d, 1).unwrap().atoms.len(),
+            build(&linear, 1).unwrap().atoms.len()
+        );
+        let g = d.graph.as_mut().unwrap();
+        let mb = g.add(NodeKind::Monomer { component: b }, [0.0, 200.0]);
+        let merge = g.add(NodeKind::Merge { inputs: 2 }, [800.0, 0.0]);
+        let out = g.output().unwrap();
+        let last = g.link_into(out, InKey::Set(0)).unwrap().from;
+        ops::connect(g, &defs, None, last, OutKey::Set, merge, InKey::Set(0)).unwrap();
+        ops::connect(g, &defs, None, mb, OutKey::Set, merge, InKey::Set(1)).unwrap();
+        ops::connect(g, &defs, None, merge, OutKey::Set, out, InKey::Set(0)).unwrap();
+        d.defs = defs;
+        // A custom node no longer used is not saved.
+        d.defs.push(graph::defs::new_def("unused"));
+
+        let text = to_string(&d);
+        assert!(text.contains("\"version\": 5"));
+        assert!(!text.contains("unused"));
+        let back = from_str(&text).unwrap();
+        assert_eq!(back.defs.len(), 1);
+        assert_eq!(back.graph, d.graph);
+        assert_eq!(build(&back, 1).unwrap(), build(&d, 1).unwrap());
+        assert_eq!(back.molecule_count(), 60 - 2 + 1 + 1);
+        let _ = group;
+    }
+
+    #[test]
+    fn an_untouched_design_keeps_its_old_version() {
+        let mut d = design();
+        d.steps.pop();
+        assert!(to_string(&d).contains("\"version\": 2"));
+        let mut with_bend = d.clone();
+        with_bend.steps.push(Step::new_bend());
+        assert!(to_string(&with_bend).contains("\"version\": 4"));
+    }
+
+    #[test]
+    fn damaged_graphs_and_newer_files_are_refused() {
+        let mut d = design();
+        d.graph_mut();
+        let good = to_string(&d);
+        assert!(from_str(&good).is_ok());
+        let newer = good.replace("\"version\": 5", "\"version\": 6");
+        assert!(matches!(from_str(&newer), Err(Error::Newer(6))));
+
+        let mut broken = d.clone();
+        broken.graph.as_mut().unwrap().links.push(graph::Link {
+            from: NodeId(42),
+            out: OutKey::Set,
+            to: chain_step_id(0),
+            input: InKey::Set(0),
+        });
+        assert!(matches!(
+            from_str(&to_string(&broken)),
+            Err(Error::Invalid(_))
+        ));
+
+        let mut both = d.clone();
+        both.steps.push(Step::new_ring());
+        assert!(matches!(
+            from_str(&to_string(&both)),
+            Err(Error::Invalid(_))
+        ));
+
+        let mut missing = d.clone();
+        let ids: BTreeSet<NodeId> = [chain_step_id(1)].into();
+        let mut defs = Vec::new();
+        ops::group(missing.graph_mut(), &mut defs, None, &ids, "x").unwrap();
+        // The definition is left out: the file names a custom node it does not hold.
+        assert!(matches!(
+            from_str(&to_string(&missing)),
+            Err(Error::Invalid(_))
+        ));
     }
 }

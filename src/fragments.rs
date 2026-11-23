@@ -173,12 +173,19 @@ struct UserFile {
 /// `~/.config/open-draw-chemistry/fragments` elsewhere. `None` when the OS reports no
 /// configuration directory.
 pub fn default_dir() -> Option<PathBuf> {
+    app_config_dir().map(|d| d.join("fragments"))
+}
+
+/// The app's per-user configuration directory: `%APPDATA%\OpenDrawChemistry` on Windows,
+/// `~/Library/Application Support/OpenDrawChemistry` on macOS and
+/// `~/.config/open-draw-chemistry` elsewhere.
+pub fn app_config_dir() -> Option<PathBuf> {
     let app = if cfg!(any(windows, target_os = "macos")) {
         "OpenDrawChemistry"
     } else {
         "open-draw-chemistry"
     };
-    dirs::config_dir().map(|d| d.join(app).join("fragments"))
+    dirs::config_dir().map(|d| d.join(app))
 }
 
 /// The user's fragments, in one directory (injectable, so tests never touch the real one).
