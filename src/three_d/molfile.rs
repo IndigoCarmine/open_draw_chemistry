@@ -118,16 +118,12 @@ pub fn to_molfile(mol: &Molecule, config: &Config) -> Result<String, Error> {
         );
     }
     for (bond, stereo) in mol.bonds.iter().zip(&stereo_flags) {
-        let order = match bond.order {
-            BondOrder::Single => 1,
-            BondOrder::Double => 2,
-            BondOrder::Triple => 3,
-            BondOrder::Quadruple => unreachable!("rejected above"),
-        };
+        let order = bond_type(bond);
+        let (begin, end) = bond_ends(&mol, bond);
         let _ = writeln!(
             out,
             "{:>3}{:>3}{:>3}{:>3}  0  0  0",
-            index[&bond.begin], index[&bond.end], order, stereo
+            index[&begin], index[&end], order, stereo
         );
     }
     let charged: Vec<(usize, i8)> = mol
@@ -179,18 +175,14 @@ fn write_v3000(
     let _ = writeln!(out, "M  V30 END ATOM");
     let _ = writeln!(out, "M  V30 BEGIN BOND");
     for (i, (bond, stereo)) in mol.bonds.iter().zip(stereo_flags).enumerate() {
-        let order = match bond.order {
-            BondOrder::Single => 1,
-            BondOrder::Double => 2,
-            BondOrder::Triple => 3,
-            BondOrder::Quadruple => unreachable!("rejected above"),
-        };
+        let order = bond_type(bond);
+        let (begin, end) = bond_ends(mol, bond);
         let _ = write!(
             out,
             "M  V30 {} {order} {} {}",
             i + 1,
-            index[&bond.begin],
-            index[&bond.end]
+            index[&begin],
+            index[&end]
         );
         // V2000's 1 (wedge), 6 (hash) and 4 (either) are V3000's CFG 1, 3 and 2.
         match stereo {
@@ -214,6 +206,122 @@ fn write_v3000(
 
 /// The molfile bond stereo flag of a drawn bond: 1 for a solid wedge, 6 for a hashed one and
 /// 4 for a wavy (either) bond. Every wedge points from its narrow begin atom, as a molfile's do.
+/// A bond's two atoms as the molfile gives them: as drawn, except that a dative bond drawn
+/// from a metal to a non-metal (its arrow the wrong way round) goes from the non-metal, the
+/// donor. Read as a coordination bond, the begin atom gives the electrons: the other way
+/// round, an ammine would lose a hydrogen and the metal its bond count.
+fn bond_ends(mol: &Molecule, bond: &chembuider_rs::Bond) -> (u32, u32) {
+    let metal = |id: u32| mol.atom_by_id(id).is_some_and(|a| is_metal(&a.element));
+    if bond.stereo == BondStereo::Dative && metal(bond.begin) && !metal(bond.end) {
+        (bond.end, bond.begin)
+    } else {
+        (bond.begin, bond.end)
+    }
+}
+
+/// Whether `element` is a metal (or a metalloid that takes ligands' lone pairs the same way).
+fn is_metal(element: &str) -> bool {
+    matches!(
+        element,
+        "Li" | "Be"
+            | "Na"
+            | "Mg"
+            | "Al"
+            | "K"
+            | "Ca"
+            | "Sc"
+            | "Ti"
+            | "V"
+            | "Cr"
+            | "Mn"
+            | "Fe"
+            | "Co"
+            | "Ni"
+            | "Cu"
+            | "Zn"
+            | "Ga"
+            | "Ge"
+            | "Rb"
+            | "Sr"
+            | "Y"
+            | "Zr"
+            | "Nb"
+            | "Mo"
+            | "Tc"
+            | "Ru"
+            | "Rh"
+            | "Pd"
+            | "Ag"
+            | "Cd"
+            | "In"
+            | "Sn"
+            | "Sb"
+            | "Cs"
+            | "Ba"
+            | "La"
+            | "Ce"
+            | "Pr"
+            | "Nd"
+            | "Pm"
+            | "Sm"
+            | "Eu"
+            | "Gd"
+            | "Tb"
+            | "Dy"
+            | "Ho"
+            | "Er"
+            | "Tm"
+            | "Yb"
+            | "Lu"
+            | "Hf"
+            | "Ta"
+            | "W"
+            | "Re"
+            | "Os"
+            | "Ir"
+            | "Pt"
+            | "Au"
+            | "Hg"
+            | "Tl"
+            | "Pb"
+            | "Bi"
+            | "Po"
+            | "Fr"
+            | "Ra"
+            | "Ac"
+            | "Th"
+            | "Pa"
+            | "U"
+            | "Np"
+            | "Pu"
+            | "Am"
+            | "Cm"
+            | "Bk"
+            | "Cf"
+            | "Es"
+            | "Fm"
+            | "Md"
+            | "No"
+            | "Lr"
+    )
+}
+
+/// A bond's molfile type: its order, or 9 (a coordination bond) for a dative bond, written
+/// from the donor to the acceptor ([`bond_ends`]). Read so, the donor keeps its valence: the
+/// 3D builder adds no hydrogen to a pyridine nitrogen bound to a metal and takes none off an
+/// ammine's.
+fn bond_type(bond: &chembuider_rs::Bond) -> u8 {
+    if bond.stereo == BondStereo::Dative {
+        return 9;
+    }
+    match bond.order {
+        BondOrder::Single => 1,
+        BondOrder::Double => 2,
+        BondOrder::Triple => 3,
+        BondOrder::Quadruple => unreachable!("rejected by to_molfile"),
+    }
+}
+
 fn stereo_flag(stereo: &BondStereo) -> u8 {
     match stereo {
         BondStereo::WedgeUp => 1,

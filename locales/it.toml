@@ -438,6 +438,7 @@ triple_bond = "Legame triplo"
 wedge_bond = "Legame a cuneo"
 hashed_wedge = "Cuneo tratteggiato"
 wavy_bond = "Legame ondulato"
+dative_bond = "Legame dativo"
 chain = "Catena"
 benzene = "Anello benzenico"
 cyclopentane = "Ciclopentano"
@@ -608,6 +609,7 @@ start_failed = "Impossibile avviare: {error}"
 generated = { one = "Modello 3D generato ({formula}, {n} atomo)", other = "Modello 3D generato ({formula}, {n} atomi)" }
 optimized = "Struttura ottimizzata (E = {energy} {unit})"
 undo_optimize = "Ottimizzazione della struttura"
+fell_back = "{requested} non ha parametri per un atomo di questa struttura (un metallo, ad esempio), quindi è stato usato {used}"
 
 [three_d.molfile]
 note_polymer_unit = "Generazione 3D di una unità ripetitiva (n = 1, con i gruppi terminali)"

@@ -595,6 +595,7 @@ wedge_bond = "Wedge bond"
 # Stereo bond drawn as a hashed (dashed) wedge.
 hashed_wedge = "Hashed wedge"
 wavy_bond = "Wavy bond"
+dative_bond = "Dative bond"
 # Tool that draws a carbon chain.
 chain = "Chain"
 benzene = "Benzene ring"
@@ -852,6 +853,8 @@ generated = { one = "Generated the 3D model ({formula}, {n} atom)", other = "Gen
 optimized = "Optimized the structure (E = {energy} {unit})"
 # Name of the step in the undo history.
 undo_optimize = "Structure optimization"
+# {requested} and {used} are force field names (MMFF94, UFF).
+fell_back = "{requested} has no parameters for an atom of this structure (a metal, say), so {used} was used"
 
 [three_d.molfile]
 # Status bar notes when making a drawing with brackets 3D.

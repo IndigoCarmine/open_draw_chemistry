@@ -230,6 +230,20 @@ impl Job {
         };
         self.result = None;
         let previous = self.previous.take();
+        // A force field with no type for an atom (MMFF94 and a metal) gave way to UFF: say
+        // so, and choose UFF for what follows.
+        let fell_back = match &outcome {
+            Ok(model) if model.force_field != self.force_field => {
+                let note = t!(
+                    "three_d.job.fell_back",
+                    requested = self.force_field,
+                    used = model.force_field
+                );
+                self.force_field = model.force_field;
+                Some(note)
+            }
+            _ => None,
+        };
         let message = match (&outcome, task) {
             (Ok(model), Task::Generate) => tn!(
                 "three_d.job.generated",
@@ -242,6 +256,10 @@ impl Job {
                 unit = model.energy_unit
             ),
             (Err(e), _) => e.to_string(),
+        };
+        let message = match fell_back {
+            Some(note) => format!("{message} — {note}"),
+            None => message,
         };
         self.state = match (outcome, task, previous) {
             (Ok(model), Task::Optimize, Some(before)) => {
@@ -362,6 +380,40 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+    }
+
+    /// A metal complex under MMFF94, which has no metal: it is built with UFF, the status
+    /// says so, and UFF is chosen for what follows (optimising goes on with it).
+    #[test]
+    fn a_force_field_without_the_metal_gives_way_to_uff() {
+        let mut drawing = Molecule::default();
+        let fe = drawing.add_atom("Fe".to_owned(), [0.0, 0.0], 2);
+        let n = drawing.add_atom("N".to_owned(), [1.5, 0.0], 0);
+        let bond = drawing.add_bond(n, fe, chembuider_rs::BondOrder::Single);
+        drawing
+            .bonds
+            .iter_mut()
+            .find(|b| b.id == bond)
+            .unwrap()
+            .stereo = chembuider_rs::BondStereo::Dative;
+
+        let mut job = Job::default();
+        assert_eq!(job.force_field, ForceField::Mmff94);
+        job.generate(&drawing, &Config::default());
+        let message = finish(&mut job);
+        let note = t!(
+            "three_d.job.fell_back",
+            requested = ForceField::Mmff94,
+            used = ForceField::Uff
+        );
+        assert!(message.ends_with(&note), "{message}");
+        assert_eq!(job.model().unwrap().force_field, ForceField::Uff);
+        assert_eq!(job.force_field, ForceField::Uff);
+
+        job.optimize();
+        let message = finish(&mut job);
+        assert!(!message.contains(&note), "no second note: {message}");
+        assert_eq!(job.model().unwrap().formula, "FeH3N");
     }
 
     #[test]

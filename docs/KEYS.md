@@ -76,7 +76,7 @@ Only the most used operations. The conditions are in the sections below.
 
 ## 2. 2D editor
 
-The drawing canvas. The same operation means different things depending on the tool chosen in the palette on the left. There are five tools: the Bond tool (the single, double, triple, wedge, hashed wedge and wavy buttons are all the Bond tool, differing only in the bond they draw), the Select tool, the Eraser, the Arrow tool (reaction arrow, equilibrium arrow) and the Text tool.
+The drawing canvas. The same operation means different things depending on the tool chosen in the palette on the left. There are five tools: the Bond tool (the single, double, triple, wedge, hashed wedge, wavy and dative buttons are all the Bond tool, differing only in the bond they draw), the Select tool, the Eraser, the Arrow tool (reaction arrow, equilibrium arrow) and the Text tool.
 
 ### 2.1 Terms
 
@@ -128,11 +128,11 @@ There is no key for the Arrow and Text tools (use the palette or the Reaction me
 | Click | Empty space | Place an atom (the element chosen in the palette) |
 | Click | On an atom | Grow one bond from it. If an atom is already where it lands, bond to that one; if they are already bonded, change the order |
 | Click | On a bond, with the single, double or triple button chosen | Cycle the order: single → double → triple → single |
-| Click | On a single bond, with the wedge, hashed wedge or wavy button chosen | Replace it with that kind. A wedge's narrow end is the atom nearer the click |
-| Click | On a bond already of the chosen kind | A wedge or hashed wedge is turned round. A wavy bond goes back to a plain single bond |
-| Click | On a double or triple bond, with the wedge, hashed wedge or wavy button chosen | Cycle the order (the kind is not applied) |
-| Drag | From an atom | Draw a bond. It joins the atom where it is released, or places a new one |
-| Drag | From an atom to a neighbour it is already bonded to | Does to that bond what a click does. A wedge's narrow end is the atom the drag began on |
+| Click | On a single bond, with the wedge, hashed wedge, wavy or dative button chosen | Replace it with that kind. A wedge's narrow end, and a dative bond's tail, is the atom nearer the click |
+| Click | On a bond already of the chosen kind | A wedge, hashed wedge or dative bond is turned round. A wavy bond goes back to a plain single bond |
+| Click | On a double or triple bond, with the wedge, hashed wedge, wavy or dative button chosen | Cycle the order (the kind is not applied) |
+| Drag | From an atom | Draw a bond. It joins the atom where it is released, or places a new one. A dative bond (a coordinate bond) points from the atom the drag began on: drag from the ligand's donor atom to the metal |
+| Drag | From an atom to a neighbour it is already bonded to | Does to that bond what a click does. A wedge's narrow end, and a dative bond's tail, is the atom the drag began on |
 | Drag | From empty space | Lasso (as in the Select tool) |
 | Drag | From a bond | Nothing |
 

@@ -22,6 +22,8 @@ pub enum Icon {
     Wedge,
     Hash,
     Wavy,
+    /// A line ending in an arrowhead: the dative (coordinate) bond.
+    Dative,
     Chain,
     Benzene,
     Cyclopentane,
@@ -204,6 +206,11 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 })
                 .collect();
             c.line(&pts);
+        }
+        Icon::Dative => {
+            // The single bond's diagonal, ending in a filled arrowhead at the top right.
+            c.line(&[(4.0, 16.0), (13.1, 6.9)]);
+            c.filled(&[(17.0, 3.0), (15.2, 9.0), (11.0, 4.8)]);
         }
         Icon::Chain => c.line(&[
             (2.0, 13.5),

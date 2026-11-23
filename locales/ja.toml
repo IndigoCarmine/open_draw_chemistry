@@ -480,6 +480,7 @@ wedge_bond = "くさび結合"
 # Stereo bond drawn as a hashed (dashed) wedge.
 hashed_wedge = "破線くさび"
 wavy_bond = "波線結合"
+dative_bond = "配位結合"
 # Tool that draws a carbon chain.
 chain = "鎖"
 benzene = "ベンゼン環"
@@ -679,6 +680,7 @@ start_failed = "処理を開始できませんでした: {error}"
 generated = "3D モデルを生成しました（{formula}、{n} 原子）"
 optimized = "構造を最適化しました（E = {energy} {unit}）"
 undo_optimize = "構造最適化"
+fell_back = "{requested} にはこの構造の原子（金属など）のパラメータがないため、{used} を使いました"
 
 [three_d.molfile]
 note_polymer_unit = "繰り返し単位 1 つ分（n = 1、末端基を含む構造）で 3D 化します"

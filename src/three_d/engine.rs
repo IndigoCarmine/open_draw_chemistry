@@ -74,7 +74,70 @@ fn builder(force_field: ForceField) -> Box<dyn ForceFieldBuilder> {
     match force_field {
         ForceField::Mmff94 => Box::new(mmff_builder(MmffVariant::Mmff94)),
         ForceField::Mmff94s => Box::new(mmff_builder(MmffVariant::Mmff94s)),
-        ForceField::Uff => Box::new(uff_builder()),
+        ForceField::Uff => Box::new(TypedUff(uff_builder())),
+    }
+}
+
+/// UFF that types every atom it has a type for. UFF reads an atom's type off its perceived
+/// shape, which for a metal depends on how its bonds and charge were drawn: an iron drawn
+/// neutral with six ligands, or with its arrows pointing out, comes out of no known shape, and
+/// UFF quietly leaves such an atom out of every term — the metal then flies off its ligands.
+/// Such an atom is given the shape its number of bonds suggests instead (six: octahedral,
+/// `Fe6+2`), or failing that any shape UFF has a type of the element for.
+struct TypedUff(UffBuilder);
+
+impl TypedUff {
+    fn typed<'m>(mol: &'m Molecule) -> std::borrow::Cow<'m, Molecule> {
+        use molecule_optimizer_rs::core::Hybridization as H;
+        use molecule_optimizer_rs::ff::uff::{atom_label, params::params};
+        let known = |mol: &Molecule, i: usize| params(&atom_label(mol, i)).is_some();
+        let untyped: Vec<usize> = (0..mol.num_atoms()).filter(|&i| !known(mol, i)).collect();
+        if untyped.is_empty() {
+            return std::borrow::Cow::Borrowed(mol);
+        }
+        let mut typed = mol.clone();
+        for i in untyped {
+            let by_degree: &[H] = match typed.total_degree(i) {
+                6.. => &[H::SP3D2],
+                5 => &[H::SP3D],
+                4 => &[H::SP3, H::SP2D],
+                3 => &[H::SP2, H::SP3],
+                2 => &[H::SP, H::SP3],
+                _ => &[H::SP, H::S],
+            };
+            let any = [H::SP3D2, H::SP3, H::SP2D, H::SP3D, H::SP2, H::SP, H::S];
+            let original = typed.atom(i).hybridization;
+            let found = by_degree.iter().chain(&any).any(|&h| {
+                typed.atom_mut(i).hybridization = h;
+                known(&typed, i)
+            });
+            if !found {
+                typed.atom_mut(i).hybridization = original;
+            }
+        }
+        std::borrow::Cow::Owned(typed)
+    }
+}
+
+impl ForceFieldBuilder for TypedUff {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    fn build(
+        &self,
+        mol: &Molecule,
+        constraints: &[ff::Constraint],
+    ) -> molecule_optimizer_rs::Result<ff::ContribForceField> {
+        self.0.build(&Self::typed(mol), constraints)
+    }
+
+    fn build_dyn(
+        &self,
+        mol: &Molecule,
+        constraints: &[ff::Constraint],
+    ) -> molecule_optimizer_rs::Result<Box<dyn Field>> {
+        self.0.build_dyn(&Self::typed(mol), constraints)
     }
 }
 
@@ -428,7 +491,8 @@ pub fn generate(molfile: &str, force_field: ForceField, steps: u32) -> Result<Mo
     let drawing = read(molfile)?;
     let mut last = Error::GenerationFailed;
     for seed in SEEDS {
-        let Some(built) = embed(&drawing, seed) else {
+        let Some(built) = embed(&drawing, seed).or_else(|| embed_neutral_metals(&drawing, seed))
+        else {
             continue;
         };
         let budget = steps.saturating_mul(GENERATE_BUDGET);
@@ -456,6 +520,39 @@ fn embed(drawing: &Molecule, seed: i32) -> Option<Molecule> {
         };
         calc::build_3d(drawing, &params, &mut optim::NoObserver).ok()
     })
+}
+
+/// `drawing` embedded with `seed` with the charges of its metal ions (the acceptors of its
+/// dative bonds) taken off, and read back with them on. ETKDG embeds an octahedral centre
+/// with six monodentate ligands ([Co(NH₃)₆]³⁺) only as an atom of unknown shape: the charge
+/// makes it one (six orbitals, no lone pair) whose bounds it cannot meet. The embedding is
+/// only where the relaxation starts; the force field sees the charges. `None` when there is
+/// no such ion or this embedding fails too.
+fn embed_neutral_metals(drawing: &Molecule, seed: i32) -> Option<Molecule> {
+    let charged: Vec<(usize, i8)> = (0..drawing.num_atoms())
+        .filter(|&i| {
+            drawing
+                .bonds()
+                .iter()
+                .any(|b| b.order == BondOrder::Dative && b.end == i)
+        })
+        .map(|i| (i, drawing.atom(i).formal_charge))
+        .filter(|&(_, charge)| charge != 0)
+        .collect();
+    if charged.is_empty() {
+        return None;
+    }
+    let mut neutral = drawing.clone();
+    for &(i, _) in &charged {
+        neutral.atom_mut(i).formal_charge = 0;
+    }
+    // Read again, so the atoms' shapes are perceived as neutral.
+    let neutral = read(&molblock(&neutral, &neutral.coords)).ok()?;
+    let mut built = embed(&neutral, seed)?;
+    for &(i, charge) in &charged {
+        built.atom_mut(i).formal_charge = charge;
+    }
+    read(&molblock(&built, &built.coords)).ok()
 }
 
 fn has_straightened_centre(model: &Model3d) -> bool {
