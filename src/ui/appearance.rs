@@ -1,4 +1,4 @@
-//! 書式 of the structures: ring fills, line and text colours and drop shadows.
+//! 書式 of the structures: ring fills, line and text colours, line widths and drop shadows.
 //!
 //! The same items are in the menu bar's 書式 menu, the canvas's right-click menu and behind
 //! the buttons of the toolbar's format section ([`super::format_bar`]). Each
@@ -14,7 +14,7 @@
 //! survive saving.
 
 use chembuider_rs::ChemStructEditor;
-use chembuider_rs::molecule::Shadow;
+use chembuider_rs::molecule::{Bond, Shadow};
 use egui::containers::menu::{MenuConfig, SubMenuButton};
 use egui::ecolor::Hsva;
 use egui::widgets::color_picker::{self, Alpha};
@@ -35,6 +35,14 @@ const SWATCHES: [[u8; 4]; 8] = [
     [147, 51, 234, 255],
     [255, 255, 255, 255],
 ];
+
+/// The line widths offered next to the number, in points: ChemDraw's (ACS) 0.6 and wider ones.
+const WIDTHS: [f32; 4] = [Bond::DEFAULT_WIDTH, 1.0, 1.5, 2.0];
+
+/// A line width in points as it is shown: `0.6 pt`, `1 pt`, `1.25 pt`.
+pub fn points(width: f32) -> String {
+    format!("{} pt", (width * 100.0).round() / 100.0)
+}
 
 /// A colour being chosen in a picker, as straight (un-premultiplied) RGBA.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -114,6 +122,8 @@ pub struct Appearance {
     pub ring_fill: ColorChoice,
     pub line: ColorChoice,
     pub text: ColorChoice,
+    /// The line width being chosen, in points.
+    pub line_width: f32,
     #[serde(skip)]
     shadow: ShadowDraft,
 }
@@ -125,6 +135,7 @@ impl Default for Appearance {
             ring_fill: [66, 133, 244, 90].into(),
             line: [220, 38, 38, 255].into(),
             text: [37, 99, 235, 255].into(),
+            line_width: 1.0,
             shadow: ShadowDraft::default(),
         }
     }
@@ -181,6 +192,8 @@ impl Selection {
 pub struct Colors {
     /// Of the bonds [`ChemStructEditor::set_selected_bond_color`] colours.
     pub line: Option<Value<Option<[u8; 4]>>>,
+    /// The line widths of those bonds, in points (`None` for the style's).
+    pub width: Option<Value<Option<f32>>>,
     /// Of the atom labels and texts [`ChemStructEditor::set_selected_text_color`] colours.
     pub text: Option<Value<Option<[u8; 4]>>>,
 }
@@ -188,10 +201,15 @@ pub struct Colors {
 impl Colors {
     pub fn of(editor: &ChemStructEditor) -> Self {
         let atoms = &editor.selected_atoms;
-        let bonds = editor.molecule.bonds.iter().filter(|b| {
-            editor.selected_bonds.contains(&b.id)
-                || (atoms.contains(&b.begin) && atoms.contains(&b.end))
-        });
+        let bonds: Vec<&Bond> = editor
+            .molecule
+            .bonds
+            .iter()
+            .filter(|b| {
+                editor.selected_bonds.contains(&b.id)
+                    || (atoms.contains(&b.begin) && atoms.contains(&b.end))
+            })
+            .collect();
         let labels = editor
             .molecule
             .atoms
@@ -206,7 +224,8 @@ impl Colors {
             .filter_map(|o| o.as_text())
             .map(|t| t.color);
         Self {
-            line: Value::of(bonds.map(|b| b.color)),
+            line: Value::of(bonds.iter().map(|b| b.color)),
+            width: Value::of(bonds.iter().map(|b| b.width)),
             text: Value::of(labels.chain(texts)),
         }
     }
@@ -271,6 +290,9 @@ pub fn items(
         submenu(ui, t!("format.line_color"), |ui| {
             line_color_items(ui, appearance, out)
         });
+        submenu(ui, t!("format.line_width"), |ui| {
+            line_width_items(ui, appearance, out)
+        });
         submenu(ui, t!("format.text_color"), |ui| {
             text_color_items(ui, appearance, out)
         });
@@ -312,6 +334,40 @@ pub fn line_color_items(ui: &mut egui::Ui, appearance: &mut Appearance, out: &mu
         ui,
         t!("format.default_color"),
         Command::LineColor(None),
+        out,
+    );
+}
+
+/// What 線の太さ shows: common widths and the width in points, applied with a button, or the
+/// style's width.
+pub fn line_width_items(ui: &mut egui::Ui, appearance: &mut Appearance, out: &mut Vec<Command>) {
+    ui.weak(t!("format.line_width_hint"));
+    ui.horizontal(|ui| {
+        for width in WIDTHS {
+            let chosen = (appearance.line_width - width).abs() < 1e-3;
+            if ui.selectable_label(chosen, points(width)).clicked() {
+                appearance.line_width = width;
+            }
+        }
+    });
+    let range = *Bond::WIDTH_RANGE.start()..=*Bond::WIDTH_RANGE.end();
+    ui.add(
+        egui::DragValue::new(&mut appearance.line_width)
+            .speed(0.05)
+            .range(range)
+            .max_decimals(2)
+            .suffix(" pt"),
+    );
+    action(
+        ui,
+        t!("format.apply_width"),
+        Command::LineWidth(Some(appearance.line_width)),
+        out,
+    );
+    action(
+        ui,
+        t!("format.default_width"),
+        Command::LineWidth(None),
         out,
     );
 }
@@ -439,6 +495,13 @@ pub fn run(editor: &mut ChemStructEditor, command: &Command) -> Option<&'static 
                 t!("format.status.line_color_set")
             } else {
                 t!("format.status.no_bonds")
+            }
+        }
+        Command::LineWidth(width) => {
+            if editor.set_selected_bond_width(width) {
+                t!("format.status.line_width_set")
+            } else {
+                t!("format.status.no_bonds_width")
             }
         }
         Command::TextColor(color) => {
@@ -900,6 +963,58 @@ pub(crate) mod tests {
             &[t!("format.text_color"), t!("format.apply_color")],
         );
         assert_eq!(text, [Command::TextColor(Some([4, 5, 6, 255]))]);
+    }
+
+    /// 線の太さ: a common width is chosen with a click and applied with the button; the other
+    /// button goes back to the style's width.
+    #[test]
+    fn a_line_width_is_chosen_then_applied() {
+        let selection = Selection {
+            shadow: None,
+            everything: false,
+            structure: true,
+        };
+        let mut appearance = Appearance::default();
+        let (out, _) = walk(
+            &mut appearance,
+            selection,
+            &[t!("format.line_width"), "1.5 pt"],
+        );
+        assert!(out.is_empty(), "choosing applies nothing: {out:?}");
+        assert_eq!(appearance.line_width, 1.5);
+        let (out, _) = walk(
+            &mut appearance,
+            selection,
+            &[t!("format.line_width"), t!("format.apply_width")],
+        );
+        assert_eq!(out, [Command::LineWidth(Some(1.5))]);
+        let (out, _) = walk(
+            &mut appearance,
+            selection,
+            &[t!("format.line_width"), t!("format.default_width")],
+        );
+        assert_eq!(out, [Command::LineWidth(None)]);
+    }
+
+    /// The width goes to the selected bonds, as one undo step, and says so.
+    #[test]
+    fn a_line_width_reaches_the_selected_bonds() {
+        let mut editor = ChemStructEditor::default();
+        let (ring, ..) = phenol(&mut editor);
+        assert_eq!(
+            run(&mut editor, &Command::LineWidth(Some(1.5))),
+            Some(t!("format.status.no_bonds_width"))
+        );
+        editor.selected_atoms = [ring[0], ring[1]].into();
+        assert_eq!(
+            run(&mut editor, &Command::LineWidth(Some(1.5))),
+            Some(t!("format.status.line_width_set"))
+        );
+        let widths: Vec<Option<f32>> = editor.molecule.bonds.iter().map(|b| b.width).collect();
+        assert_eq!(widths.iter().filter(|w| **w == Some(1.5)).count(), 1);
+        assert_eq!(editor.undo_stack.len(), 1);
+        assert_eq!(points(0.6), "0.6 pt");
+        assert_eq!(points(1.0), "1 pt");
     }
 
     #[test]

@@ -176,6 +176,8 @@ pub enum Command {
     ClearRingFill,
     /// Give the selected bonds this line colour (`None`: the style's).
     LineColor(Option<[u8; 4]>),
+    /// Give the selected bonds lines this wide, in points (`None`: the style's width).
+    LineWidth(Option<f32>),
     /// Give the selected atom labels and texts this colour (`None`: the style's).
     TextColor(Option<[u8; 4]>),
     /// Give the structures the selection touches (or every structure) this drop shadow, or

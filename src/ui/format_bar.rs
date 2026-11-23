@@ -1,11 +1,12 @@
 //! The toolbar's format section (書式), right of クリーンアップ: font, size, bold/italic,
-//! sub/superscript and Symbol for texts, then text and line colours, ring fill and shadow.
+//! sub/superscript and Symbol for texts, then text and line colours, line width, ring fill and
+//! shadow.
 //!
 //! It shows only with the drawing, always, its items greyed out (with the reason on hover)
 //! where the selection has nothing they apply to. Each shows the selection's value, or
 //! 混在 (mixed) where the selection differs. The text controls are [`super::text_format`]'s and
 //! act through the editor as before: with nothing selected they set the format of new texts.
-//! The colour, fill and shadow buttons open the items of the 書式 menu ([`super::appearance`]),
+//! The colour, width, fill and shadow buttons open the items of the 書式 menu ([`super::appearance`]),
 //! so they change exactly what the menu does.
 //!
 //! What does not fit the toolbar's width goes, whole groups from the right, into a "…" menu.
@@ -84,7 +85,7 @@ impl Group {
             Group::Font => 190.0,
             Group::Size => 96.0,
             Group::Style => 150.0,
-            Group::Colors => 84.0,
+            Group::Colors => 126.0,
             Group::Structure => 84.0,
         }
     }
@@ -213,7 +214,7 @@ fn group_ui(
                 ui,
                 in_menu,
                 t!("format.text_color"),
-                colors.text,
+                colors.text.map(Shown::Color),
                 (colors.text.is_none()).then(|| t!("format_bar.text_color_needs")),
                 Glyph::Text,
                 |ui| appearance::text_color_items(ui, appearance, out),
@@ -222,10 +223,19 @@ fn group_ui(
                 ui,
                 in_menu,
                 t!("format.line_color"),
-                colors.line,
+                colors.line.map(Shown::Color),
                 (colors.line.is_none()).then(|| t!("format_bar.line_color_needs")),
                 Glyph::Line,
                 |ui| appearance::line_color_items(ui, appearance, out),
+            );
+            dropdown(
+                ui,
+                in_menu,
+                t!("format.line_width"),
+                colors.width.map(Shown::Width),
+                (colors.width.is_none()).then(|| t!("format_bar.line_width_needs")),
+                Glyph::Width,
+                |ui| appearance::line_width_items(ui, appearance, out),
             );
         }
         Group::Structure => {
@@ -255,23 +265,31 @@ fn group_ui(
     }
 }
 
-/// What a colour, fill or shadow button shows.
+/// What a colour, width, fill or shadow button shows.
 #[derive(Clone, Copy)]
 enum Glyph {
     Text,
     Line,
+    Width,
     Ring,
     Shadow,
 }
 
+/// The selection's value a button shows: a colour (`None` the style's) or a line width.
+#[derive(Clone, Copy)]
+enum Shown {
+    Color(Value<Option<[u8; 4]>>),
+    Width(Value<Option<f32>>),
+}
+
 /// A button named `label` opening `content`: in the toolbar a glyph with the selection's
-/// colour (`color`) under it, in the "…" menu a submenu. Greyed out with `disabled` as the
-/// reason.
+/// value (`value`; a colour as a bar under the glyph), in the "…" menu a submenu. Greyed out
+/// with `disabled` as the reason.
 fn dropdown(
     ui: &mut Ui,
     in_menu: bool,
     label: &str,
-    color: Option<Value<Option<[u8; 4]>>>,
+    value: Option<Shown>,
     disabled: Option<&str>,
     glyph: Glyph,
     content: impl FnOnce(&mut Ui),
@@ -313,14 +331,24 @@ fn dropdown(
             );
         }
         paint_glyph(painter, rect, glyph, ink);
-        if let Some(value) = color {
-            paint_color_bar(painter, rect, value, ink);
+        if let Some(Shown::Color(color)) = value {
+            paint_color_bar(painter, rect, color, ink);
         }
     }
-    let shown = match color {
-        Some(Value::Same(Some(rgba))) => format!("{label} — {}", appearance::hex(rgba)),
-        Some(Value::Same(None)) => format!("{label} — {}", t!("format.default_color")),
-        Some(Value::Mixed) => format!("{label} — {}", t!("format_bar.mixed")),
+    let shown = match value {
+        Some(Shown::Color(Value::Same(Some(rgba)))) => {
+            format!("{label} — {}", appearance::hex(rgba))
+        }
+        Some(Shown::Color(Value::Same(None))) => {
+            format!("{label} — {}", t!("format.default_color"))
+        }
+        Some(Shown::Width(Value::Same(width))) => format!(
+            "{label} — {}",
+            appearance::points(width.unwrap_or(chembuider_rs::molecule::Bond::DEFAULT_WIDTH))
+        ),
+        Some(Shown::Color(Value::Mixed) | Shown::Width(Value::Mixed)) => {
+            format!("{label} — {}", t!("format_bar.mixed"))
+        }
         None => label.to_owned(),
     };
     let response = match disabled {
@@ -348,6 +376,16 @@ fn paint_glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, ink: Color32) 
         }
         Glyph::Line => {
             painter.line_segment([c + vec2(-7.0, 6.0), c + vec2(7.0, -6.0)], stroke);
+        }
+        Glyph::Width => {
+            // Three lines, each wider than the one above.
+            for (k, width) in [1.0, 2.0, 3.5].into_iter().enumerate() {
+                let y = c.y - 6.0 + 5.5 * k as f32;
+                painter.line_segment(
+                    [pos2(c.x - 8.0, y), pos2(c.x + 8.0, y)],
+                    Stroke::new(width, ink),
+                );
+            }
         }
         Glyph::Ring | Glyph::Shadow => {
             let hexagon = |at: egui::Pos2| -> Vec<egui::Pos2> {
@@ -458,5 +496,21 @@ mod tests {
         let colors = Colors::of(&editor);
         assert_eq!(colors.line, None, "a lone atom has no bond selected");
         assert_eq!(colors.text, Some(Value::Mixed));
+    }
+
+    /// The line widths are those of the bonds a line colour would go to.
+    #[test]
+    fn the_widths_are_the_selection_s() {
+        let mut editor = ChemStructEditor::default();
+        let (ring, o, _) = phenol(&mut editor);
+        assert_eq!(Colors::of(&editor).width, None);
+        editor.selected_atoms = [ring[0], ring[1]].into();
+        assert_eq!(Colors::of(&editor).width, Some(Value::Same(None)));
+        editor.molecule.bonds[0].width = Some(1.5);
+        assert_eq!(Colors::of(&editor).width, Some(Value::Same(Some(1.5))));
+        editor.selected_atoms.insert(ring[2]);
+        assert_eq!(Colors::of(&editor).width, Some(Value::Mixed));
+        editor.selected_atoms = [o].into();
+        assert_eq!(Colors::of(&editor).width, None);
     }
 }
