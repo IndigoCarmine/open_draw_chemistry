@@ -38,6 +38,7 @@ assembly_redone = "집합체 편집을 다시 실행했습니다"
 nothing_to_undo = "실행 취소할 작업이 없습니다"
 nothing_to_redo = "다시 실행할 작업이 없습니다"
 nothing_to_copy = "복사할 내용이 없습니다"
+copy_failed = "복사할 수 없습니다: {error}"
 pasted = "붙여넣었습니다"
 no_structure_on_clipboard = "클립보드에 구조가 없습니다"
 label_not_expanded = "레이블 “{label}”에 해당하는 구조가 없어 펼치지 않았습니다"
@@ -97,6 +98,7 @@ title = "정보"
 load_failed = "포함된 개체를 읽을 수 없습니다: {error}"
 editing = "{app}에 포함된 개체를 편집하고 있습니다. 저장하거나 탭을 닫으면 {app} 문서가 업데이트됩니다"
 committed = "{app} 문서를 업데이트했습니다"
+editing_3d = "{app}에 포함된 3D 모델을 편집 중입니다. 저장하거나 탭을 닫으면 {app} 문서에 반영됩니다"
 
 [document]
 untitled = "제목 없음 {number}"
@@ -290,6 +292,8 @@ unsupported = "이 구조의 IUPAC 이름은 아직 지원하지 않습니다({r
 [ole.clipboard]
 copied_for_office = "복사했습니다(Word와 PowerPoint에는 ChemDraw 개체로, ChemDraw에는 구조로 붙여넣어집니다)"
 copied = "복사했습니다"
+copied_3d_for_office = "3D 뷰를 복사했습니다 (Word, PowerPoint, Excel에 투명 배경 개체로 붙여넣어지며, 더블클릭하면 여기서 다시 편집할 수 있습니다)"
+copied_3d_image = "3D 뷰를 이미지로 복사했습니다"
 
 [ole.paste]
 cdx_unreadable = "클립보드의 ChemDraw 데이터를 읽을 수 없습니다"
@@ -303,6 +307,8 @@ user_type_short = "구조"
 # & marks the access key.
 verb_edit = "편집(&E)"
 verb_open = "열기(&O)"
+user_type_3d = "Open DrawChemistry 3D 모델"
+user_type_3d_short = "3D 모델"
 
 [periodic_table]
 # Keep the line breaks.
@@ -596,6 +602,9 @@ energy = "에너지"
 stale_long = "2D 구조가 변경되었습니다. ‘2D에서 다시 생성’으로 업데이트하세요"
 no_wgpu = "3D 보기에는 wgpu 렌더러가 필요합니다(이 환경에서는 사용할 수 없음)"
 export_image_tip = "현재 뷰를 투명 배경 PNG 이미지로 저장"
+copy_object = "복사"
+copy_object_tip = "뷰 복사 (Ctrl+C): Word, PowerPoint, Excel에 투명 배경 개체로 붙여넣어지며 여기서 다시 편집할 수 있습니다"
+copy_image_tip = "뷰를 투명 배경 이미지로 복사 (Ctrl+C)"
 
 [three_d.edit]
 constraint_fix = "고정"

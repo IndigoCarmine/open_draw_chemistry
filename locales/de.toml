@@ -29,6 +29,7 @@ assembly_redone = "Aggregat-Bearbeitung wiederholt"
 nothing_to_undo = "Nichts rückgängig zu machen"
 nothing_to_redo = "Nichts zu wiederholen"
 nothing_to_copy = "Nichts zu kopieren"
+copy_failed = "Kopieren fehlgeschlagen: {error}"
 pasted = "Eingefügt"
 no_structure_on_clipboard = "Keine Struktur in der Zwischenablage"
 label_not_expanded = "Keine Struktur für die Beschriftung „{label}“: nicht expandiert"
@@ -87,6 +88,7 @@ title = "Über"
 load_failed = "Das eingebettete Objekt konnte nicht gelesen werden: {error}"
 editing = "Bearbeitung eines in {app} eingebetteten Objekts. Speichern oder schließen Sie den Tab, um das {app}-Dokument zu aktualisieren"
 committed = "{app}-Dokument aktualisiert"
+editing_3d = "Ein in {app} eingebettetes 3D-Modell wird bearbeitet. Speichern oder den Tab schließen, um das {app}-Dokument zu aktualisieren"
 
 [document]
 untitled = "Unbenannt {number}"
@@ -277,6 +279,8 @@ unsupported = "IUPAC-Namen für diese Struktur werden noch nicht unterstützt ({
 [ole.clipboard]
 copied_for_office = "Kopiert (wird in Word und PowerPoint als ChemDraw-Objekt und in ChemDraw als Struktur eingefügt)"
 copied = "Kopiert"
+copied_3d_for_office = "3D-Ansicht kopiert (wird in Word, PowerPoint und Excel als Objekt mit transparentem Hintergrund eingefügt; dort doppelklicken, um es hier wieder zu bearbeiten)"
+copied_3d_image = "3D-Ansicht als Bild kopiert"
 
 [ole.paste]
 cdx_unreadable = "Die ChemDraw-Daten in der Zwischenablage konnten nicht gelesen werden"
@@ -289,6 +293,8 @@ user_type = "Open DrawChemistry-Struktur"
 user_type_short = "Struktur"
 verb_edit = "&Bearbeiten"
 verb_open = "Ö&ffnen"
+user_type_3d = "Open DrawChemistry 3D-Modell"
+user_type_3d_short = "3D-Modell"
 
 [periodic_table]
 tooltip = "{symbol}  {name}\nOrdnungszahl {z}\nAtommasse {weight}\n{category}"
@@ -576,6 +582,9 @@ energy = "Energie"
 stale_long = "Die 2D-Struktur wurde geändert. Mit „Neu aus 2D erzeugen“ aktualisieren"
 no_wgpu = "Die 3D-Ansicht benötigt den wgpu-Renderer (hier nicht verfügbar)"
 export_image_tip = "Ansicht als PNG-Bild mit transparentem Hintergrund speichern"
+copy_object = "Kopieren"
+copy_object_tip = "Ansicht kopieren (Strg+C): wird in Word, PowerPoint und Excel als Objekt mit transparentem Hintergrund eingefügt, das sich hier wieder bearbeiten lässt"
+copy_image_tip = "Ansicht als Bild mit transparentem Hintergrund kopieren (Strg+C)"
 
 [three_d.edit]
 constraint_fix = "Fixiert"

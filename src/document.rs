@@ -6,8 +6,10 @@ use chembuider_rs::{ChemStructEditor, Config, Molecule};
 
 use crate::assembly::AssemblyState;
 use crate::io::{self, Format, Loaded};
-use crate::three_d::Job;
+use crate::ole_server::model3d::{Look3d, Object3d};
 use crate::three_d::read::{Format3d, Opened3d};
+use crate::three_d::{Atom3d, Bond3d, Job};
+use crate::ui::viewport3d::Picture;
 
 pub struct Document {
     pub editor: ChemStructEditor,
@@ -57,7 +59,7 @@ pub struct Document {
 }
 
 /// The OLE object a document edits, and the document it is embedded in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Embedded {
     /// The object's id in the OLE server.
     pub id: u64,
@@ -65,6 +67,43 @@ pub struct Embedded {
     pub container: String,
     /// The containing document's name, as the container reports it.
     pub document: String,
+    /// Set when the object is a 3D model (the 3D view embedded): what is written back is the
+    /// document's 3D model, shown as this says.
+    pub model3d: Option<Embedded3d>,
+}
+
+/// An embedded 3D model's look, and the model and look as last opened or saved (what tells
+/// an edit).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Embedded3d {
+    /// How the model is shown now: the app keeps it up to date while the 3D view shows it.
+    pub look: Look3d,
+    saved_look: Look3d,
+    saved_model: Option<(Vec<Atom3d>, Vec<Bond3d>)>,
+}
+
+impl Embedded3d {
+    /// A model shown as `look`, unchanged from `model`.
+    pub fn new(look: Look3d, model: Option<&crate::three_d::Model3d>) -> Self {
+        Self {
+            saved_look: look.clone(),
+            look,
+            saved_model: model.map(|m| (m.atoms.clone(), m.bonds.clone())),
+        }
+    }
+
+    /// Whether `model` or the look differs from what was last saved. The view's size does
+    /// not count (the window is not the object), nor a camera moved by less than rounding.
+    fn changed(&self, model: Option<&crate::three_d::Model3d>) -> bool {
+        let model = model.map(|m| (&m.atoms, &m.bonds));
+        let saved = self.saved_model.as_ref().map(|(a, b)| (a, b));
+        model != saved || self.look.differs_visibly(&self.saved_look)
+    }
+
+    fn mark_saved(&mut self, model: &crate::three_d::Model3d) {
+        self.saved_look = self.look.clone();
+        self.saved_model = Some((model.atoms.clone(), model.bonds.clone()));
+    }
 }
 
 impl Document {
@@ -187,6 +226,58 @@ impl Document {
         doc
     }
 
+    /// A document editing the embedded 3D model `embedded`, holding `object`'s model as its
+    /// 3D model and a depiction of it in the editor (nothing for a newly inserted object).
+    /// The error says why an object's MOL2 could not be read; the document is empty then.
+    pub fn embedded_3d(
+        config: &Config,
+        object: Option<&Object3d>,
+        mut embedded: Embedded,
+    ) -> (Self, Option<String>) {
+        let mut doc = Self::new(config, 0);
+        let mut error = None;
+        if let Some(object) = object {
+            match object.open() {
+                Ok(opened) => {
+                    doc.editor.molecule = opened.drawing.clone();
+                    if let Some(model) = opened.model {
+                        doc.three_d = Job::with_model(model, &opened.drawing);
+                    }
+                    doc.saved = opened.drawing;
+                    doc.auto_fit = Some(AutoFit::default());
+                }
+                Err(e) => error = Some(e.to_string()),
+            }
+        }
+        let look = object.map(|o| o.look.clone()).unwrap_or_default();
+        embedded.model3d = Some(Embedded3d::new(look, doc.three_d.model()));
+        doc.embedded = Some(embedded);
+        (doc, error)
+    }
+
+    /// The embedded 3D model's look, when the document is one.
+    pub fn embedded_3d_mut(&mut self) -> Option<&mut Embedded3d> {
+        self.embedded.as_mut().and_then(|e| e.model3d.as_mut())
+    }
+
+    /// The embedded 3D model to write back: the 3D model as MOL2, its look and `picture`
+    /// (drawn from that look; without one the object keeps the picture it has). Marks it
+    /// saved. An error when there is no model to write.
+    pub fn commit_embedded_3d(&mut self, picture: Option<&Picture>) -> Result<Object3d, String> {
+        let Some(model) = self.three_d.model() else {
+            return Err(t!("app.status.no_3d_model_to_export").to_owned());
+        };
+        let Some(embedded) = self.embedded.as_mut().and_then(|e| e.model3d.as_mut()) else {
+            return Err(t!("app.status.no_3d_model_to_export").to_owned());
+        };
+        let object =
+            Object3d::new(model, embedded.look.clone(), picture).map_err(|e| e.to_string())?;
+        embedded.look.extent = object.look.extent;
+        embedded.mark_saved(model);
+        self.saved = self.editor.molecule.clone();
+        Ok(object)
+    }
+
     /// The structure as CDX, for writing back into the embedding document: merged into the
     /// object's original CDX so what the editor cannot show is kept. Marks it saved.
     pub fn commit_embedded(&mut self) -> Result<Vec<u8>, io::Error> {
@@ -240,9 +331,15 @@ impl Document {
         std::mem::take(&mut self.paste_requested)
     }
 
-    /// Whether the structure differs from what was last opened or saved.
+    /// Whether the structure differs from what was last opened or saved (and, for an embedded
+    /// 3D model, the model or how it is shown).
     pub fn is_dirty(&self) -> bool {
         self.editor.molecule != self.saved
+            || self
+                .embedded
+                .as_ref()
+                .and_then(|e| e.model3d.as_ref())
+                .is_some_and(|e| e.changed(self.three_d.model()))
     }
 
     /// Whether a job of this document is running that quitting would end. These results are
@@ -399,6 +496,91 @@ mod tests {
             t.text = "(II)".to_owned();
         }
         assert!(doc.is_dirty(), "editing a caption is an edit");
+    }
+
+    fn embedded_3d_doc() -> (Document, Object3d) {
+        let model = crate::ole_server::model3d::tests::ethanol();
+        let look = Look3d {
+            style: crate::ui::viewport3d::Style3d::Spheres,
+            ..Look3d::default()
+        };
+        let object = Object3d::new(&model, look, None).unwrap();
+        let embedded = Embedded {
+            id: 9,
+            container: "Word".into(),
+            document: String::new(),
+            model3d: None,
+        };
+        let (doc, error) = Document::embedded_3d(&Config::default(), Some(&object), embedded);
+        assert_eq!(error, None);
+        (doc, object)
+    }
+
+    #[test]
+    fn an_embedded_3d_model_opens_as_the_documents_model_and_its_drawing() {
+        let (doc, object) = embedded_3d_doc();
+        let model = doc.three_d.model().expect("the model");
+        assert_eq!(model.atoms.len(), 9);
+        assert_eq!(doc.editor.molecule.atoms.len(), 3, "the heavy atoms drawn");
+        assert!(!doc.three_d.is_stale(&doc.editor.molecule));
+        assert!(!doc.is_dirty());
+        let look = &doc
+            .embedded
+            .as_ref()
+            .unwrap()
+            .model3d
+            .as_ref()
+            .unwrap()
+            .look;
+        assert_eq!(*look, object.look);
+        assert_eq!(doc.title(), "Embedded in Word");
+    }
+
+    #[test]
+    fn editing_or_turning_an_embedded_model_is_an_edit_and_committing_saves_it() {
+        let (mut doc, object) = embedded_3d_doc();
+        // A view of another size is no edit.
+        doc.embedded_3d_mut().unwrap().look.view_points = [999.0, 333.0];
+        assert!(!doc.is_dirty());
+        // A turned camera is.
+        doc.embedded_3d_mut().unwrap().look.camera = Some(crate::ui::viewport3d::CameraState {
+            center: [0.0; 3],
+            rotation: [0.0, 1.0, 0.0, 0.0],
+            radius: 2.0,
+        });
+        assert!(doc.is_dirty());
+        let committed = doc.commit_embedded_3d(None).unwrap();
+        assert!(!doc.is_dirty());
+        assert_eq!(committed.mol2, object.mol2, "the same model");
+        assert!(
+            committed.png.is_empty(),
+            "no picture drawn: the object keeps its own"
+        );
+
+        // Moving an atom is an edit too, and goes into the MOL2.
+        let model = doc.three_d.model_mut().unwrap();
+        let mut coords = crate::three_d::edit::coords(model);
+        coords[0][0] += 0.5;
+        crate::three_d::edit::set_coords(model, &coords);
+        assert!(doc.is_dirty());
+        let moved = doc.commit_embedded_3d(None).unwrap();
+        assert!(!doc.is_dirty());
+        assert_ne!(moved.mol2, object.mol2);
+    }
+
+    #[test]
+    fn a_new_embedded_3d_object_has_nothing_to_commit_until_a_model_is_made() {
+        let embedded = Embedded {
+            id: 1,
+            container: "PowerPoint".into(),
+            document: String::new(),
+            model3d: None,
+        };
+        let (mut doc, error) = Document::embedded_3d(&Config::default(), None, embedded);
+        assert_eq!(error, None);
+        assert!(doc.three_d.model().is_none());
+        assert!(!doc.is_dirty());
+        assert!(doc.commit_embedded_3d(None).is_err());
     }
 
     fn opened_reaction() -> Document {

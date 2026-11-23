@@ -213,6 +213,32 @@ struct Shown {
     coords: Vec<[f64; 3]>,
 }
 
+/// Where the camera is, as it is saved with an embedded 3D object (see
+/// [`crate::ole_server::model3d`]) so the object opens again as it was shown.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CameraState {
+    /// The point the camera turns about, in nm (the viewer's unit).
+    pub center: [f32; 3],
+    /// The camera's orientation, a unit quaternion (w, x, y, z).
+    pub rotation: [f32; 4],
+    /// The camera's distance from [`CameraState::center`], in nm.
+    pub radius: f32,
+}
+
+impl CameraState {
+    /// Whether every number is finite and the distance positive (a state read from a document
+    /// may be anything).
+    pub fn is_usable(&self) -> bool {
+        self.center
+            .iter()
+            .chain(&self.rotation)
+            .chain([&self.radius])
+            .all(|v| v.is_finite())
+            && self.radius > 0.0
+            && self.rotation.iter().any(|v| *v != 0.0)
+    }
+}
+
 pub struct Viewport3d {
     viewer: MoleculeViewer,
     camera: OrbitalCamera,
@@ -234,6 +260,11 @@ pub struct Viewport3d {
     cell: Option<SimulationCellState>,
     /// The caller takes this frame's primary drag (moving a molecule) instead of the camera.
     drag_claimed: bool,
+    /// Where to put the camera instead of framing a newly loaded model (see
+    /// [`Viewport3d::prefer_camera`]).
+    preferred_camera: Option<CameraState>,
+    /// The size the view was last shown at, in points.
+    shown_points: Option<egui::Vec2>,
 }
 
 /// Periodic images: the repeated cell's vectors in Å and the copies per axis.
@@ -282,7 +313,42 @@ impl Viewport3d {
             scene_colors: None,
             cell: None,
             drag_claimed: false,
+            preferred_camera: None,
+            shown_points: None,
         }
+    }
+
+    /// Where the camera is now.
+    pub fn camera_state(&self) -> CameraState {
+        let c = &self.camera;
+        CameraState {
+            center: [c.center.x, c.center.y, c.center.z],
+            rotation: [c.rotation.w, c.rotation.x, c.rotation.y, c.rotation.z],
+            radius: c.radius,
+        }
+    }
+
+    /// Put the camera at `state` (ignored when it is not usable).
+    pub fn set_camera_state(&mut self, state: &CameraState) {
+        if !state.is_usable() {
+            return;
+        }
+        let [x, y, z] = state.center;
+        let [w, qx, qy, qz] = state.rotation;
+        self.camera.center = Vec3::new(x, y, z);
+        self.camera.rotation = lin_alg::f32::Quaternion::new(w, qx, qy, qz).to_normalized();
+        self.camera.radius = state.radius;
+    }
+
+    /// When a model is next loaded, put the camera at `state` instead of framing the model (an
+    /// embedded object opens as it was shown). `None` frames it as usual.
+    pub fn prefer_camera(&mut self, state: Option<CameraState>) {
+        self.preferred_camera = state.filter(CameraState::is_usable);
+    }
+
+    /// The size the view was last shown at, in points; `None` before it has been shown.
+    pub fn shown_points(&self) -> Option<egui::Vec2> {
+        self.shown_points
     }
 
     /// Whether the next [`Viewport3d::show`] hands a primary drag to the caller
@@ -494,6 +560,15 @@ impl Viewport3d {
         }
     }
 
+    /// Place the camera for a model just loaded: where [`Viewport3d::prefer_camera`] asked, or
+    /// framing the whole model.
+    fn frame_new_model(&mut self) {
+        match self.preferred_camera {
+            Some(state) => self.set_camera_state(&state),
+            None => self.reset_view(),
+        }
+    }
+
     /// Frame the whole model.
     pub fn reset_view(&mut self) {
         let Some(molecule) = self.viewer.molecule() else {
@@ -560,8 +635,9 @@ impl Viewport3d {
         let width = (available.x * ppp).max(1.0) as u32;
         let height = (available.y * ppp).max(1.0) as u32;
         self.camera.set_aspect(width as f32 / height as f32);
+        self.shown_points = Some(available);
         if std::mem::take(&mut self.reframe) {
-            self.reset_view();
+            self.frame_new_model();
         }
 
         if self.offscreen.lod_enabled()
@@ -651,6 +727,61 @@ impl Viewport3d {
             .ensure_resources(render_state, shown_w, shown_h);
         let rgba = downsample_premultiplied(&rendered?, render_w, render_h, supersample);
         encode_png(rgba, shown_w * scale, shown_h * scale)
+    }
+
+    /// Draw `model` in `style` from `camera` (framed as a newly loaded model is when `None`)
+    /// into a picture of the size of a view `points` large at `px_per_point` pixels a point,
+    /// with a transparent background, at full detail and supersampled. A viewer of its own
+    /// draws it, so the view on screen is left as it is and nothing needs to have been shown.
+    /// The resolution is lowered when the GPU cannot hold the picture.
+    pub fn render_picture(
+        render_state: &egui_wgpu::RenderState,
+        model: &Model3d,
+        style: Style3d,
+        camera: Option<&CameraState>,
+        points: egui::Vec2,
+        px_per_point: f32,
+    ) -> Result<Picture, String> {
+        if model.atoms.is_empty() || !(points.x >= 1.0 && points.y >= 1.0) {
+            return Err(t!("three_d.error.not_shown").to_owned());
+        }
+        let max_dim = render_state.device.limits().max_texture_dimension_2d;
+        let size = |ppp: f32| {
+            (
+                (points.x * ppp).round().max(1.0) as u32,
+                (points.y * ppp).round().max(1.0) as u32,
+            )
+        };
+        let mut ppp = px_per_point.max(0.1);
+        let (mut width, mut height) = size(ppp);
+        while (width > max_dim || height > max_dim) && ppp > 0.1 {
+            ppp *= 0.5;
+            (width, height) = size(ppp);
+        }
+        let fits = |s: u32| width * s <= max_dim && height * s <= max_dim;
+        let supersample = (1..=IMAGE_SUPERSAMPLE)
+            .rev()
+            .find(|&s| fits(s))
+            .unwrap_or(1);
+
+        let mut view = Viewport3d::new();
+        view.set_style(style);
+        view.sync(Some(model));
+        view.camera.set_aspect(width as f32 / height as f32);
+        view.prefer_camera(camera.copied());
+        view.frame_new_model();
+        view.reframe = false;
+        let (render_w, render_h) = (width * supersample, height * supersample);
+        let rendered = view
+            .render(render_state, render_w, render_h, false, [0.0; 4])
+            .and_then(|()| view.offscreen.read_rgba(render_state));
+        view.free(render_state);
+        Ok(Picture {
+            rgba: downsample_premultiplied(&rendered?, render_w, render_h, supersample),
+            width,
+            height,
+            px_per_point: ppp,
+        })
     }
 
     fn interact(
@@ -780,6 +911,17 @@ impl Viewport3d {
     }
 }
 
+/// A picture drawn by [`Viewport3d::render_picture`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Picture {
+    /// Premultiplied RGBA8, row by row from the top; the background is transparent.
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    /// The pixels a point of the view spans in it.
+    pub px_per_point: f32,
+}
+
 /// An exported picture is this many times the on-screen size of the view…
 const IMAGE_SCALE: u32 = 2;
 /// …drawn at this many samples per pixel a side, for smooth edges.
@@ -815,7 +957,7 @@ fn downsample_premultiplied(rgba: &[u8], width: u32, height: u32, factor: u32) -
 
 /// PNG bytes of premultiplied RGBA8 pixels, the colour divided back out of the alpha (PNG's
 /// alpha is straight).
-fn encode_png(mut rgba: Vec<u8>, width: u32, height: u32) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_png(mut rgba: Vec<u8>, width: u32, height: u32) -> Result<Vec<u8>, String> {
     for px in rgba.as_chunks_mut::<4>().0 {
         let a = u32::from(px[3]);
         if a == 0 {
@@ -1218,6 +1360,61 @@ mod tests {
             moleucle_3dview_rs::with_state_by_type::<SimulationCellState, _>(&view.shared, |s| *s)
                 .unwrap();
         assert!(stored.is_empty());
+    }
+
+    #[test]
+    fn a_preferred_camera_replaces_the_framing_of_a_new_model() {
+        use crate::three_d::{Atom3d, Bond3d, ForceField};
+        let atom = |element: &str, x: f64| Atom3d {
+            element: element.into(),
+            pos: [x, 0.0, 0.0],
+        };
+        let model = Model3d {
+            atoms: vec![atom("C", 0.0), atom("O", 1.4)],
+            bonds: vec![Bond3d {
+                begin: 0,
+                end: 1,
+                order: 2,
+            }],
+            force_field: ForceField::Uff,
+            energy: 0.0,
+            energy_unit: String::new(),
+            formula: String::new(),
+            molfile: String::new(),
+        };
+        let mut view = Viewport3d::new();
+        view.sync(Some(&model));
+        view.frame_new_model();
+        let framed = view.camera_state();
+        let mut turned = Viewport3d::new();
+        turned.camera.orbit(0.8, -0.3);
+        turned.camera.radius = 7.5;
+        turned.camera.center = Vec3::new(0.1, 0.2, 0.3);
+        let wanted = turned.camera_state();
+        assert_ne!(wanted, framed);
+
+        let mut view = Viewport3d::new();
+        view.prefer_camera(Some(wanted));
+        view.sync(Some(&model));
+        view.frame_new_model();
+        let got = view.camera_state();
+        assert_eq!(got.center, wanted.center);
+        assert_eq!(got.radius, wanted.radius);
+        for (a, b) in got.rotation.iter().zip(wanted.rotation) {
+            assert!((a - b).abs() < 1e-5, "{got:?} vs {wanted:?}");
+        }
+
+        // A state that is not usable frames the model instead.
+        let broken = CameraState {
+            radius: f32::NAN,
+            ..wanted
+        };
+        assert!(!broken.is_usable());
+        let mut view = Viewport3d::new();
+        view.prefer_camera(Some(broken));
+        view.sync(Some(&model));
+        view.frame_new_model();
+        assert_eq!(view.camera_state(), framed);
     }
 
     #[test]

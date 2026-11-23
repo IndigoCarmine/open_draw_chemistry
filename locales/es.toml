@@ -32,6 +32,7 @@ assembly_redone = "Edición del ensamblaje rehecha"
 nothing_to_undo = "No hay nada que deshacer"
 nothing_to_redo = "No hay nada que rehacer"
 nothing_to_copy = "No hay nada que copiar"
+copy_failed = "No se pudo copiar: {error}"
 pasted = "Pegado"
 no_structure_on_clipboard = "No hay ninguna estructura en el portapapeles"
 label_not_expanded = "No hay estructura para la etiqueta «{label}»: no se ha expandido"
@@ -90,6 +91,7 @@ title = "Acerca de"
 load_failed = "No se pudo leer el objeto incrustado: {error}"
 editing = "Editando un objeto incrustado en {app}. Guarda o cierra la pestaña para actualizar el documento de {app}"
 committed = "Documento de {app} actualizado"
+editing_3d = "Editando un modelo 3D incrustado en {app}. Guarde o cierre la pestaña para actualizar el documento de {app}"
 
 [document]
 untitled = "Sin título {number}"
@@ -280,6 +282,8 @@ unsupported = "Todavía no se admiten nombres IUPAC para esta estructura ({reaso
 [ole.clipboard]
 copied_for_office = "Copiado (se pega en Word y PowerPoint como objeto de ChemDraw y en ChemDraw como estructura)"
 copied = "Copiado"
+copied_3d_for_office = "Vista 3D copiada (se pega en Word, PowerPoint y Excel como un objeto con fondo transparente; haga doble clic allí para volver a editarlo aquí)"
+copied_3d_image = "Vista 3D copiada como imagen"
 
 [ole.paste]
 cdx_unreadable = "No se pudieron leer los datos de ChemDraw del portapapeles"
@@ -292,6 +296,8 @@ user_type = "Estructura de Open DrawChemistry"
 user_type_short = "Estructura"
 verb_edit = "&Editar"
 verb_open = "&Abrir"
+user_type_3d = "Modelo 3D de Open DrawChemistry"
+user_type_3d_short = "Modelo 3D"
 
 [periodic_table]
 tooltip = "{symbol}  {name}\nNúmero atómico {z}\nMasa atómica {weight}\n{category}"
@@ -579,6 +585,9 @@ energy = "Energía"
 stale_long = "La estructura 2D ha cambiado. Actualízala con “Regenerar desde 2D”"
 no_wgpu = "La vista 3D necesita el renderizador wgpu (no disponible aquí)"
 export_image_tip = "Guardar la vista como imagen PNG con fondo transparente"
+copy_object = "Copiar"
+copy_object_tip = "Copiar la vista (Ctrl+C): se pega en Word, PowerPoint y Excel como un objeto con fondo transparente que se vuelve a editar aquí"
+copy_image_tip = "Copiar la vista como imagen con fondo transparente (Ctrl+C)"
 
 [three_d.edit]
 constraint_fix = "Fijo"

@@ -166,6 +166,10 @@ fn serve(editor: Editor, side: ServerSide, first_object_timeout: Duration) {
                     ole_server::log(&format!("update {id}: {e}"));
                 }
             }
+            // AcaudaOffice opens ChemDraw objects only: no 3D model is ever open here.
+            Ok(ToServer::Update3d { id, .. }) => {
+                ole_server::log(&format!("update 3D {id}: not an AcaudaOffice object"));
+            }
             Ok(ToServer::Closed { id }) => {
                 objects.remove(&id);
                 editor.close(ObjectId(id as usize));

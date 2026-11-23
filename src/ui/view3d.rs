@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Command;
 use super::interactions::{self as contacts, ShowInteractions};
-use super::viewport3d::{Frame3d, Hit, Style3d, Viewport3d, exclusive_groups};
+use super::viewport3d::{CameraState, Frame3d, Hit, Style3d, Viewport3d, exclusive_groups};
 use crate::assembly::place::{self, ScreenBasis};
 use crate::document::Document;
 use crate::theme::{self, dark};
@@ -142,6 +142,21 @@ impl View3d {
             Some(viewport) => viewport.render_png(render_state),
             None => Err(t!("three_d.error.not_shown").to_owned()),
         }
+    }
+
+    /// Where the camera is and the size the view was last shown at (points); `None` before
+    /// the viewer has shown a model.
+    pub fn camera(&self) -> Option<(CameraState, egui::Vec2)> {
+        let viewport = self.viewport.as_ref()?;
+        Some((viewport.camera_state(), viewport.shown_points()?))
+    }
+
+    /// When the viewer next loads a model, put the camera at `state` instead of framing the
+    /// model (see [`Viewport3d::prefer_camera`]).
+    pub fn prefer_camera(&mut self, state: Option<CameraState>) {
+        self.viewport
+            .get_or_insert_with(Viewport3d::new)
+            .prefer_camera(state);
     }
 
     fn clashes_for(&mut self, model: &Model3d) -> &[Clash] {
@@ -318,6 +333,19 @@ pub fn edit_panel(
             .clicked()
         {
             out.push(Command::Export3dImage);
+        }
+        // An object Office embeds and edits again here (on Windows; a picture elsewhere).
+        if ui
+            .add_enabled(has_view, egui::Button::new(t!("three_d.view.copy_object")))
+            .on_hover_text(if cfg!(windows) {
+                t!("three_d.view.copy_object_tip")
+            } else {
+                t!("three_d.view.copy_image_tip")
+            })
+            .on_disabled_hover_text(t!("three_d.view.export_no_model"))
+            .clicked()
+        {
+            out.push(Command::Copy3d);
         }
     });
 }

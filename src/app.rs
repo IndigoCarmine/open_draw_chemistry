@@ -134,6 +134,10 @@ pub struct OpenDrawApp {
     /// has been drawn (see [`OpenDrawApp::write_view_image`]).
     #[serde(skip)]
     pending_image: Option<(ViewMode, PathBuf)>,
+    /// The GPU, as of the last frame: pictures of a 3D model are drawn off screen with it (a
+    /// copy of the 3D view, an embedded model written back).
+    #[serde(skip)]
+    render_state: Option<eframe::egui_wgpu::RenderState>,
 }
 
 impl Default for OpenDrawApp {
@@ -170,6 +174,7 @@ impl Default for OpenDrawApp {
             conformer_window: Default::default(),
             update: UpdateFlow::default(),
             pending_image: None,
+            render_state: None,
         }
     }
 }
@@ -474,6 +479,43 @@ impl OpenDrawApp {
         };
     }
 
+    /// Copy the 3D view as it is shown: the model, its style and camera, and its picture with a
+    /// transparent background (see [`crate::ole::copy_3d`]).
+    fn copy_3d(&mut self, ctx: &egui::Context) {
+        let Some(model) = self.active_doc().and_then(|d| d.three_d.model()) else {
+            self.status = t!("app.status.no_3d_model_to_export").to_owned();
+            return;
+        };
+        let Some(render_state) = &self.render_state else {
+            self.status = t!("three_d.error.no_gpu").to_owned();
+            return;
+        };
+        // The camera only when the viewer is showing this model (it frames it otherwise).
+        let (camera, points) = match self.view3d.camera() {
+            Some((camera, points)) if self.view.is_3d() => (Some(camera), [points.x, points.y]),
+            _ => (None, [0.0, 0.0]),
+        };
+        let look = crate::ole_server::model3d::Look3d::of_view(self.view3d.style, camera, points);
+        let [w, h] = look.view_points;
+        let copied = ui::viewport3d::Viewport3d::render_picture(
+            render_state,
+            model,
+            look.style,
+            look.camera.as_ref(),
+            egui::vec2(w, h),
+            look.picture_px_per_point(),
+        )
+        .and_then(|picture| {
+            crate::ole_server::model3d::Object3d::new(model, look, Some(&picture))
+                .map_err(|e| e.to_string())
+        })
+        .and_then(|object| crate::ole::copy_3d(&object, ctx));
+        self.status = match copied {
+            Ok(message) => message.to_owned(),
+            Err(e) => t!("app.status.copy_failed", error = e),
+        };
+    }
+
     /// Ask where to save `view` (the 3D view or the assembly) as a transparent PNG. The
     /// picture is taken after that view is next drawn ([`OpenDrawApp::write_view_image`]), so
     /// it is switched to.
@@ -650,6 +692,9 @@ impl OpenDrawApp {
             }
             Command::Export3d(export) => self.export_3d(export),
             Command::Export3dImage => self.export_view_image(ViewMode::ThreeD),
+            Command::Copy3d => self.copy_3d(ctx),
+            // In the 3D view, Edit > Copy copies the view.
+            Command::Copy if self.view.is_3d() => self.copy_3d(ctx),
             Command::AssemblyImage => self.export_view_image(ViewMode::Assembly),
             Command::SoftCore3d => self.start_softcore(softcore::Target::Model),
             Command::SoftCoreAssembly => self.start_softcore(softcore::Target::Assembly),
@@ -1529,6 +1574,7 @@ impl eframe::App for OpenDrawApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Cloning a Context is cheap (it is an Arc) and frees up `ui` for the panels below.
         let ctx = ui.ctx().clone();
+        self.render_state = frame.wgpu_render_state().cloned();
         // Remember the UI scale the user set with Ctrl + / Ctrl - for the next launch. (Read
         // here, inside a pass: before the first one it is still what egui itself remembered.)
         self.ui_zoom = ctx.zoom_factor();
@@ -1540,6 +1586,10 @@ impl eframe::App for OpenDrawApp {
             self.fonts_for = Some(lang);
         }
         Self::shortcuts(&ctx, &mut commands);
+        // Ctrl+C in the 3D view copies the view (the drawing's canvas takes its own).
+        if self.view.is_3d() && !self.docs.is_empty() && crate::ole::take_view_copy_shortcut(&ctx) {
+            commands.push(Command::Copy3d);
+        }
         ctx.input(|i| {
             for file in &i.raw.dropped_files {
                 commands.push(Command::OpenPath(file.path().to_owned()));
@@ -1706,6 +1756,9 @@ impl eframe::App for OpenDrawApp {
         }
         let title = self.active_doc().map(Document::title).unwrap_or_default();
         let render_state = frame.wgpu_render_state();
+        if view.is_3d() {
+            self.prefer_embedded_camera();
+        }
         // The central area shows one view: the drawing, or the 3D model or the assembly (dark
         // in both themes).
         let central = if !view.is_drawing() && !self.docs.is_empty() {
@@ -1737,6 +1790,7 @@ impl eframe::App for OpenDrawApp {
                 None => welcome(ui, &mut commands),
             }
         });
+        self.track_embedded_look();
 
         if let Some(message) = ui::scan::window(
             &ctx,
