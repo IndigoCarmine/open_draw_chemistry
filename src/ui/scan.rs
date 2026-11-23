@@ -1291,6 +1291,17 @@ fn curve(
     finish_interaction(&response.response, energies, section, hovered)
 }
 
+/// Take this frame's wheel scrolling for the plot of `response` when the pointer is over it, as
+/// the plot reads it (it moves its view by it), so that the scroll area round the plot does not
+/// scroll the window by it too.
+fn keep_wheel(response: &egui::Response) {
+    if response.contains_pointer() {
+        response
+            .ctx
+            .input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+    }
+}
+
 /// A two-parameter scan (or a section of two axes): a heatmap (the first parameter across, the
 /// second up), a colour bar, and the lowest cell marked.
 fn heatmap(
@@ -1419,13 +1430,15 @@ fn heatmap(
 }
 
 /// The tooltip of the hovered point (all its values: of a projection, the point found lowest),
-/// and the point clicked.
+/// and the point clicked. The wheel over the plot is the plot's (it moves the view): it does not
+/// go on to scroll the window as well.
 fn finish_interaction(
     response: &egui::Response,
     energies: &Energies,
     section: &Section,
     hovered: Option<usize>,
 ) -> Option<usize> {
+    keep_wheel(response);
     let (scan, relative) = (energies.scan, energies.relative);
     let index = hovered?;
     let energy = match energies.shown(index) {
@@ -1710,6 +1723,101 @@ mod tests {
             assert!(text.contains("9 / 12 points"), "{text}");
             assert!(text.contains("Minimum"), "{text}");
         }
+    }
+
+    /// Where a text holding `needle` is drawn in `output`.
+    fn text_at(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
+        fn find(shape: &egui::Shape, needle: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text().contains(needle) => Some(t.pos),
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, needle)),
+                _ => None,
+            }
+        }
+        output.shapes.iter().find_map(|c| find(&c.shape, needle))
+    }
+
+    /// The wheel over the curve of a scan moves the plot's view, not the window: the text above
+    /// the plot stays where it is. The same wheel beside the plot scrolls the window.
+    #[test]
+    fn the_wheel_over_a_plot_does_not_scroll_the_window() {
+        let mut doc = Document::new(&chembuider_rs::Config::default(), 1);
+        let model = chain_model();
+        doc.three_d = three_d::Job::with_model(model.clone(), &doc.editor.molecule);
+        let dihedral = Param::Dihedral([0, 1, 2, 3]);
+        let values: Vec<f64> = (0..13).map(|k| -180.0 + 30.0 * k as f64).collect();
+        let scan = scan_of(vec![(dihedral.clone(), values)], |v| {
+            Some(1.0 + v[0].to_radians().cos())
+        });
+        doc.scan = Some(Run::finished(
+            scan,
+            Source::model(&model, None, vec![dihedral]),
+        ));
+        let summary = "13 / 13 points";
+        let plot_label = format!("  {}", t!("scan.plot.minimum"));
+
+        // How far the summary above the plot moves when the wheel turns at what `at` picks.
+        let mut moved = |at: &dyn Fn(&egui::FullOutput) -> egui::Pos2| {
+            let ctx = egui::Context::default();
+            let mut win = ScanWindow {
+                open: true,
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            let mut run = |events: Vec<egui::Event>| {
+                // A screen shorter than the window's content, so that the window scrolls.
+                let input = egui::RawInput {
+                    events,
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(900.0, 520.0),
+                    )),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    window(
+                        ui.ctx(),
+                        &mut win,
+                        Some(&mut doc),
+                        ViewMode::ThreeD,
+                        &mut out,
+                    );
+                });
+                output.textures_delta.clear();
+                output
+            };
+            run(Vec::new());
+            let laid_out = run(Vec::new());
+            let before = text_at(&laid_out, summary).expect("the summary is drawn");
+            let pointer = at(&laid_out);
+            run(vec![egui::Event::PointerMoved(pointer)]);
+            run(vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -120.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            let mut last = laid_out;
+            for _ in 0..30 {
+                last = run(Vec::new());
+            }
+            let after = text_at(&last, summary).expect("the summary is still drawn");
+            (after.y - before.y).abs()
+        };
+
+        // The minimum is labelled near the bottom of the 320-point-high plot: a little above it
+        // is inside the plot and on the screen.
+        let over_plot = moved(&|o: &egui::FullOutput| {
+            text_at(o, &plot_label).expect("the minimum is labelled on the plot")
+                + vec2(4.0, -120.0)
+        });
+        assert!(over_plot < 0.5, "the window scrolled by {over_plot}");
+        let beside = moved(&|o: &egui::FullOutput| text_at(o, summary).unwrap() + vec2(4.0, 4.0));
+        assert!(
+            beside > 10.0,
+            "the window scrolls elsewhere (moved {beside})"
+        );
     }
 
     #[test]
