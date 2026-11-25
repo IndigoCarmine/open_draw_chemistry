@@ -618,4 +618,68 @@ mod tests {
         }
         assert_eq!((doc.editor.zoom, doc.editor.pan), panned);
     }
+
+    /// An opened drawing with curly arrows: as it was read until the user edits it, nothing
+    /// selected, whatever the pointer does over it that is no edit (it moves over the arrows,
+    /// or a button comes up there whose press went to the open dialog).
+    #[test]
+    fn an_opened_drawing_with_curly_arrows_is_neither_edited_nor_selected() {
+        use chembuider_rs::molecule::{BondOrder, CurlyArrow, CurlyEnd, CurlyKind, Molecule};
+        let mut m = Molecule::default();
+        let c = m.add_atom("C".into(), [3.0, 3.0], 0);
+        let o = m.add_atom("O".into(), [3.0, 1.5], 0);
+        let co = m.add_bond(c, o, BondOrder::Double);
+        let h = m.add_atom("H".into(), [5.0, 0.2], 0);
+        let nu = m.add_atom("O".into(), [6.2, 5.2], -1);
+        m.add_curly_arrow(CurlyArrow::new(
+            CurlyEnd::Bond { bond: co, onto: o },
+            CurlyEnd::Atom(h),
+            CurlyKind::Pair,
+        ));
+        m.add_curly_arrow(CurlyArrow::new(
+            CurlyEnd::Atom(nu),
+            CurlyEnd::Atom(c),
+            CurlyKind::Pair,
+        ));
+        let dir = std::env::temp_dir().join(format!("odc-curly-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mechanism.cdxml");
+        std::fs::write(&path, chembuider_rs::molecule::cdx::molecule_to_cdxml(&m)).unwrap();
+        let loaded = io::load(&path).unwrap();
+        let mut doc = Document::from_loaded(&Config::default(), &path, Format::Cdxml, loaded);
+        let ctx = egui::Context::default();
+        for _ in 0..4 {
+            frame(&ctx, &mut doc, 1200.0);
+        }
+        assert!(!doc.is_dirty(), "opening is no edit");
+        assert!(doc.editor.selected_objects.is_empty());
+        // The pointer sweeps the canvas, and a lone button release comes.
+        for k in 0..40 {
+            let p = egui::pos2(30.0 * k as f32, 15.0 * k as f32);
+            let events = vec![
+                egui::Event::PointerMoved(p),
+                egui::Event::PointerButton {
+                    pos: p,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ];
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| {
+                doc.show(ui);
+            });
+            output.textures_delta.clear();
+        }
+        assert!(!doc.is_dirty(), "hovering is no edit");
+        assert!(doc.editor.selected_objects.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

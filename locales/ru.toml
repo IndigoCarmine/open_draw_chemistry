@@ -10,6 +10,8 @@ menu = "Язык (Language)"
 tooltip = "Язык (Language)"
 
 [app.status]
+no_curly_arrow_selected = "Выберите изогнутую стрелку для отражения"
+no_shaped_curly_arrow = "Выберите изогнутую стрелку, форма которой задана вручную"
 open_failed = "Не удалось открыть {path}: {error}"
 opened = "Открыт файл {name}"
 opened_summary = "Открыт файл {name} ({summary})"
@@ -99,6 +101,7 @@ embedded_named = "Внедрено в {app} — {name}"
 assembly = "Ансамбль"
 
 [status_bar]
+curly_arrow = "Изогнутая стрелка: "
 tool = "Инструмент: "
 element = "Элемент: "
 counts = "Атомы {atoms} · Связи {bonds}"
@@ -150,6 +153,10 @@ title = "Формат"
 title = "Реакция"
 add_arrow = "Добавить стрелку реакции"
 add_equilibrium_arrow = "Добавить равновесную стрелку"
+add_curly_arrow = "Добавить изогнутую стрелку (электронная пара)"
+add_fishhook_arrow = "Добавить стрелку-крючок (один электрон)"
+flip_curly_arrow = "Отразить изгиб стрелки"
+reset_curly_arrow = "Вернуть автоматическую форму"
 conditions_text = "Текст условий реакции"
 insert_table = "Вставить таблицу реакции"
 
@@ -242,6 +249,7 @@ brackets = "{format} не поддерживает скобки (повторя�
 [io.summary]
 editable = "Можно редактировать: {items}"
 arrows = { one = "{n} стрелка", few = "{n} стрелки", many = "{n} стрелок", other = "{n} стрелки" }
+curly_arrows = { one = "{n} изогнутая стрелка", few = "{n} изогнутые стрелки", many = "{n} изогнутых стрелок", other = "{n} изогнутой стрелки" }
 texts = { one = "{n} текст", few = "{n} текста", many = "{n} текстов", other = "{n} текста" }
 tables = { one = "{n} таблица реакции", few = "{n} таблицы реакции", many = "{n} таблиц реакции", other = "{n} таблицы реакции" }
 brackets = { one = "{n} скобка", few = "{n} скобки", many = "{n} скобок", other = "{n} скобки" }
@@ -449,6 +457,8 @@ cyclohexane = "Циклогексан"
 text = "Текст"
 reaction_arrow = "Стрелка реакции"
 equilibrium_arrow = "Равновесная стрелка"
+curly_arrow = "Изогнутая стрелка"
+fishhook_arrow = "Стрелка-крючок"
 bracket = "Скобка"
 insert_reaction_table = "Вставить таблицу реакции"
 bond = "Связь"

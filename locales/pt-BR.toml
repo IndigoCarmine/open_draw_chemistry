@@ -14,6 +14,8 @@ menu = "Idioma (Language)"
 tooltip = "Idioma (Language)"
 
 [app.status]
+no_curly_arrow_selected = "Selecione uma seta curva para inverter"
+no_shaped_curly_arrow = "Selecione uma seta curva moldada à mão"
 open_failed = "Não foi possível abrir {path}: {error}"
 opened = "Aberto: {name}"
 opened_summary = "Aberto: {name} ({summary})"
@@ -103,6 +105,7 @@ embedded_named = "Incorporado no {app} — {name}"
 assembly = "Montagem"
 
 [status_bar]
+curly_arrow = "Seta curva: "
 tool = "Ferramenta: "
 element = "Elemento: "
 counts = "Átomos {atoms} · Ligações {bonds}"
@@ -154,6 +157,10 @@ title = "Formatar"
 title = "Reação"
 add_arrow = "Adicionar seta de reação"
 add_equilibrium_arrow = "Adicionar seta de equilíbrio"
+add_curly_arrow = "Adicionar seta curva (par de elétrons)"
+add_fishhook_arrow = "Adicionar seta de anzol (um elétron)"
+flip_curly_arrow = "Inverter a curvatura da seta"
+reset_curly_arrow = "Voltar à forma automática"
 conditions_text = "Texto de condições de reação"
 insert_table = "Inserir tabela de reação"
 
@@ -246,6 +253,7 @@ brackets = "{format} não consegue representar colchetes (unidades repetitivas, 
 [io.summary]
 editable = "Editáveis: {items}"
 arrows = { one = "{n} seta", other = "{n} setas" }
+curly_arrows = { one = "{n} seta curva", other = "{n} setas curvas" }
 texts = { one = "{n} texto", other = "{n} textos" }
 tables = { one = "{n} tabela de reação", other = "{n} tabelas de reação" }
 brackets = { one = "{n} colchete", other = "{n} colchetes" }
@@ -453,6 +461,8 @@ cyclohexane = "Ciclo-hexano"
 text = "Texto"
 reaction_arrow = "Seta de reação"
 equilibrium_arrow = "Seta de equilíbrio"
+curly_arrow = "Seta curva"
+fishhook_arrow = "Seta de anzol"
 bracket = "Colchete"
 insert_reaction_table = "Inserir tabela de reação"
 bond = "Ligação"

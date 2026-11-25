@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use chembuider_rs::ChemStructEditor;
 use chembuider_rs::Molecule;
+use chembuider_rs::molecule::CurlyEnd;
 use chembuider_rs::molecule::page::PageObject;
 
 /// Paste `pasted` into `editor`. Returns false (and changes nothing) when it is blank.
@@ -62,6 +63,10 @@ pub fn paste_drawing(editor: &mut ChemStructEditor, pasted: &Molecule) -> bool {
     ordered.sort_by_key(|o| o.as_arrow().is_none());
     let mut new_objects = HashSet::new();
     for object in ordered {
+        // Where a curly arrow is drawn, before it moves: what its ends fall back on.
+        let path = object
+            .as_curly()
+            .and_then(|c| chembuider_rs::molecule::curly::geometry(pasted, c));
         let mut object = object.clone();
         object.translate(delta);
         match &mut object {
@@ -86,6 +91,34 @@ pub fn paste_drawing(editor: &mut ChemStructEditor, pasted: &Molecule) -> bool {
                 if b.atoms.is_empty() {
                     continue;
                 }
+            }
+            PageObject::Curly(c) => {
+                c.source = None;
+                // Its ends onto the inserted atoms and bonds; one on nothing inserted is
+                // left free where it was drawn.
+                let end = |e: CurlyEnd, at: Option<[f32; 2]>| -> CurlyEnd {
+                    let atom = |id: u32| atoms.get(&id).copied();
+                    let moved = match e {
+                        CurlyEnd::Atom(a) => atom(a).map(CurlyEnd::Atom),
+                        CurlyEnd::Bond { bond, onto } => pasted.bond_by_id(bond).and_then(|b| {
+                            let bond = mol.bond_between(atom(b.begin)?, atom(b.end)?)?.id;
+                            Some(CurlyEnd::Bond {
+                                bond,
+                                onto: atom(onto)?,
+                            })
+                        }),
+                        CurlyEnd::Between(a, b) => {
+                            atom(a).zip(atom(b)).map(|(a, b)| CurlyEnd::Between(a, b))
+                        }
+                        CurlyEnd::Point(p) => Some(CurlyEnd::Point(p)),
+                    };
+                    moved.unwrap_or_else(|| {
+                        let p = at.unwrap_or_default();
+                        CurlyEnd::Point([p[0] + delta[0], p[1] + delta[1]])
+                    })
+                };
+                c.from = end(c.from, path.as_ref().map(|p| p.tail));
+                c.to = end(c.to, path.as_ref().map(|p| p.head));
             }
         }
         let old = object.id();

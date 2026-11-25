@@ -10,6 +10,8 @@ menu = "Langue (Language)"
 tooltip = "Langue (Language)"
 
 [app.status]
+no_curly_arrow_selected = "Sélectionnez une flèche courbe à inverser"
+no_shaped_curly_arrow = "Sélectionnez une flèche courbe façonnée à la main"
 open_failed = "Impossible d'ouvrir {path} : {error}"
 opened = "{name} ouvert"
 opened_summary = "{name} ouvert ({summary})"
@@ -99,6 +101,7 @@ embedded_named = "Incorporé dans {app} — {name}"
 assembly = "Assemblage"
 
 [status_bar]
+curly_arrow = "Flèche courbe : "
 tool = "Outil : "
 element = "Élément : "
 counts = "Atomes {atoms} · Liaisons {bonds}"
@@ -150,6 +153,10 @@ title = "Format"
 title = "Réaction"
 add_arrow = "Ajouter une flèche de réaction"
 add_equilibrium_arrow = "Ajouter une flèche d'équilibre"
+add_curly_arrow = "Ajouter une flèche courbe (doublet d'électrons)"
+add_fishhook_arrow = "Ajouter une flèche en hameçon (un électron)"
+flip_curly_arrow = "Inverser la courbure de la flèche"
+reset_curly_arrow = "Revenir à la forme automatique"
 conditions_text = "Texte des conditions de réaction"
 insert_table = "Insérer un tableau de réaction"
 
@@ -242,6 +249,7 @@ brackets = "{format} ne peut pas représenter les crochets (motifs de répétiti
 [io.summary]
 editable = "Modifiables : {items}"
 arrows = { one = "{n} flèche", many = "{n} de flèches", other = "{n} flèches" }
+curly_arrows = { one = "{n} flèche courbe", many = "{n} de flèches courbes", other = "{n} flèches courbes" }
 texts = { one = "{n} texte", many = "{n} de textes", other = "{n} textes" }
 tables = { one = "{n} tableau de réaction", many = "{n} de tableaux de réaction", other = "{n} tableaux de réaction" }
 brackets = { one = "{n} crochet", many = "{n} de crochets", other = "{n} crochets" }
@@ -449,6 +457,8 @@ cyclohexane = "Cyclohexane"
 text = "Texte"
 reaction_arrow = "Flèche de réaction"
 equilibrium_arrow = "Flèche d'équilibre"
+curly_arrow = "Flèche courbe"
+fishhook_arrow = "Flèche en hameçon"
 bracket = "Crochet"
 insert_reaction_table = "Insérer un tableau de réaction"
 bond = "Liaison"

@@ -181,12 +181,16 @@ impl Loaded {
     pub fn summary(&self) -> String {
         let objects = &self.molecule.objects;
         let arrows = objects.iter().filter(|o| o.as_arrow().is_some()).count();
+        let curly = objects.iter().filter(|o| o.as_curly().is_some()).count();
         let texts = objects.iter().filter(|o| o.as_text().is_some()).count();
         let tables = objects.iter().filter(|o| o.as_table().is_some()).count();
         let brackets = objects.iter().filter(|o| o.as_bracket().is_some()).count();
         let mut parts = Vec::new();
         if arrows > 0 {
             parts.push(tn!("io.summary.arrows", arrows));
+        }
+        if curly > 0 {
+            parts.push(tn!("io.summary.curly_arrows", curly));
         }
         if texts > 0 {
             parts.push(tn!("io.summary.texts", texts));

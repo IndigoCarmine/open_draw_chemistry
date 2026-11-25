@@ -52,6 +52,11 @@ pub fn status_bar(ui: &mut egui::Ui, doc: Option<&Document>, message: &str) {
             if !formula.is_empty() {
                 ui.label(small(formula.plain()));
             }
+            // What the selected curly arrow says: its source, the atom carrying the electrons,
+            // and its target ("C=O → (O) → H").
+            if let Some(roles) = editor.selected_curly_description() {
+                pair(ui, t!("status_bar.curly_arrow"), &roles);
+            }
         }
         // No message yet (or an empty one): the bar says it is ready.
         let message = if message.is_empty() {

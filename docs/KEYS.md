@@ -76,7 +76,7 @@ Only the most used operations. The conditions are in the sections below.
 
 ## 2. 2D editor
 
-The drawing canvas. The same operation means different things depending on the tool chosen in the palette on the left. There are five tools: the Bond tool (the single, double, triple, wedge, hashed wedge, wavy and dative buttons are all the Bond tool, differing only in the bond they draw), the Select tool, the Eraser, the Arrow tool (reaction arrow, equilibrium arrow) and the Text tool.
+The drawing canvas. The same operation means different things depending on the tool chosen in the palette on the left. There are six tools: the Bond tool (the single, double, triple, wedge, hashed wedge, wavy and dative buttons are all the Bond tool, differing only in the bond they draw), the Select tool, the Eraser, the Arrow tool (reaction arrow, equilibrium arrow), the Curly arrow tool (curly arrow, fish-hook arrow) and the Text tool.
 
 ### 2.1 Terms
 
@@ -117,7 +117,7 @@ The "While typing" column says what happens while the cursor is in the label, te
 | `Ctrl`+`R` | Open the angle box ([2.6](#26-input-boxes)). Only with two or more atoms selected | Off |
 | `Ctrl`+`Shift`+`F` | Flip the selection. Only with two or more atoms selected and exactly one bond joining the selection to the rest. Solid and hashed wedges are swapped so the configuration is kept | Off |
 
-There is no key for the Arrow and Text tools (use the palette or the Reaction menu).
+There is no key for the Arrow, Curly arrow and Text tools (use the palette or the Reaction menu).
 
 ### 2.3 Bond tool
 
@@ -270,7 +270,7 @@ The key assignments can be changed with a `chembuilder_config.json` in the folde
 
 These do not work in the Select tool: the [bond keys](#bond-keys), `x` (expand a label), `` ` `` (label box), the bond target by `Shift`+arrow, and element keys over empty space.
 
-### 2.5 Eraser, Arrow tool, Text tool
+### 2.5 Eraser, Arrow tool, Curly arrow tool, Text tool
 
 | Tool | Operation | Condition | Effect |
 | --- | --- | --- | --- |
@@ -279,6 +279,14 @@ These do not work in the Select tool: the [bond keys](#bond-keys), `x` (expand a
 | Arrow | `Shift`+drag | | Draw an arrow in any direction |
 | Arrow | Click | | Place an arrow of the default length pointing right |
 | Arrow | `Delete` / `Backspace` | Something is hovered or targeted by the keyboard | Delete it (as in the Bond tool) |
+| Curly arrow | Drag from an atom | | A curly arrow from that atom's lone pair (drawn as two dots) to the atom or bond where the drag ends (to empty space: a free end). The arrow records what it means — its source and its target — and is drawn automatically from that, clear of the atoms, labels and bonds around it, following them when they move. It is left selected; the status bar shows its roles, e.g. `O: → C` |
+| Curly arrow | Drag from a bond | | The same, from the bond's electrons, moving onto the atom of the bond nearer the press. Pressed on C=O near O and released on H, it records C=O, O and H (`C=O → (O) → H`) and is drawn as an S: off the bond, round O on the outside, into H along the O···H bond being made |
+| Curly arrow | `Shift` held at the release | Ending on an atom | The target is the gap between that atom and the source's atom (the bond being formed) |
+| Curly arrow | Click | On a curly arrow | Select it alone, showing its handles |
+| Any tool | Drag a small ring handle (a Bézier control point, on a thin line from its end of the curve) | One curly arrow selected | Shape it by hand: an S, a long U or L round other atoms. The shape is kept relative to the arrow's ends, so it follows the atoms. Reaction > Back to automatic shape gives the automatic shape back |
+| Any tool | Double-click the curve of a curly arrow | | Add a knot there (a square handle), splitting the curve into two pieces with handles of their own. Drag the knot to route the arrow |
+| Any tool | Double-click a knot / a control point | One curly arrow selected | Take the knot out / back to the automatic shape |
+| Any tool | Drag the diamond handle at either end | One curly arrow selected | Re-point that end, which changes what the arrow means: the source onto an atom (its lone pair) or a bond (onto the atom of it nearer the pointer), the target onto an atom, a bond or empty space (a free end). `Shift` at the release on an atom: the target is the gap between that atom and the source's. An automatic arrow is drawn anew |
 | Text | Click | On a text | Open that text's box |
 | Text | Click | Elsewhere | Open a new text box there |
 
@@ -550,7 +558,7 @@ Facts only.
 | [Atom keys](#atom-keys), `Enter`, `Space`, `Tab`, moving the hotspot with the arrows | Bond tool and Select tool |
 | `Ctrl`+`R`, `Ctrl`+`Shift`+`F` (given a selection) | Every tool |
 | Lasso | Select tool and Bond tool (a selection lassoed in the Bond tool is not deleted by `Delete` in the Bond tool) |
-| Switching tools by key | Select, Bond and Eraser only (the Arrow and Text tools have no key) |
+| Switching tools by key | Select, Bond and Eraser only (the Arrow, Curly arrow and Text tools have no key) |
 
 ### 8.4 What the menu shows, and where the key is read
 

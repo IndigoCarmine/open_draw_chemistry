@@ -31,6 +31,10 @@ pub enum Icon {
     Text,
     Arrow,
     Equilibrium,
+    /// An arc ending in a full arrowhead: the curly (electron-pair) arrow.
+    Curly,
+    /// An arc ending in half an arrowhead: the fish-hook (single-electron) arrow.
+    FishHook,
     Bracket,
     /// A small grid: the reaction (stoichiometry) table.
     Table,
@@ -244,6 +248,26 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Equilibrium => {
             c.line(&[(2.0, 8.0), (17.0, 8.0), (13.0, 4.5)]);
             c.line(&[(18.0, 12.0), (3.0, 12.0), (7.0, 15.5)]);
+        }
+        Icon::Curly | Icon::FishHook => {
+            // Two thirds of a circle about (10, 11), from the lower left over the top, its
+            // head coming down on the right.
+            let arc: Vec<(f32, f32)> = (0..=24)
+                .map(|i| {
+                    let a = (150.0 + 200.0 * i as f32 / 24.0).to_radians();
+                    (10.0 + 6.5 * a.cos(), 11.5 + 6.5 * a.sin())
+                })
+                .collect();
+            c.line(&arc[..22]);
+            // The head carries the arc on to its tip, its barbs either side of where the
+            // line ends.
+            let tip = (16.6, 12.6);
+            if icon == Icon::Curly {
+                c.filled(&[tip, (17.6, 7.3), (13.3, 8.6)]);
+            } else {
+                // Only the outer half: the barb on the outside of the arc.
+                c.filled(&[tip, (17.6, 7.3), (15.3, 7.8)]);
+            }
         }
         Icon::Bracket => {
             c.line(&[(7.0, 3.0), (4.0, 3.0), (4.0, 17.0), (7.0, 17.0)]);

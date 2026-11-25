@@ -39,6 +39,7 @@ fn page_objects(mol: &chembuider_rs::Molecule) -> Vec<(String, [i32; 2])> {
             PageObject::Text(t) => (t.text.clone(), r(t.pos)),
             PageObject::Table(t) => ("Table".to_owned(), r(t.pos)),
             PageObject::Bracket(b) => (format!("Bracket {}", b.label), [0, 0]),
+            PageObject::Curly(c) => (format!("Curly {:?}", c.kind), [0, 0]),
         })
         .collect()
 }
@@ -144,4 +145,84 @@ fn an_edit_is_what_gets_saved() {
     let back = io::decode(Format::Cdx, &bytes).unwrap();
     assert_eq!(back.molecule.atoms.len(), loaded.molecule.atoms.len() + 1);
     assert!(back.molecule.atoms.iter().any(|a| a.element == "N"));
+}
+
+/// Curly arrows drawn on a structure read from ChemDraw are saved into the document in either
+/// format and come back with the same roles (the bond, the atom its electrons move onto, the
+/// target atom), one drawn automatically and one shaped by hand, with the summary counting them.
+#[test]
+fn a_curly_arrow_drawn_on_a_chemdraw_structure_is_saved_and_read_back() {
+    use chembuider_rs::molecule::{CurlyArrow, CurlyEnd, CurlyKind};
+    let _lang = open_draw_chemistry::i18n::ScopedLanguage::new(open_draw_chemistry::i18n::Lang::En);
+    let loaded = io::load(&data("chemdraw26_benzene.cdx")).unwrap();
+    let mut mol = loaded.molecule.clone();
+    let bond = mol.bonds[0].clone();
+    let other = mol
+        .atoms
+        .iter()
+        .find(|a| a.id != bond.begin && a.id != bond.end)
+        .unwrap()
+        .id;
+    let arrow = CurlyArrow {
+        flip: true,
+        ..CurlyArrow::new(
+            CurlyEnd::Bond {
+                bond: bond.id,
+                onto: bond.end,
+            },
+            CurlyEnd::Atom(other),
+            CurlyKind::Single,
+        )
+    };
+    mol.add_curly_arrow(arrow.clone());
+    let shaped = CurlyArrow {
+        path: vec![[0.2, -0.6], [0.8, 0.6]],
+        ..CurlyArrow::new(
+            CurlyEnd::Atom(other),
+            CurlyEnd::Atom(bond.begin),
+            CurlyKind::Pair,
+        )
+    };
+    mol.add_curly_arrow(shaped.clone());
+    let pos = |m: &chembuider_rs::Molecule, id: u32| {
+        let p = m.atom_by_id(id).unwrap().pos;
+        [(p[0] * 100.0).round() as i32, (p[1] * 100.0).round() as i32]
+    };
+    for format in Format::ALL {
+        let bytes = io::encode(format, &mol, Some(&loaded.original)).unwrap();
+        let back = io::decode(format, &bytes).unwrap();
+        let read: Vec<&CurlyArrow> = back.molecule.curly_arrows().collect();
+        assert_eq!(read.len(), 2, "{format:?}");
+        let c = read[0];
+        let CurlyEnd::Bond { bond: b, onto } = c.from else {
+            panic!("{format:?}: {c:?}")
+        };
+        let b = back.molecule.bond_by_id(b).unwrap();
+        let mut ends = [pos(&back.molecule, b.begin), pos(&back.molecule, b.end)];
+        let mut expected = [pos(&mol, bond.begin), pos(&mol, bond.end)];
+        ends.sort();
+        expected.sort();
+        assert_eq!(ends, expected, "{format:?}: the same bond");
+        assert_eq!(pos(&back.molecule, onto), pos(&mol, bond.end), "{format:?}");
+        let CurlyEnd::Atom(target) = c.to else {
+            panic!("{format:?}: {c:?}")
+        };
+        assert_eq!(pos(&back.molecule, target), pos(&mol, other), "{format:?}");
+        assert!(c.flip && !c.is_shaped(), "{format:?}: {c:?}");
+        assert_eq!(c.kind, CurlyKind::Single);
+        let s = read[1];
+        assert_eq!(s.path.len(), 2, "{format:?}: {s:?}");
+        for (p, q) in s.path.iter().zip(&shaped.path) {
+            assert!(
+                (p[0] - q[0]).abs() < 1e-3 && (p[1] - q[1]).abs() < 1e-3,
+                "{format:?}: {s:?}"
+            );
+        }
+        assert_eq!(back.other_objects, loaded.other_objects, "{format:?}");
+        assert!(
+            back.summary().contains("2 curly arrows"),
+            "{}",
+            back.summary()
+        );
+    }
 }

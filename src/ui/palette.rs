@@ -1,7 +1,7 @@
 //! The tool palette on the left: drawing tools and elements, as in the design.
 
 use chembuider_rs::molecule::bracket::crossing_bonds;
-use chembuider_rs::molecule::{ArrowKind, BracketShape, BracketUsage, PageObject};
+use chembuider_rs::molecule::{ArrowKind, BracketShape, BracketUsage, CurlyKind, PageObject};
 use chembuider_rs::{BondOrder, BondStereo, ChemStructEditor, Tool};
 use egui::vec2;
 
@@ -56,6 +56,8 @@ enum PaletteTool {
     Eraser,
     Text,
     Arrow(ArrowKind),
+    /// A curly (electron-pushing) arrow: an electron pair's, or a single electron's fish-hook.
+    Curly(CurlyKind),
 }
 
 impl PaletteTool {
@@ -65,6 +67,7 @@ impl PaletteTool {
             PaletteTool::Eraser => Tool::Eraser,
             PaletteTool::Text => Tool::Text,
             PaletteTool::Arrow(kind) => Tool::Arrow(kind),
+            PaletteTool::Curly(kind) => Tool::CurlyArrow(kind),
         }
     }
 }
@@ -109,7 +112,7 @@ impl BondKind {
     }
 }
 
-const BUTTONS: [(Icon, Action); 18] = [
+const BUTTONS: [(Icon, Action); 20] = [
     (Icon::Select, Action::Tool(PaletteTool::Select)),
     (Icon::Eraser, Action::Tool(PaletteTool::Eraser)),
     (Icon::Single, Action::Bond(BondKind::Single)),
@@ -141,6 +144,14 @@ const BUTTONS: [(Icon, Action); 18] = [
         Icon::Equilibrium,
         Action::Tool(PaletteTool::Arrow(ArrowKind::Equilibrium)),
     ),
+    (
+        Icon::Curly,
+        Action::Tool(PaletteTool::Curly(CurlyKind::Pair)),
+    ),
+    (
+        Icon::FishHook,
+        Action::Tool(PaletteTool::Curly(CurlyKind::Single)),
+    ),
     (Icon::Bracket, Action::BracketMenu),
     (
         Icon::Table,
@@ -167,6 +178,8 @@ fn button_name(icon: Icon) -> &'static str {
         Icon::Text => t!("palette.tool.text"),
         Icon::Arrow => t!("palette.tool.reaction_arrow"),
         Icon::Equilibrium => t!("palette.tool.equilibrium_arrow"),
+        Icon::Curly => t!("palette.tool.curly_arrow"),
+        Icon::FishHook => t!("palette.tool.fishhook_arrow"),
         Icon::Bracket => t!("palette.tool.bracket"),
         Icon::Table => t!("palette.tool.insert_reaction_table"),
         _ => "",
@@ -232,12 +245,20 @@ pub fn tool_name(editor: &ChemStructEditor, canvas: Option<CanvasTool>) -> &'sta
         Tool::Text => t!("palette.tool.text"),
         Tool::Arrow(ArrowKind::Reaction) => t!("palette.tool.reaction_arrow"),
         Tool::Arrow(ArrowKind::Equilibrium) => t!("palette.tool.equilibrium_arrow"),
+        Tool::CurlyArrow(CurlyKind::Pair) => t!("palette.tool.curly_arrow"),
+        Tool::CurlyArrow(CurlyKind::Single) => t!("palette.tool.fishhook_arrow"),
     }
 }
 
 /// Switch the editor to the arrow tool of `kind` (the 反応 menu's 「反応矢印を追加」「平衡矢印を追加」).
 pub fn select_arrow_tool(editor: &mut ChemStructEditor, kind: ArrowKind) {
     apply(editor, Action::Tool(PaletteTool::Arrow(kind)));
+}
+
+/// Switch the editor to the curly arrow tool of `kind` (the 反応 menu's 「巻き矢印を追加」
+/// 「片羽矢印を追加」).
+pub fn select_curly_tool(editor: &mut ChemStructEditor, kind: CurlyKind) {
+    apply(editor, Action::Tool(PaletteTool::Curly(kind)));
 }
 
 /// Switch the editor to the text tool (the 反応 menu's 「反応条件のテキスト」).
@@ -700,6 +721,24 @@ mod tests {
         select_text_tool(&mut editor);
         assert_eq!(editor.tool, Tool::Text);
         assert_eq!(tool_name(&editor, None), "Text");
+    }
+
+    #[test]
+    fn the_curly_arrow_buttons_select_their_tools() {
+        let mut editor = ChemStructEditor::default();
+        select_curly_tool(&mut editor, CurlyKind::Pair);
+        assert_eq!(editor.tool, Tool::CurlyArrow(CurlyKind::Pair));
+        assert_eq!(tool_name(&editor, None), "Curly arrow");
+        assert!(is_selected(
+            &editor,
+            None,
+            Action::Tool(PaletteTool::Curly(CurlyKind::Pair))
+        ));
+        select_curly_tool(&mut editor, CurlyKind::Single);
+        assert_eq!(editor.tool, Tool::CurlyArrow(CurlyKind::Single));
+        assert_eq!(tool_name(&editor, None), "Fish-hook arrow");
+        let (_, action) = BUTTONS.iter().find(|(i, _)| *i == Icon::FishHook).unwrap();
+        assert_eq!(*action, Action::Tool(PaletteTool::Curly(CurlyKind::Single)));
     }
 
     /// The chain and ring buttons (once shown as coming soon) turn on their tools, with the

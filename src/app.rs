@@ -723,6 +723,27 @@ impl OpenDrawApp {
                     crate::ui::palette::select_text_tool(&mut doc.editor);
                 }
             }
+            Command::CurlyTool(kind) => {
+                if let Some(doc) = self.active_doc_mut() {
+                    crate::ui::palette::select_curly_tool(&mut doc.editor, kind);
+                }
+            }
+            Command::ResetCurlyArrows => {
+                let reset = self
+                    .active_doc_mut()
+                    .is_some_and(|doc| doc.editor.reset_selected_curly_shapes());
+                if !reset {
+                    self.status = t!("app.status.no_shaped_curly_arrow").to_string();
+                }
+            }
+            Command::FlipCurlyArrows => {
+                let flipped = self
+                    .active_doc_mut()
+                    .is_some_and(|doc| doc.editor.flip_selected_curly_arrows());
+                if !flipped {
+                    self.status = t!("app.status.no_curly_arrow_selected").to_string();
+                }
+            }
             Command::CopyIupacName | Command::InsertIupacName => {
                 let config = &self.config;
                 let Some(doc) = self.docs.get_mut(self.active) else {
