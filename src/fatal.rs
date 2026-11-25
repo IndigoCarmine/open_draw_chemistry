@@ -6,8 +6,8 @@
 
 use open_draw_chemistry::{APP_NAME, i18n, t};
 
-/// Debug builds keep the console and are run by scripts that wait for the process to exit, so
-/// only release builds stop on a dialog.
+/// Debug builds are run from a terminal (their output goes to it) and by scripts that wait for
+/// the process to exit, so only release builds stop on a dialog.
 const DIALOG: bool = cfg!(not(debug_assertions));
 
 /// Report that the app could not start: on stderr (as before) and, in a release build, in a

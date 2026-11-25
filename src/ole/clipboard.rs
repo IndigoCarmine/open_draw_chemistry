@@ -15,20 +15,29 @@
 //! compound file in an HGLOBAL, the original media recorded in "Ole Private Data", "OwnerLink" and
 //! "Native" added by OLE), which is what ChemDraw leaves behind too; the widget's paste reads
 //! its formats from there as before.
+//!
+//! The 3D view is copied the same way ([`set_3d`]), as an object of this app's 3D class
+//! (`crate::ole_server::CLSID_3D`): its "Embed Source" holds the model as MOL2 and the look
+//! (see `crate::ole_server::model3d`), its MOL2 is offered on its own as "chemical/x-mol2",
+//! and its pictures are the view with a transparent background as an EMF (an alpha-blended
+//! bitmap, which Office keeps), and laid over white as a Windows metafile and a DIB for the
+//! programs that read only those. Again no "PNG", which Word would paste instead.
 
 use std::mem::ManuallyDrop;
 
+use crate::ole_server::model3d::{self, Object3d};
+use crate::ole_server::picture::{self, Emf};
 use chembuider_rs::Molecule;
 use chembuider_rs::config::StyleConfig;
 use chembuider_rs::molecule::{cdx, image, ole};
 use windows::Win32::Foundation::{
-    DATA_S_SAMEFORMATETC, DV_E_FORMATETC, DV_E_TYMED, E_INVALIDARG, E_NOTIMPL, E_POINTER,
-    GlobalFree, HGLOBAL, OLE_E_ADVISENOTSUPPORTED, S_OK,
+    CLIPBRD_E_CANT_OPEN, DATA_S_SAMEFORMATETC, DV_E_FORMATETC, DV_E_TYMED, E_INVALIDARG, E_NOTIMPL,
+    E_POINTER, GlobalFree, HGLOBAL, OLE_E_ADVISENOTSUPPORTED, S_OK,
 };
 use windows::Win32::Graphics::Gdi::{
-    CopyEnhMetaFileW, DeleteEnhMetaFile, ENHMETAHEADER, GetDC, GetEnhMetaFileBits,
-    GetEnhMetaFileHeader, GetWinMetaFileBits, HENHMETAFILE, MM_ANISOTROPIC, ReleaseDC,
-    SetEnhMetaFileBits, SetMetaFileBitsEx,
+    CopyEnhMetaFileW, ENHMETAHEADER, GetDC, GetEnhMetaFileBits, GetEnhMetaFileHeader,
+    GetWinMetaFileBits, HENHMETAFILE, MM_ANISOTROPIC, ReleaseDC, SetEnhMetaFileBits,
+    SetMetaFileBitsEx,
 };
 use windows::Win32::System::Com::StructuredStorage::{
     CreateILockBytesOnHGlobal, IStorage, StgOpenStorageOnILockBytes,
@@ -42,6 +51,7 @@ use windows::Win32::System::DataExchange::{METAFILEPICT, RegisterClipboardFormat
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{OleFlushClipboard, OleInitialize, OleSetClipboard};
 use windows::Win32::UI::Shell::SHCreateStdEnumFmtEtc;
+use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_NOREMOVE, PM_QS_SENDMESSAGE, PeekMessageW};
 use windows::core::{BOOL, Error, GUID, HRESULT, HSTRING, Ref, Result, implement};
 
 const CF_DIB: u16 = 8;
@@ -56,22 +66,60 @@ const CHEMDRAW_CLSID: GUID = GUID::from_u128(0x41ba6d21_a02e_11ce_8fd9_0020afd1f
 /// ChemDraw and `app_text` (the widget's own JSON) for pasting back here.
 pub fn set(mol: &Molecule, style: &StyleConfig, app_text: &str) -> Result<()> {
     ensure_ole()?;
-    let object: IDataObject = DataObject::new(mol, style, app_text).into();
-    // Another program may hold the clipboard open for a moment; OleSetClipboard does not wait.
-    let mut tries = 0;
-    loop {
-        match unsafe { OleSetClipboard(&object) } {
-            Ok(()) => break,
-            Err(_) if tries < 10 => {
-                tries += 1;
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            Err(e) => return Err(e),
-        }
-    }
+    publish(DataObject::new(mol, style, app_text).into())
+}
+
+/// Put a copy of the 3D view on the clipboard: an embeddable object of this app's 3D class for
+/// Office (edited again here), with its pictures and its MOL2.
+pub fn set_3d(object: &Object3d) -> Result<()> {
+    ensure_ole()?;
+    publish(DataObject::new_3d(object)?.into())
+}
+
+/// Put `object` on the clipboard and render every format at once.
+fn publish(object: IDataObject) -> Result<()> {
+    // Another program may have the clipboard open for a moment, and neither call waits for it.
+    // That program is often Windows' clipboard history (or another viewer), opening it as soon
+    // as the object is published to read its formats, which this thread renders: so while it
+    // waits, this thread answers the messages sent to it, or the reader would hold the clipboard
+    // until it gave up.
+    retry_while_busy(|| unsafe { OleSetClipboard(&object) })?;
     // Render everything now: the copy then survives this app quitting, and nothing is asked of
     // this object later from inside another program's paste.
-    unsafe { OleFlushClipboard() }
+    retry_while_busy(|| unsafe { OleFlushClipboard() })
+}
+
+/// `call`, tried again while the clipboard cannot be opened (`CLIPBRD_E_CANT_OPEN`), for up to
+/// about [`BUSY_FOR`], handling the messages other programs send this thread meanwhile.
+fn retry_while_busy(mut call: impl FnMut() -> Result<()>) -> Result<()> {
+    let start = std::time::Instant::now();
+    loop {
+        match call() {
+            Err(e) if e.code() == CLIPBRD_E_CANT_OPEN && start.elapsed() < BUSY_FOR => {
+                answer_sent_messages(std::time::Duration::from_millis(25));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// How long a clipboard call is retried while the clipboard is busy.
+const BUSY_FOR: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// For `wait`, handle the messages other threads send this one (a clipboard reader asking the
+/// OLE clipboard window to render a format), leaving the posted ones (the window's input) in
+/// the queue.
+fn answer_sent_messages(wait: std::time::Duration) {
+    let until = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < until {
+        let mut msg = MSG::default();
+        // SAFETY: a peek into a local; PM_QS_SENDMESSAGE dispatches sent messages only, and
+        // PM_NOREMOVE leaves the queue as it is.
+        unsafe {
+            let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// OLE on this thread, once. winit has usually done it already (for drag and drop), in which
@@ -97,10 +145,11 @@ struct Entry {
 enum Data {
     /// Bytes handed out in an HGLOBAL.
     Global(Vec<u8>),
-    /// A compound document handed out as an `IStorage`.
-    Storage(Vec<u8>),
-    /// [`DataObject::emf`], as itself or converted to a Windows metafile.
+    /// A compound document handed out as an `IStorage`, and the class it is of.
+    Storage(Vec<u8>, GUID),
+    /// [`DataObject::emf`], as itself…
     EnhMetafile,
+    /// …and converted to a Windows metafile ([`DataObject::opaque_emf`] when there is one).
     MetafilePict,
 }
 
@@ -108,7 +157,7 @@ impl Data {
     fn tymed(&self) -> u32 {
         (match self {
             Data::Global(_) => TYMED_HGLOBAL,
-            Data::Storage(_) => TYMED_ISTORAGE,
+            Data::Storage(..) => TYMED_ISTORAGE,
             Data::EnhMetafile => TYMED_ENHMF,
             Data::MetafilePict => TYMED_MFPICT,
         })
@@ -116,21 +165,13 @@ impl Data {
     }
 }
 
-/// An enhanced metafile this object owns.
-struct Emf(HENHMETAFILE);
-
-impl Drop for Emf {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = DeleteEnhMetaFile(Some(self.0));
-        }
-    }
-}
-
 #[implement(IDataObject)]
 struct DataObject {
     entries: Vec<Entry>,
     emf: Option<Emf>,
+    /// The picture for the Windows metafile, when it differs from [`DataObject::emf`] (a 3D
+    /// view's over white: a Windows metafile has no alpha).
+    opaque_emf: Option<Emf>,
 }
 
 impl DataObject {
@@ -156,7 +197,10 @@ impl DataObject {
             push(registered("ChemDraw Interchange Format"), Data::Global(cdx));
         }
         if let Some(embed) = ole::molecule_to_ole_embed(mol) {
-            push(registered("Embed Source"), Data::Storage(embed));
+            push(
+                registered("Embed Source"),
+                Data::Storage(embed, CHEMDRAW_CLSID),
+            );
             push(registered("Object Descriptor"), Data::Global(descriptor));
         }
         if emf.is_some() {
@@ -174,7 +218,55 @@ impl DataObject {
             registered("ChemBuilder Molecule"),
             Data::Global(app_text.as_bytes().to_vec()),
         );
-        Self { entries, emf }
+        Self {
+            entries,
+            emf,
+            opaque_emf: None,
+        }
+    }
+
+    /// The data object of a copy of the 3D view: `object` (a model with its look and picture)
+    /// to embed, its pictures and its MOL2.
+    fn new_3d(object: &Object3d) -> Result<Self> {
+        let registered =
+            |name: &str| unsafe { RegisterClipboardFormatW(&HSTRING::from(name)) } as u16;
+        let pixels = object.pixels().ok_or(Error::from(E_INVALIDARG))?;
+        let extent = object.look.extent;
+        let embed = crate::ole_server::com::storage_bytes(|stg| {
+            crate::ole_server::com::write_object_3d(stg, Some(object))
+        })?;
+        let class = GUID::from_u128(crate::ole_server::CLSID_3D);
+        let entries = vec![
+            Entry {
+                format: registered(model3d::MOL2_FORMAT_NAME),
+                data: Data::Global(object.mol2.as_bytes().to_vec()),
+            },
+            Entry {
+                format: registered("Embed Source"),
+                data: Data::Storage(embed, class),
+            },
+            Entry {
+                format: registered("Object Descriptor"),
+                data: Data::Global(model3d::object_descriptor(extent)),
+            },
+            Entry {
+                format: CF_ENHMETAFILE,
+                data: Data::EnhMetafile,
+            },
+            Entry {
+                format: CF_METAFILEPICT,
+                data: Data::MetafilePict,
+            },
+            Entry {
+                format: CF_DIB,
+                data: Data::Global(picture::dib(&pixels)),
+            },
+        ];
+        Ok(Self {
+            entries,
+            emf: Some(picture::alpha_emf(&pixels, extent)?),
+            opaque_emf: Some(picture::opaque_emf(&pixels, extent)?),
+        })
     }
 
     fn formats(&self) -> Vec<FORMATETC> {
@@ -210,6 +302,13 @@ impl DataObject {
     fn emf(&self) -> Result<HENHMETAFILE> {
         self.emf.as_ref().map(|e| e.0).ok_or(DV_E_FORMATETC.into())
     }
+
+    fn metafile_emf(&self) -> Result<HENHMETAFILE> {
+        match &self.opaque_emf {
+            Some(emf) => Ok(emf.0),
+            None => self.emf(),
+        }
+    }
 }
 
 impl IDataObject_Impl for DataObject_Impl {
@@ -219,7 +318,7 @@ impl IDataObject_Impl for DataObject_Impl {
             Data::Global(bytes) => STGMEDIUM_0 {
                 hGlobal: global(bytes)?,
             },
-            Data::Storage(bytes) => STGMEDIUM_0 {
+            Data::Storage(bytes, _) => STGMEDIUM_0 {
                 pstg: ManuallyDrop::new(Some(open_storage(bytes)?)),
             },
             Data::EnhMetafile => {
@@ -230,7 +329,7 @@ impl IDataObject_Impl for DataObject_Impl {
                 STGMEDIUM_0 { hEnhMetaFile: copy }
             }
             Data::MetafilePict => STGMEDIUM_0 {
-                hMetaFilePict: metafile_pict(self.emf()?)?.0,
+                hMetaFilePict: metafile_pict(self.metafile_emf()?)?.0,
             },
         };
         Ok(STGMEDIUM {
@@ -244,7 +343,7 @@ impl IDataObject_Impl for DataObject_Impl {
     fn GetDataHere(&self, format: *const FORMATETC, medium: *mut STGMEDIUM) -> Result<()> {
         let entry = self.find(format)?;
         let medium = unsafe { medium.as_ref() }.ok_or(Error::from(E_POINTER))?;
-        let Data::Storage(bytes) = &entry.data else {
+        let Data::Storage(bytes, class) = &entry.data else {
             return Err(DV_E_FORMATETC.into());
         };
         if medium.tymed != TYMED_ISTORAGE.0 as u32 {
@@ -254,7 +353,7 @@ impl IDataObject_Impl for DataObject_Impl {
         let source = open_storage(bytes)?;
         unsafe {
             source.CopyTo(None, None, dest)?;
-            dest.SetClass(&CHEMDRAW_CLSID)
+            dest.SetClass(class)
         }
     }
 
@@ -527,6 +626,167 @@ mod tests {
                 ReleaseStgMedium(&mut medium);
             }
         }
+    }
+
+    fn object_3d() -> Object3d {
+        let model = crate::ole_server::model3d::tests::ethanol();
+        let mut object = Object3d::new(&model, model3d::Look3d::default(), None).unwrap();
+        // A 6 × 4 picture: a half-transparent dot on a clear background.
+        let mut rgba = vec![0u8; 6 * 4 * 4];
+        rgba[(6 + 2) * 4..(6 + 2) * 4 + 4].copy_from_slice(&[100, 50, 25, 128]);
+        object.set_picture(&crate::ui::viewport3d::Picture {
+            rgba,
+            width: 6,
+            height: 4,
+            px_per_point: 2.0,
+        });
+        object
+    }
+
+    #[test]
+    fn a_3d_copy_offers_its_object_mol2_and_pictures() {
+        unsafe { OleInitialize(None) }.unwrap();
+        let source = object_3d();
+        let object: IDataObject = DataObject::new_3d(&source).unwrap().into();
+        // The object Office embeds: a storage of the 3D class holding the model and look.
+        let format = format_of(&object, "Embed Source");
+        assert_eq!(format.tymed, TYMED_ISTORAGE.0 as u32);
+        unsafe {
+            let mut medium = object.GetData(&format).unwrap();
+            let storage = medium.u.pstg.as_ref().unwrap().clone();
+            let mut stat = STATSTG::default();
+            storage.Stat(&mut stat, 1).unwrap();
+            assert_eq!(stat.clsid, GUID::from_u128(crate::ole_server::CLSID_3D));
+            let back = crate::ole_server::com::read_object_3d(&storage).unwrap();
+            assert_eq!(back, source);
+            drop(storage);
+            ReleaseStgMedium(&mut medium);
+        }
+        // The MOL2 and the descriptor, in global memory.
+        for name in [model3d::MOL2_FORMAT_NAME, "Object Descriptor"] {
+            let format = format_of(&object, name);
+            assert_eq!(format.tymed, TYMED_HGLOBAL.0 as u32, "{name}");
+        }
+        // No PNG (Word would paste the picture) and no text (PowerPoint would paste a text box).
+        let all: Vec<u16> = unsafe {
+            let e = object.EnumFormatEtc(DATADIR_GET.0 as u32).unwrap();
+            let mut out = Vec::new();
+            let mut one = [FORMATETC::default()];
+            while e.Next(&mut one, None) == S_OK {
+                out.push(one[0].cfFormat);
+            }
+            out
+        };
+        let png = unsafe { RegisterClipboardFormatW(&HSTRING::from("PNG")) } as u16;
+        assert!(!all.contains(&png));
+        assert!(
+            !all.contains(&1) && !all.contains(&13),
+            "CF_TEXT / CF_UNICODETEXT"
+        );
+        assert!(all.contains(&CF_DIB));
+    }
+
+    #[test]
+    fn a_3d_copys_emf_keeps_the_alpha_and_its_windows_metafile_is_opaque() {
+        use windows::Win32::Graphics::Gdi::{EMR_ALPHABLEND, EMR_STRETCHDIBITS};
+        unsafe { OleInitialize(None) }.unwrap();
+        let object: IDataObject = DataObject::new_3d(&object_3d()).unwrap().into();
+        let records = |emf: HENHMETAFILE| -> Vec<u32> {
+            let size = unsafe { GetEnhMetaFileBits(emf, None) } as usize;
+            let mut bits = vec![0u8; size];
+            unsafe { GetEnhMetaFileBits(emf, Some(&mut bits)) };
+            let mut out = Vec::new();
+            let mut at = 0;
+            while at + 8 <= bits.len() {
+                out.push(u32::from_le_bytes(bits[at..at + 4].try_into().unwrap()));
+                let len = u32::from_le_bytes(bits[at + 4..at + 8].try_into().unwrap()) as usize;
+                if len == 0 {
+                    break;
+                }
+                at += len;
+            }
+            out
+        };
+        let request = |format: u16, tymed: i32| FORMATETC {
+            cfFormat: format,
+            ptd: std::ptr::null_mut(),
+            dwAspect: DVASPECT_CONTENT.0,
+            lindex: -1,
+            tymed: tymed as u32,
+        };
+        unsafe {
+            let mut medium = object
+                .GetData(&request(CF_ENHMETAFILE, TYMED_ENHMF.0))
+                .unwrap();
+            let kinds = records(medium.u.hEnhMetaFile);
+            assert!(kinds.contains(&(EMR_ALPHABLEND.0)), "{kinds:?}");
+            ReleaseStgMedium(&mut medium);
+            let mut medium = object
+                .GetData(&request(CF_METAFILEPICT, TYMED_MFPICT.0))
+                .unwrap();
+            assert_eq!(medium.tymed, TYMED_MFPICT.0 as u32);
+            ReleaseStgMedium(&mut medium);
+            // The opaque picture the Windows metafile is made from has no alpha blend.
+            let opaque = DataObject::new_3d(&object_3d()).unwrap();
+            let kinds = records(opaque.metafile_emf().unwrap());
+            assert!(kinds.contains(&(EMR_STRETCHDIBITS.0)), "{kinds:?}");
+            assert!(!kinds.contains(&(EMR_ALPHABLEND.0)));
+        }
+        // The DIB is opaque: what has no alpha is laid over white.
+        let dib_format = request(CF_DIB, TYMED_HGLOBAL.0);
+        unsafe {
+            let mut medium = object.GetData(&dib_format).unwrap();
+            let g = medium.u.hGlobal;
+            let p = windows::Win32::System::Memory::GlobalLock(g).cast::<u8>();
+            let dib = std::slice::from_raw_parts(p, 40 + 6 * 4 * 4);
+            assert!(dib[40..].chunks(4).all(|px| px[3] == 255));
+            assert_eq!(
+                &dib[40..44],
+                &[255, 255, 255, 255],
+                "the clear corner is white"
+            );
+            let _ = windows::Win32::System::Memory::GlobalUnlock(g);
+            ReleaseStgMedium(&mut medium);
+        }
+    }
+
+    #[test]
+    fn a_3d_copy_needs_a_picture() {
+        unsafe { OleInitialize(None) }.unwrap();
+        let mut object = object_3d();
+        object.png.clear();
+        assert!(DataObject::new_3d(&object).is_err());
+    }
+
+    /// Puts a copy of ethanol's 3D model on the real clipboard, as Copy in the 3D view does,
+    /// with a picture drawn by hand (the tests have no GPU): paste it into Word or PowerPoint.
+    ///   cargo test --lib ole::clipboard::tests::put_3d_model_on_clipboard -- --ignored
+    #[test]
+    #[ignore = "overwrites the system clipboard"]
+    fn put_3d_model_on_clipboard() {
+        let model = crate::ole_server::model3d::tests::ethanol();
+        let mut object = Object3d::new(&model, model3d::Look3d::default(), None).unwrap();
+        // A shaded disc on a clear background, 240 × 160.
+        let (w, h) = (240u32, 160u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let (dx, dy) = (x as f32 - 120.0, y as f32 - 80.0);
+                let d = (dx * dx + dy * dy).sqrt();
+                if d < 70.0 {
+                    let i = ((y * w + x) * 4) as usize;
+                    let shade = (255.0 * (1.0 - d / 90.0)) as u8;
+                    rgba[i..i + 4].copy_from_slice(&[shade, shade / 3, 40, 255]);
+                }
+            }
+        }
+        object.set_picture(&crate::ui::viewport3d::Picture {
+            rgba,
+            width: w,
+            height: h,
+            px_per_point: 2.0,
+        });
+        set_3d(&object).unwrap();
     }
 
     /// Puts a copy of benzene on the real clipboard for `scripts/e2e/office-paste.ps1`.

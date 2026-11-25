@@ -69,6 +69,11 @@ document and it opens here in its own tab. Save (Ctrl+S) or close the tab, and t
 and its picture are written back. The object stays a ChemDraw object, so ChemDraw can still
 open it on another PC.
 
+The 3D view goes into Office too: **Copy** in the 3D panel (or `Ctrl+C` in the 3D view) and paste
+into Word, PowerPoint or Excel. The model is embedded as it is shown (style, camera) on a
+transparent background, and double-clicking it opens it here again in the 3D view; save or close
+the tab to update it. The object keeps the model as MOL2.
+
 The installer sets this up for the current user, with no admin rights needed. Where ChemDraw is installed,
 none of its settings are touched. To set it up by hand:
 

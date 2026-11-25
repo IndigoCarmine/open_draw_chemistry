@@ -1,14 +1,21 @@
 //! The app's side of the OLE server (see [`crate::ole_server`]): embedded objects open as
 //! tabs; saving such a tab writes into the container's document, closing it ends the editing
 //! session, and a COM-launched process quits once no embedded object is left.
+//!
+//! An embedded 3D model opens in the 3D view, shown as it was (style, camera). Writing it back
+//! draws its picture off screen from the look the view keeps up to date (see
+//! [`OpenDrawApp::track_embedded_look`]), so it can be written whatever view is shown.
 
 use std::time::Instant;
 
 use super::OpenDrawApp;
 use crate::document::{Document, Embedded};
 use crate::io::{self, Format};
+use crate::ole_server::model3d::Object3d;
 use crate::ole_server::script::Step;
-use crate::ole_server::{AppBridge, HostNames, ObjectId, ToApp, ToServer};
+use crate::ole_server::{AppBridge, HostNames, Native, ObjectId, ToApp, ToServer};
+use crate::ui::ViewMode;
+use crate::ui::viewport3d::{Picture, Viewport3d};
 
 impl OpenDrawApp {
     /// Serve embedded objects through `bridge` (the process is the OLE server).
@@ -38,16 +45,18 @@ impl OpenDrawApp {
             crate::ole_server::log(&format!("app: {}", message.summary()));
             match message {
                 ToApp::Open { id, cdx, host } => self.open_embedded(ctx, id, cdx, &host),
+                ToApp::Open3d { id, object, host } => {
+                    self.open_embedded_3d(ctx, id, object.map(|o| *o), &host)
+                }
                 ToApp::Close { id, reply } => {
                     if let Some(i) = self.embedded_index(id) {
                         if let Some(reply) = reply {
-                            let doc = &mut self.docs[i];
-                            let cdx = if doc.is_dirty() {
-                                doc.commit_embedded().ok()
+                            let native = if self.docs[i].is_dirty() {
+                                self.commit_embedded(i).ok()
                             } else {
                                 None
                             };
-                            let _ = reply.send(cdx);
+                            let _ = reply.send(native);
                         }
                         self.remove_tab(i);
                     }
@@ -115,6 +124,7 @@ impl OpenDrawApp {
                 id,
                 container: host.short_app(),
                 document: host.document.clone(),
+                model3d: None,
             };
             let doc = Document::embedded(&self.config, loaded, embedded);
             if self.active_doc().is_some_and(Document::is_pristine) {
@@ -130,17 +140,108 @@ impl OpenDrawApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
+    /// Open the embedded 3D model `id` (or bring its tab to the front): its model in the 3D
+    /// view, in the style and from the camera it was shown with.
+    fn open_embedded_3d(
+        &mut self,
+        ctx: &egui::Context,
+        id: ObjectId,
+        object: Option<Object3d>,
+        host: &HostNames,
+    ) {
+        if let Some(bridge) = &mut self.ole {
+            bridge.seen_object = true;
+        }
+        if let Some(i) = self.embedded_index(id) {
+            self.active = i;
+        } else {
+            let embedded = Embedded {
+                id,
+                container: host.short_app(),
+                document: host.document.clone(),
+                model3d: None,
+            };
+            let (doc, error) = Document::embedded_3d(&self.config, object.as_ref(), embedded);
+            if let Some(object) = &object {
+                self.view3d.style = object.look.style;
+            }
+            if self.active_doc().is_some_and(Document::is_pristine) {
+                self.docs[self.active] = doc;
+            } else {
+                self.docs.push(doc);
+                self.active = self.docs.len() - 1;
+            }
+            self.status = match error {
+                Some(e) => t!("ole.embed.load_failed", error = e),
+                None => t!("ole.embed.editing_3d", app = host.short_app()),
+            };
+        }
+        self.view = ViewMode::ThreeD;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    /// The picture of the embedded 3D model at `index`, drawn off screen as its look says;
+    /// `None` without a GPU or a model (the object then keeps the picture it has).
+    fn embedded_3d_picture(&self, index: usize) -> Option<Picture> {
+        let render_state = self.render_state.as_ref()?;
+        let doc = self.docs.get(index)?;
+        let model = doc.three_d.model()?;
+        let look = &doc.embedded.as_ref()?.model3d.as_ref()?.look;
+        let [w, h] = look.view_points;
+        match Viewport3d::render_picture(
+            render_state,
+            model,
+            look.style,
+            look.camera.as_ref(),
+            egui::vec2(w, h),
+            look.picture_px_per_point(),
+        ) {
+            Ok(picture) => Some(picture),
+            Err(e) => {
+                crate::ole_server::log(&format!("app: no picture of the 3D model: {e}"));
+                None
+            }
+        }
+    }
+
+    /// The embedded document at `index` as it is to be written back (a 2D structure's CDX, or
+    /// a 3D model with its look and picture), marked saved.
+    fn commit_embedded(&mut self, index: usize) -> Result<Native, String> {
+        let is_3d = self.docs[index]
+            .embedded
+            .as_ref()
+            .is_some_and(|e| e.model3d.is_some());
+        if is_3d {
+            let picture = self.embedded_3d_picture(index);
+            self.docs[index]
+                .commit_embedded_3d(picture.as_ref())
+                .map(|object| Native::Model3d(Box::new(object)))
+        } else {
+            self.docs[index]
+                .commit_embedded()
+                .map(Native::Cdx)
+                .map_err(|e| e.to_string())
+        }
+    }
+
     /// Write the embedded document at `index` back into its container. Returns whether it was.
     pub(super) fn save_embedded(&mut self, index: usize) -> bool {
-        let doc = &mut self.docs[index];
-        let Some(id) = doc.embedded.as_ref().map(|e| e.id) else {
+        let Some(id) = self.docs[index].embedded.as_ref().map(|e| e.id) else {
             return false;
         };
-        match doc.commit_embedded() {
-            Ok(cdx) => {
-                let container = doc.embedded.as_ref().map(|e| e.container.clone());
+        match self.commit_embedded(index) {
+            Ok(native) => {
+                let container = self.docs[index]
+                    .embedded
+                    .as_ref()
+                    .map(|e| e.container.clone());
                 if let Some(bridge) = &self.ole {
-                    bridge.send(ToServer::Update { id, cdx });
+                    bridge.send(match native {
+                        Native::Cdx(cdx) => ToServer::Update { id, cdx },
+                        Native::Model3d(object) => ToServer::Update3d { id, object },
+                    });
                 }
                 self.status = t!("ole.embed.committed", app = container.unwrap_or_default());
                 true
@@ -149,6 +250,41 @@ impl OpenDrawApp {
                 self.status = t!("app.status.save_failed", error = e);
                 false
             }
+        }
+    }
+
+    /// Before the 3D view is drawn: an embedded 3D model in the active tab is shown from its own
+    /// camera when the viewer loads it, any other model framed.
+    pub(super) fn prefer_embedded_camera(&mut self) {
+        let camera = self
+            .docs
+            .get(self.active)
+            .and_then(|d| d.embedded.as_ref())
+            .and_then(|e| e.model3d.as_ref())
+            .and_then(|e| e.look.camera);
+        self.view3d.prefer_camera(camera);
+    }
+
+    /// After the 3D view is drawn: the active embedded 3D model's look follows the view (its
+    /// style, camera and size), so writing it back draws what was on screen.
+    pub(super) fn track_embedded_look(&mut self) {
+        if !self.view.is_3d() {
+            return;
+        }
+        let style = self.view3d.style;
+        let Some((camera, points)) = self.view3d.camera() else {
+            return;
+        };
+        let Some(doc) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        if doc.three_d.shown_model().is_none() {
+            return;
+        }
+        if let Some(embedded) = doc.embedded_3d_mut() {
+            embedded.look.style = style;
+            embedded.look.camera = Some(camera);
+            embedded.look.view_points = [points.x, points.y];
         }
     }
 
@@ -231,6 +367,108 @@ mod tests {
         app.new_document();
         let ctx = egui::Context::default();
         (app.with_ole(bridge, &ctx), side)
+    }
+
+    fn ethanol_object() -> Object3d {
+        let model = crate::ole_server::model3d::tests::ethanol();
+        let look = crate::ole_server::model3d::Look3d {
+            style: crate::ui::viewport3d::Style3d::Wireframe,
+            ..Default::default()
+        };
+        Object3d::new(&model, look, None).unwrap()
+    }
+
+    #[test]
+    fn an_embedded_3d_model_opens_in_the_3d_view_as_it_was_shown() {
+        let (mut app, side) = served_app();
+        side.send(ToApp::Open3d {
+            id: 11,
+            object: Some(Box::new(ethanol_object())),
+            host: word(),
+        });
+        let ctx = egui::Context::default();
+        app.poll_ole(&ctx);
+        assert_eq!(app.docs.len(), 1);
+        assert_eq!(app.view, ViewMode::ThreeD);
+        assert_eq!(app.view3d.style, crate::ui::viewport3d::Style3d::Wireframe);
+        let doc = &app.docs[0];
+        assert_eq!(doc.three_d.model().unwrap().atoms.len(), 9);
+        assert_eq!(doc.title(), "Embedded in Word — 文書 1");
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn saving_an_embedded_3d_model_sends_its_mol2_and_look() {
+        let (mut app, side) = served_app();
+        side.send(ToApp::Open3d {
+            id: 12,
+            object: Some(Box::new(ethanol_object())),
+            host: word(),
+        });
+        let ctx = egui::Context::default();
+        app.poll_ole(&ctx);
+        app.view3d.style = crate::ui::viewport3d::Style3d::Spheres;
+        app.docs[0].embedded_3d_mut().unwrap().look.style = app.view3d.style;
+        assert!(app.docs[0].is_dirty(), "a new style is an edit");
+        assert!(app.save_doc(0));
+        let Ok(ToServer::Update3d { id: 12, object }) = side.rx.try_recv() else {
+            panic!("no 3D update");
+        };
+        assert_eq!(object.look.style, crate::ui::viewport3d::Style3d::Spheres);
+        let back = object.open().unwrap().model.unwrap();
+        assert_eq!(back.atoms.len(), 9);
+        // No GPU in the tests: no picture, so the object keeps its own.
+        assert!(object.png.is_empty());
+        assert!(!app.docs[0].is_dirty());
+
+        // The container closing asks for unsaved changes: there are none now.
+        let (tx, rx) = std::sync::mpsc::channel();
+        side.send(ToApp::Close {
+            id: 12,
+            reply: Some(tx),
+        });
+        app.poll_ole(&ctx);
+        assert_eq!(rx.try_recv().unwrap(), None);
+        assert!(app.docs.is_empty());
+    }
+
+    #[test]
+    fn closing_an_edited_3d_tab_writes_the_model_first() {
+        let (mut app, side) = served_app();
+        side.send(ToApp::Open3d {
+            id: 13,
+            object: Some(Box::new(ethanol_object())),
+            host: word(),
+        });
+        let ctx = egui::Context::default();
+        app.poll_ole(&ctx);
+        let model = app.docs[0].three_d.model_mut().unwrap();
+        let mut coords = crate::three_d::edit::coords(model);
+        coords[2][1] += 0.25;
+        crate::three_d::edit::set_coords(model, &coords);
+        app.close_tab(0);
+        let Ok(ToServer::Update3d { id: 13, object }) = side.rx.try_recv() else {
+            panic!("no 3D update");
+        };
+        let back = object.open().unwrap().model.unwrap();
+        assert!((back.atoms[2].pos[1] - coords[2][1]).abs() < 1e-3);
+        assert_eq!(side.rx.try_recv(), Ok(ToServer::Closed { id: 13 }));
+        assert!(app.docs.is_empty());
+    }
+
+    #[test]
+    fn a_new_3d_object_opens_empty_in_the_3d_view() {
+        let (mut app, side) = served_app();
+        side.send(ToApp::Open3d {
+            id: 14,
+            object: None,
+            host: word(),
+        });
+        let ctx = egui::Context::default();
+        app.poll_ole(&ctx);
+        assert_eq!(app.view, ViewMode::ThreeD);
+        assert!(app.docs[0].three_d.model().is_none());
+        assert!(app.docs[0].embedded.as_ref().unwrap().model3d.is_some());
     }
 
     fn water_cdx() -> Vec<u8> {
@@ -330,7 +568,9 @@ mod tests {
             reply: Some(tx),
         });
         app.poll_ole(&ctx);
-        let cdx = rx.try_recv().unwrap().expect("the edit");
+        let Some(Native::Cdx(cdx)) = rx.try_recv().unwrap() else {
+            panic!("no CDX");
+        };
         assert_eq!(
             io::decode(Format::Cdx, &cdx).unwrap().molecule.atoms.len(),
             2

@@ -38,6 +38,7 @@ assembly_redone = "已取消復原組裝體的編輯"
 nothing_to_undo = "沒有可復原的動作"
 nothing_to_redo = "沒有可取消復原的動作"
 nothing_to_copy = "沒有可複製的內容"
+copy_failed = "無法複製：{error}"
 pasted = "已貼上"
 no_structure_on_clipboard = "剪貼簿上沒有結構"
 label_not_expanded = "標籤「{label}」沒有對應的結構，未展開"
@@ -97,6 +98,7 @@ title = "關於"
 load_failed = "無法讀取內嵌物件：{error}"
 editing = "正在編輯內嵌於 {app} 的物件。儲存或關閉索引標籤即可更新 {app} 文件"
 committed = "已更新 {app} 文件"
+editing_3d = "正在編輯內嵌於 {app} 的 3D 模型。儲存或關閉分頁即可更新 {app} 文件"
 
 [document]
 untitled = "未命名 {number}"
@@ -290,6 +292,8 @@ unsupported = "尚不支援此結構的 IUPAC 命名（{reason}）"
 [ole.clipboard]
 copied_for_office = "已複製（在 Word 和 PowerPoint 中貼上為 ChemDraw 物件，在 ChemDraw 中貼上為結構）"
 copied = "已複製"
+copied_3d_for_office = "已複製 3D 檢視（可作為透明背景的物件貼到 Word、PowerPoint 和 Excel，按兩下即可在此重新編輯）"
+copied_3d_image = "已將 3D 檢視複製為圖片"
 
 [ole.paste]
 cdx_unreadable = "無法讀取剪貼簿上的 ChemDraw 資料"
@@ -303,6 +307,8 @@ user_type_short = "結構"
 # & marks the access key.
 verb_edit = "編輯(&E)"
 verb_open = "開啟(&O)"
+user_type_3d = "Open DrawChemistry 3D 模型"
+user_type_3d_short = "3D 模型"
 
 [periodic_table]
 # Keep the line breaks.
@@ -596,6 +602,9 @@ energy = "能量"
 stale_long = "2D 結構已變更。請以「從 2D 重新產生」更新"
 no_wgpu = "3D 檢視需要 wgpu 轉譯器（此環境無法使用）"
 export_image_tip = "將目前檢視儲存為透明背景的 PNG 圖片"
+copy_object = "複製"
+copy_object_tip = "複製檢視 (Ctrl+C)：作為透明背景的物件貼到 Word、PowerPoint 和 Excel，並可在此重新編輯"
+copy_image_tip = "將檢視複製為透明背景的圖片 (Ctrl+C)"
 
 [three_d.edit]
 constraint_fix = "固定"

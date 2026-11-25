@@ -29,6 +29,7 @@ assembly_redone = "Правка ансамбля повторена"
 nothing_to_undo = "Нечего отменять"
 nothing_to_redo = "Нечего повторять"
 nothing_to_copy = "Нечего копировать"
+copy_failed = "Не удалось скопировать: {error}"
 pasted = "Вставлено"
 no_structure_on_clipboard = "В буфере обмена нет структуры"
 label_not_expanded = "Для метки «{label}» нет структуры: она не развёрнута"
@@ -87,6 +88,7 @@ title = "О программе"
 load_failed = "Не удалось прочитать внедрённый объект: {error}"
 editing = "Редактируется объект, внедрённый в {app}. Сохраните или закройте вкладку, чтобы обновить документ {app}"
 committed = "Документ {app} обновлён"
+editing_3d = "Редактируется 3D-модель, внедрённая в {app}. Сохраните или закройте вкладку, чтобы обновить документ {app}"
 
 [document]
 untitled = "Без имени {number}"
@@ -277,6 +279,8 @@ unsupported = "Названия IUPAC для этой структуры пок�
 [ole.clipboard]
 copied_for_office = "Скопировано (вставляется в Word и PowerPoint как объект ChemDraw, а в ChemDraw — как структура)"
 copied = "Скопировано"
+copied_3d_for_office = "3D-вид скопирован (вставляется в Word, PowerPoint и Excel как объект с прозрачным фоном; дважды щёлкните его там, чтобы снова изменить здесь)"
+copied_3d_image = "3D-вид скопирован как изображение"
 
 [ole.paste]
 cdx_unreadable = "Не удалось прочитать данные ChemDraw из буфера обмена"
@@ -289,6 +293,8 @@ user_type = "Структура Open DrawChemistry"
 user_type_short = "Структура"
 verb_edit = "&Изменить"
 verb_open = "&Открыть"
+user_type_3d = "3D-модель Open DrawChemistry"
+user_type_3d_short = "3D-модель"
 
 [periodic_table]
 tooltip = "{symbol}  {name}\nАтомный номер {z}\nАтомная масса {weight}\n{category}"
@@ -576,6 +582,9 @@ energy = "Энергия"
 stale_long = "2D-структура изменилась. Обновите её командой «Пересоздать из 2D»"
 no_wgpu = "Для 3D-вида нужен рендерер wgpu (здесь недоступен)"
 export_image_tip = "Сохранить вид как изображение PNG с прозрачным фоном"
+copy_object = "Копировать"
+copy_object_tip = "Копировать вид (Ctrl+C): вставляется в Word, PowerPoint и Excel как объект с прозрачным фоном, который снова открывается здесь для правки"
+copy_image_tip = "Копировать вид как изображение с прозрачным фоном (Ctrl+C)"
 
 [three_d.edit]
 constraint_fix = "Закреплён"

@@ -5,6 +5,8 @@
 //! - `CLSID\{ours}`: the server (`LocalServer32`), the default handler (`InprocHandler32`),
 //!   ProgIDs, `Insertable`, `DefaultIcon`, `MiscStatus`, the verbs and the short user types;
 //! - the ProgIDs `OpenDrawChemistry.Document.1` and `OpenDrawChemistry.Document`;
+//! - the same for the 3D model class (`CLSID\{3D}`, `OpenDrawChemistry.Model3D.1` and
+//!   `OpenDrawChemistry.Model3D`): the 3D view embedded in Office, served by the same command;
 //! - only when ChemDraw is **not** installed: `CLSID\{ChemDraw}\TreatAs = {ours}`, so the
 //!   ChemDraw objects in Office documents open here. Where ChemDraw is installed nothing of
 //!   ChemDraw's is written (a per-user `TreatAs` would override ChemDraw's own registration).
@@ -25,7 +27,10 @@ use windows::Win32::System::Registry::{
 };
 use windows::core::{HSTRING, PCWSTR};
 
-use super::{CHEMDRAW_CLSID, CHEMDRAW_PROG_IDS, CLSID, PROG_ID, PROG_ID_CURRENT, guid_string};
+use super::{
+    CHEMDRAW_CLSID, CHEMDRAW_PROG_IDS, CLSID, CLSID_3D, Kind, PROG_ID, PROG_ID_3D,
+    PROG_ID_3D_CURRENT, PROG_ID_CURRENT, guid_string,
+};
 
 /// The value in our class key listing the keys registration created.
 pub const RECORD_VALUE: &str = "OpenDrawChemistry.Registered";
@@ -264,6 +269,33 @@ fn our_class() -> String {
     format!(r"CLSID\{}", guid_string(CLSID))
 }
 
+fn class_3d() -> String {
+    format!(r"CLSID\{}", guid_string(CLSID_3D))
+}
+
+/// One of this app's classes as registered: its class id, ProgIDs and kind.
+struct Class {
+    kind: Kind,
+    clsid: u128,
+    prog_id: &'static str,
+    prog_id_current: &'static str,
+}
+
+const CLASSES: [Class; 2] = [
+    Class {
+        kind: Kind::Structure,
+        clsid: CLSID,
+        prog_id: PROG_ID,
+        prog_id_current: PROG_ID_CURRENT,
+    },
+    Class {
+        kind: Kind::Model3d,
+        clsid: CLSID_3D,
+        prog_id: PROG_ID_3D,
+        prog_id_current: PROG_ID_3D_CURRENT,
+    },
+];
+
 fn chemdraw_class() -> String {
     format!(r"CLSID\{}", guid_string(CHEMDRAW_CLSID))
 }
@@ -280,46 +312,50 @@ pub fn register(hive: &Hive, exe: &Path, args: &str) -> windows::core::Result<Re
         }
     };
 
-    let (key, new) = create(hive.write_root, &hive.write(&class))?;
-    note(&class, new);
-    set_str(&key, "", super::user_type())?;
-    let sub = |name: &str, value: &str| -> windows::core::Result<()> {
-        let (k, _) = create(hive.write_root, &hive.write(&format!(r"{class}\{name}")))?;
-        set_str(&k, "", value)
-    };
     let command = if args.is_empty() {
         format!("\"{exe_s}\"")
     } else {
         format!("\"{exe_s}\" {args}")
     };
-    sub("LocalServer32", &command)?;
-    sub("InprocHandler32", "ole32.dll")?;
-    sub("ProgID", PROG_ID)?;
-    sub("VersionIndependentProgID", PROG_ID_CURRENT)?;
-    sub("Insertable", "")?;
-    sub("DefaultIcon", &format!("{exe_s},0"))?;
-    // OLEMISC_CANTLINKINSIDE: no links into the drawing.
-    sub("MiscStatus", "16")?;
-    // MF_STRING (0), OLEVERBATTRIB_ONCONTAINERMENU (2).
-    sub(r"Verb\0", &format!("{},0,2", t!("ole.server.verb_edit")))?;
-    sub(r"Verb\1", &format!("{},0,2", t!("ole.server.verb_open")))?;
-    sub(r"AuxUserType\2", super::user_type_short())?;
-    sub(r"AuxUserType\3", crate::APP_NAME)?;
+    for c in &CLASSES {
+        let id = guid_string(c.clsid);
+        let class = format!(r"CLSID\{id}");
+        let (key, new) = create(hive.write_root, &hive.write(&class))?;
+        note(&class, new);
+        set_str(&key, "", c.kind.user_type())?;
+        let sub = |name: &str, value: &str| -> windows::core::Result<()> {
+            let (k, _) = create(hive.write_root, &hive.write(&format!(r"{class}\{name}")))?;
+            set_str(&k, "", value)
+        };
+        sub("LocalServer32", &command)?;
+        sub("InprocHandler32", "ole32.dll")?;
+        sub("ProgID", c.prog_id)?;
+        sub("VersionIndependentProgID", c.prog_id_current)?;
+        sub("Insertable", "")?;
+        sub("DefaultIcon", &format!("{exe_s},0"))?;
+        // OLEMISC_CANTLINKINSIDE: no links into the drawing.
+        sub("MiscStatus", "16")?;
+        // MF_STRING (0), OLEVERBATTRIB_ONCONTAINERMENU (2).
+        sub(r"Verb\0", &format!("{},0,2", t!("ole.server.verb_edit")))?;
+        sub(r"Verb\1", &format!("{},0,2", t!("ole.server.verb_open")))?;
+        sub(r"AuxUserType\2", c.kind.user_type_short())?;
+        sub(r"AuxUserType\3", crate::APP_NAME)?;
 
-    for (prog_id, versioned) in [(PROG_ID, true), (PROG_ID_CURRENT, false)] {
-        let (k, new) = create(hive.write_root, &hive.write(prog_id))?;
-        note(prog_id, new);
-        set_str(&k, "", super::user_type())?;
-        let (c, _) = create(hive.write_root, &hive.write(&format!(r"{prog_id}\CLSID")))?;
-        set_str(&c, "", &ours)?;
-        if versioned {
-            create(
-                hive.write_root,
-                &hive.write(&format!(r"{prog_id}\Insertable")),
-            )?;
-        } else {
-            let (v, _) = create(hive.write_root, &hive.write(&format!(r"{prog_id}\CurVer")))?;
-            set_str(&v, "", PROG_ID)?;
+        for (prog_id, versioned) in [(c.prog_id, true), (c.prog_id_current, false)] {
+            let (k, new) = create(hive.write_root, &hive.write(prog_id))?;
+            note(prog_id, new);
+            set_str(&k, "", c.kind.user_type())?;
+            let (k, _) = create(hive.write_root, &hive.write(&format!(r"{prog_id}\CLSID")))?;
+            set_str(&k, "", &id)?;
+            if versioned {
+                create(
+                    hive.write_root,
+                    &hive.write(&format!(r"{prog_id}\Insertable")),
+                )?;
+            } else {
+                let (v, _) = create(hive.write_root, &hive.write(&format!(r"{prog_id}\CurVer")))?;
+                set_str(&v, "", c.prog_id)?;
+            }
         }
     }
 
@@ -397,20 +433,23 @@ pub fn unregister(hive: &Hive) -> windows::core::Result<()> {
     if record.contains(&treat_as_path) || treat_as_is_ours(hive) {
         remove_treat_as(hive)?;
     }
-    for key in [PROG_ID, PROG_ID_CURRENT] {
-        // A ProgID key that existed before us is left, minus nothing: only remove it when it
-        // was ours (recorded) or still names our class.
-        let names_us = open(
-            hive.write_root,
-            &hive.write(&format!(r"{key}\CLSID")),
-            KEY_READ,
-        )
-        .and_then(|k| get(&k, ""))
-        .is_some_and(|v| v.eq_ignore_ascii_case(&guid_string(CLSID)));
-        if record.iter().any(|c| c == key) || names_us {
-            delete_tree(hive.write_root, &hive.write(key))?;
+    for c in &CLASSES {
+        for key in [c.prog_id, c.prog_id_current] {
+            // A ProgID key that existed before us is left: only remove it when it was ours
+            // (recorded) or still names our class.
+            let names_us = open(
+                hive.write_root,
+                &hive.write(&format!(r"{key}\CLSID")),
+                KEY_READ,
+            )
+            .and_then(|k| get(&k, ""))
+            .is_some_and(|v| v.eq_ignore_ascii_case(&guid_string(c.clsid)));
+            if record.iter().any(|r| r == key) || names_us {
+                delete_tree(hive.write_root, &hive.write(key))?;
+            }
         }
     }
+    delete_tree(hive.write_root, &hive.write(&class_3d()))?;
     delete_tree(hive.write_root, &hive.write(&our_class()))
 }
 
@@ -524,14 +563,42 @@ mod tests {
             Some("&Edit,0,2")
         );
 
+        // The 3D class is served by the same command, under its own ProgIDs.
+        let class3 = class_3d();
+        assert_eq!(
+            s.value(&format!(r"{class3}\LocalServer32"), "").as_deref(),
+            Some(r#""C:\app\odc.exe""#)
+        );
+        assert_eq!(
+            s.value(&format!(r"{PROG_ID_3D}\CLSID"), "").as_deref(),
+            Some(guid_string(CLSID_3D).as_str())
+        );
+        assert_eq!(
+            s.value(&format!(r"{class3}\ProgID"), "").as_deref(),
+            Some(PROG_ID_3D)
+        );
+        assert!(s.exists(&format!(r"{class3}\Insertable")));
+        assert_eq!(
+            s.value(&format!(r"{class3}\Verb\0"), "").as_deref(),
+            Some("&Edit,0,2")
+        );
+        assert_eq!(
+            s.value(&format!(r"{PROG_ID_3D_CURRENT}\CurVer"), "")
+                .as_deref(),
+            Some(PROG_ID_3D)
+        );
+
         // Registering twice is harmless and still unregisters fully.
         register(&s.0, Path::new(r"C:\app\odc.exe"), "").unwrap();
         unregister(&s.0).unwrap();
         for key in [
             class,
+            class3,
             chemdraw_class(),
             PROG_ID.into(),
             PROG_ID_CURRENT.into(),
+            PROG_ID_3D.into(),
+            PROG_ID_3D_CURRENT.into(),
         ] {
             assert!(!s.exists(&key), "{key} left behind");
         }

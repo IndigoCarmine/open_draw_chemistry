@@ -359,6 +359,7 @@ While `Ctrl` is held a drag is always the delete-selection rectangle, even with 
 | `Ctrl`+`Y`, `Ctrl`+`Shift`+`Z` | Redo the 3D edit |
 | `Delete` / `Backspace` | Delete the atoms in the delete selection; if there are none, the picked atoms |
 | `Esc` | Clear both the pick and the delete selection |
+| `Ctrl`+`C` (`Ctrl`+`X`) | Copy the view as shown (the panel's Copy button, and Edit ▸ Copy, do the same). On Windows it pastes into Word, PowerPoint and Excel as an object with a transparent background holding the model as MOL2; double-click it there to edit it here again. Elsewhere it copies the picture. Nothing is cut |
 
 ### 3.5 Right panel
 
@@ -448,7 +449,7 @@ Apart from the click on a point, the plot's operations are the defaults of the p
 | `Ctrl`+`Shift`+`S` | Save As | Same |
 | `Ctrl`+`W` | Close tab | Same |
 | `Ctrl`+`Z` / `Ctrl`+`Y` / `Ctrl`+`Shift`+`Z` | Undo / Redo | Each screen has its own history ([2.2](#22-operations-that-work-in-every-tool), [3.4](#34-keys), [4.2](#42-keys)) |
-| `Ctrl`+`C` / `Ctrl`+`V` | Copy / Paste | The 2D editor's canvas ([2.2](#22-operations-that-work-in-every-tool)). In a text field they act on its text |
+| `Ctrl`+`C` / `Ctrl`+`V` | Copy / Paste | The 2D editor's canvas ([2.2](#22-operations-that-work-in-every-tool)); `Ctrl`+`C` also in the 3D view, which copies the view ([3.4](#34-keys)). In a text field they act on its text |
 
 Undo and Redo in the Edit menu and on the toolbar act on the assembly in the assembly view, and on the 2D drawing everywhere else, the 3D view included. In the 3D view the `Ctrl`+`Z` key undoes the 3D edit.
 
@@ -524,7 +525,7 @@ Facts only.
 | `Esc` | 2D: cancel an input box, abandon a lasso (it does not clear the selection). 3D: clear the pick and the delete selection. Assembly: stop orienting, else measuring, else clear the selection |
 | `Enter` | 2D canvas: make the hovered atom the hotspot. Input boxes: commit |
 | `Tab` | 2D canvas: clear the hotspot |
-| `Ctrl`+`X` | 2D canvas: copy (nothing is cut). Text fields: cut |
+| `Ctrl`+`X` | 2D canvas: copy (nothing is cut). 3D view: copy the view. Text fields: cut |
 
 ### 8.2 The same function has different operations by screen
 

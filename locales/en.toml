@@ -59,6 +59,8 @@ assembly_redone = "Redid the assembly edit"
 nothing_to_undo = "Nothing to undo"
 nothing_to_redo = "Nothing to redo"
 nothing_to_copy = "Nothing to copy"
+# {error}: why the 3D view could not be copied
+copy_failed = "Could not copy: {error}"
 pasted = "Pasted"
 no_structure_on_clipboard = "There is no structure on the clipboard"
 label_not_expanded = "No structure for the label “{label}”: it was not expanded"
@@ -181,6 +183,8 @@ load_failed = "Could not read the embedded object: {error}"
 # {app} is the container application, such as Word or PowerPoint.
 editing = "Editing an object embedded in {app}. Save or close the tab to update the {app} document"
 committed = "Updated the {app} document"
+# {app} is the container application, such as Word or PowerPoint.
+editing_3d = "Editing a 3D model embedded in {app}. Save or close the tab to update the {app} document"
 
 [document]
 # Tab title of a new document; {number} counts them (1, 2, 3, …).
@@ -426,6 +430,10 @@ unsupported = "IUPAC names for this structure are not supported yet ({reason})"
 copied_for_office = "Copied (pastes into Word and PowerPoint as a ChemDraw object, and into ChemDraw as a structure)"
 # Status bar after copying, on other systems
 copied = "Copied"
+# Status bar after copying the 3D view, on Windows
+copied_3d_for_office = "Copied the 3D view (pastes into Word, PowerPoint and Excel as an object with a transparent background; double-click it there to edit it here again)"
+# Status bar after copying the 3D view as a picture (other systems)
+copied_3d_image = "Copied the 3D view as a picture"
 
 [ole.paste]
 cdx_unreadable = "Could not read the ChemDraw data on the clipboard"
@@ -442,6 +450,10 @@ user_type_short = "Structure"
 # Verb in Office's object context menu; & marks the access key
 verb_edit = "&Edit"
 verb_open = "&Open"
+# Object type of the embedded 3D view, in Office's Insert Object dialog
+user_type_3d = "Open DrawChemistry 3D Model"
+# Short object type of the embedded 3D view, in Office's object menu
+user_type_3d_short = "3D Model"
 
 [periodic_table]
 # Hover text of a periodic-table cell. {symbol}: element symbol, {name}: element name,
@@ -802,6 +814,12 @@ stale_long = "The 2D structure has changed. Update it with “Regenerate from 2D
 no_wgpu = "The 3D view needs the wgpu renderer (not available here)"
 # Tooltip of the 3D panel's ".png" export button.
 export_image_tip = "Save the view as a PNG image with a transparent background"
+# Button in the 3D panel's export section: copies the view to the clipboard.
+copy_object = "Copy"
+# Its tooltip on Windows.
+copy_object_tip = "Copy the view (Ctrl+C): pastes into Word, PowerPoint and Excel as an object with a transparent background that opens here again for editing"
+# Its tooltip on other systems.
+copy_image_tip = "Copy the view as a picture with a transparent background (Ctrl+C)"
 
 [three_d.edit]
 # Kinds of optimization constraint, shown before the atoms they apply to.

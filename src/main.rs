@@ -1,6 +1,7 @@
-// Release builds get no console window on Windows; debug builds keep it so
-// `println!`/panics stay visible while developing.
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// No console window on Windows, in any build: a console program started without one (by COM
+// for the OLE server's `-Embedding`, or from Explorer) gets a new, black console window. Output
+// and panics still reach the terminal the app is run from (see `console`).
+#![windows_subsystem = "windows"]
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -48,6 +49,8 @@ fn native_options() -> eframe::NativeOptions {
 /// A failed start gets an error screen of its own (see `fatal`): the window that would have
 /// shown it never opened.
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    console::attach_to_parent();
     fatal::install_panic_hook();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -106,6 +109,47 @@ fn run() -> eframe::Result<()> {
         native_options(),
         Box::new(|cc| Ok(Box::new(OpenDrawApp::new(cc, files).with_update_check()))),
     )
+}
+
+/// The terminal a GUI-subsystem program is run from, for its output (`--register-ole`'s report,
+/// `cargo run`'s log and panics).
+#[cfg(windows)]
+mod console {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE,
+        STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+
+    /// Write stdout/stderr to the parent's console when it has one and they go nowhere else.
+    /// Handles the parent gave (a pipe or file: a test, a redirect) are kept; started by COM or
+    /// Explorer there is no console to attach to and nothing happens.
+    pub fn attach_to_parent() {
+        let given = |id: STD_HANDLE| {
+            // SAFETY: GetStdHandle only reads this process's standard handle table.
+            unsafe { GetStdHandle(id) }
+                .ok()
+                .filter(|h| !h.is_invalid() && !h.0.is_null())
+        };
+        let handles: [(STD_HANDLE, Option<HANDLE>); 2] = [
+            (STD_OUTPUT_HANDLE, given(STD_OUTPUT_HANDLE)),
+            (STD_ERROR_HANDLE, given(STD_ERROR_HANDLE)),
+        ];
+        if handles.iter().all(|(_, h)| h.is_some()) {
+            return;
+        }
+        // SAFETY: attaching to the parent's console has no preconditions; it fails harmlessly
+        // when the parent has none.
+        if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }.is_err() {
+            return;
+        }
+        for (id, handle) in handles {
+            if let Some(handle) = handle {
+                // SAFETY: `handle` is the process's own standard handle from before the attach.
+                let _ = unsafe { SetStdHandle(id, handle) };
+            }
+        }
+    }
 }
 
 /// The value after `flag` in `args`.

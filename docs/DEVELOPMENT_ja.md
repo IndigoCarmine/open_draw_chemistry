@@ -12,6 +12,12 @@
 ChemDraw がある PC では ChemDraw の設定は一切変更しません。後から ChemDraw をインストールした
 場合は、もう一度 `--register-ole` を実行する（またはアンインストールする）と ChemDraw に戻ります。
 
+3D モデルのクラス（`OpenDrawChemistry.Model3D.1`、`{35DB705A-FE80-473D-AE65-0D392D4E2B72}`）も同じコマンドで
+登録されます。3D ビューのコピーはこのクラスのオブジェクトです。ストレージには `CONTENTS` にモデルの Tripos MOL2、
+`ODC3DView` に表示（スタイル・視点・大きさ）の JSON、`ODC3DPicture` に図の PNG が入ります。Office での表示は、
+図をアルファブレンドのビットマップとして持つ EMF で、背景の透過が保たれます（`src/ole_server/model3d.rs`、
+`src/ole_server/picture.rs`）。
+
 編集はこのアプリのウィンドウで行います（Word の中でのインプレース編集には対応していません）。
 問題の調査には、`LocalServer32` のコマンドに `--ole-log <ファイル>` を加えると、
 コンテナからの呼び出しがログに記録されます。

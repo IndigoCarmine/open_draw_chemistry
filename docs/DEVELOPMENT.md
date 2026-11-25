@@ -12,6 +12,13 @@ is not installed** — a `TreatAs` that sends ChemDraw's class to this app. Wher
 installed nothing of ChemDraw's is changed. If ChemDraw is installed later, run
 `--register-ole` again (or uninstall) to hand its objects back to it.
 
+It also registers the 3D model class (`OpenDrawChemistry.Model3D.1`,
+`{35DB705A-FE80-473D-AE65-0D392D4E2B72}`), served by the same command: a copy of the 3D view is
+an object of that class. Its storage holds the model as Tripos MOL2 in `CONTENTS`, the look
+(style, camera, size) as JSON in `ODC3DView` and the picture as a PNG in `ODC3DPicture`; Office
+shows it from an EMF holding the picture as an alpha-blended bitmap, which keeps the
+transparent background (`src/ole_server/model3d.rs`, `src/ole_server/picture.rs`).
+
 Objects are edited in this app's window (in-place editing inside Word is not supported).
 For diagnosis, the server logs what the container asks for when its `LocalServer32` command has
 `--ole-log <file>` added.

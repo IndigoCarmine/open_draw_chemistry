@@ -14,7 +14,7 @@
 //! clipboard only as "Embed Source" (see `paste`), and keeps a CDX's arrows and text.
 
 #[cfg(windows)]
-mod clipboard;
+pub(crate) mod clipboard;
 #[cfg(any(windows, test))]
 mod insert;
 #[cfg(windows)]
@@ -45,6 +45,46 @@ pub fn copy(editor: &ChemStructEditor, ctx: &egui::Context) -> bool {
         // gives ChemDraw, pictures and paste-back.
     }
     editor.copy(ctx)
+}
+
+/// Copy the 3D view, drawn into `object` (the model as MOL2, its look and picture): on Windows
+/// an OLE object Office embeds and edits again here (see `clipboard::set_3d`), elsewhere, or
+/// when OLE is unavailable, the picture. The status line, or why nothing was copied.
+pub fn copy_3d(
+    object: &crate::ole_server::model3d::Object3d,
+    ctx: &egui::Context,
+) -> Result<&'static str, String> {
+    #[cfg(windows)]
+    match clipboard::set_3d(object) {
+        Ok(()) => return Ok(t!("ole.clipboard.copied_3d_for_office")),
+        // The picture is copied instead; say why the object was not.
+        Err(e) => eprintln!("warn: the 3D view was copied as a picture only: {e}"),
+    }
+    let pixels = object
+        .pixels()
+        .ok_or_else(|| t!("three_d.error.not_shown").to_owned())?;
+    ctx.copy_image(egui::ColorImage::from_rgba_unmultiplied(
+        [pixels.width as usize, pixels.height as usize],
+        &pixels.rgba,
+    ));
+    Ok(t!("ole.clipboard.copied_3d_image"))
+}
+
+/// Take this frame's copy shortcut (Ctrl+C, or egui's Copy/Cut event) in a view without a text
+/// field focused, on every platform: the 3D view copies itself with it. Returns whether a copy
+/// was asked for.
+pub fn take_view_copy_shortcut(ctx: &egui::Context) -> bool {
+    if ctx.text_edit_focused() {
+        return false;
+    }
+    ctx.input_mut(|input| {
+        let before = input.events.len();
+        input
+            .events
+            .retain(|e| !matches!(e, egui::Event::Copy | egui::Event::Cut));
+        let had_event = input.events.len() != before;
+        had_event | input.consume_key(egui::Modifiers::COMMAND, egui::Key::C)
+    })
 }
 
 /// Take this frame's copy shortcut (Ctrl+C, and egui's Copy/Cut events) away from the editor
@@ -171,6 +211,20 @@ impl PasteShortcut {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn the_views_copy_shortcut_is_taken_on_every_platform() {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Copy],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            assert!(take_view_copy_shortcut(ui.ctx()));
+            assert!(!take_view_copy_shortcut(ui.ctx()), "taken once");
+        });
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn a_press_hides_the_focus_from_the_widget_for_one_frame() {

@@ -33,6 +33,7 @@ assembly_redone = "集合体の編集をやり直しました"
 nothing_to_undo = "元に戻す操作はありません"
 nothing_to_redo = "やり直す操作はありません"
 nothing_to_copy = "コピーするものがありません"
+copy_failed = "コピーできませんでした: {error}"
 pasted = "貼り付けました"
 no_structure_on_clipboard = "クリップボードに構造がありません"
 label_not_expanded = "ラベル「{label}」は展開できません（対応する構造がありません）"
@@ -124,6 +125,7 @@ title = "バージョン情報"
 load_failed = "埋め込みオブジェクトを読み込めませんでした: {error}"
 editing = "{app} の埋め込みオブジェクトを編集しています。保存するかタブを閉じると {app} の文書に反映されます"
 committed = "{app} の文書に反映しました"
+editing_3d = "{app} に埋め込まれた 3D モデルを編集中です。保存するかタブを閉じると {app} の文書に反映されます"
 
 [document]
 untitled = "無題 {number}"
@@ -315,6 +317,8 @@ unsupported = "この構造の IUPAC 名には未対応です（{reason}）"
 [ole.clipboard]
 copied_for_office = "コピーしました（Word・PowerPoint には ChemDraw オブジェクトとして、ChemDraw には構造として貼り付けられます）"
 copied = "コピーしました"
+copied_3d_for_office = "3D ビューをコピーしました (Word・PowerPoint・Excel に背景透過のオブジェクトとして貼り付けられ、ダブルクリックでここで再編集できます)"
+copied_3d_image = "3D ビューを画像としてコピーしました"
 
 [ole.paste]
 cdx_unreadable = "クリップボードの ChemDraw データを読み込めませんでした"
@@ -327,6 +331,8 @@ user_type = "Open DrawChemistry 構造式"
 user_type_short = "構造式"
 verb_edit = "編集(&E)"
 verb_open = "開く(&O)"
+user_type_3d = "Open DrawChemistry 3D モデル"
+user_type_3d_short = "3D モデル"
 
 [periodic_table]
 # Hover text of a periodic-table cell. {symbol}: element symbol, {name}: element name,
@@ -644,6 +650,9 @@ energy = "エネルギー"
 stale_long = "2D の構造が変更されています。「2D から再生成」で更新できます"
 no_wgpu = "3D 表示には wgpu レンダラーが必要です（この環境では使えません）"
 export_image_tip = "表示中のビューを背景透過の PNG 画像として書き出す"
+copy_object = "コピー"
+copy_object_tip = "ビューをコピー (Ctrl+C): Word・PowerPoint・Excel に背景透過のオブジェクトとして貼り付けられ、ここで再編集できます"
+copy_image_tip = "ビューを背景透過の画像としてコピー (Ctrl+C)"
 
 [three_d.edit]
 constraint_fix = "固定"

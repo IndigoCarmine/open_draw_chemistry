@@ -10,6 +10,8 @@ pub const CHEMDRAW_PROG_ID: &str = "ChemDraw_x64.Document.6.0";
 pub const CHEMDRAW_USER_TYPE: &str = "CS ChemDraw 64-bit Drawing";
 /// This app's class's user type in the stream (ANSI, so not the Japanese one).
 pub const OWN_USER_TYPE: &str = "Open DrawChemistry Structure";
+/// The 3D class's user type in the stream.
+pub const USER_TYPE_3D: &str = "Open DrawChemistry 3D Model";
 
 /// A GUID's bytes as COM lays them out (`Data1`–`Data3` little-endian, then `Data4`).
 pub fn guid_bytes(guid: u128) -> [u8; 16] {
@@ -52,11 +54,18 @@ pub fn chemdraw() -> Vec<u8> {
     )
 }
 
-/// The stream for an object stored under `clsid`: ChemDraw's own for ChemDraw's class, this
-/// app's names for any other.
+/// The stream for an object stored under `clsid`: ChemDraw's own for ChemDraw's class, the
+/// 3D model's for the 3D class (its native data is MOL2), this app's names for any other.
 pub fn for_class(clsid: u128) -> Vec<u8> {
     if clsid == CHEMDRAW_CLSID {
         chemdraw()
+    } else if clsid == super::CLSID_3D {
+        compobj(
+            clsid,
+            USER_TYPE_3D,
+            super::model3d::MOL2_FORMAT_NAME,
+            super::PROG_ID_3D,
+        )
     } else {
         compobj(clsid, OWN_USER_TYPE, CDX_FORMAT_NAME, super::PROG_ID)
     }
@@ -98,5 +107,15 @@ mod tests {
         let text = String::from_utf8_lossy(&s);
         assert!(text.contains(OWN_USER_TYPE));
         assert!(text.contains(super::super::PROG_ID));
+    }
+
+    #[test]
+    fn the_3d_class_names_mol2_as_its_native_data() {
+        let s = for_class(super::super::CLSID_3D);
+        assert_eq!(&s[12..28], &guid_bytes(super::super::CLSID_3D));
+        let text = String::from_utf8_lossy(&s);
+        assert!(text.contains(USER_TYPE_3D));
+        assert!(text.contains("chemical/x-mol2"));
+        assert!(text.contains(super::super::PROG_ID_3D));
     }
 }

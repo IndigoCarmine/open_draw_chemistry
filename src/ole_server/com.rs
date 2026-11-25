@@ -19,6 +19,15 @@
 //! is the one the object was loaded with (ChemDraw's, for ChemDraw objects activated through
 //! `TreatAs`), so the object stays what it was; a new object is stored as ChemDraw's class
 //! (unless the server runs with `--ole-own-class`, for testing beside an installed ChemDraw).
+//!
+//! # 3D models
+//!
+//! The server also serves this app's 3D class ([`CLSID_3D`]; a second class factory, so one
+//! process serves either): the same object, holding a [`model3d::Object3d`] instead of a CDX.
+//! Its storage has the MOL2 in `CONTENTS` and the look and the picture in streams of their
+//! own (see [`model3d`]); its presentation is the picture with a transparent background, as an
+//! EMF (see [`super::picture`]). The app draws the picture when the user saves, and sends it
+//! with the model; the server never draws a 3D model itself.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -42,8 +51,8 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::Media::Audio::{CoRegisterMessageFilter, IMessageFilter, IMessageFilter_Impl};
 use windows::Win32::Media::HTASK;
 use windows::Win32::System::Com::StructuredStorage::{
-    CreateILockBytesOnHGlobal, IPersistStorage, IPersistStorage_Impl, IStorage, ReadClassStg,
-    StgCreateDocfileOnILockBytes, WriteClassStg,
+    CreateILockBytesOnHGlobal, GetHGlobalFromILockBytes, IPersistStorage, IPersistStorage_Impl,
+    IStorage, ReadClassStg, StgCreateDocfileOnILockBytes, WriteClassStg,
 };
 use windows::Win32::System::Com::{
     CLSCTX_LOCAL_SERVER, CoDisconnectObject, CoRegisterClassObject, CoRevokeClassObject,
@@ -71,12 +80,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PeekMessageW, QS_ALLINPUT, TranslateMessage,
 };
 use windows::core::{
-    BOOL, ComObject, GUID, HRESULT, IUnknown, IUnknownImpl, Interface, PCWSTR, PWSTR, Ref, Result,
-    implement, w,
+    BOOL, ComObject, GUID, HRESULT, HSTRING, IUnknown, IUnknownImpl, Interface, PCWSTR, PWSTR,
+    Param, Ref, Result, implement, w,
 };
 
+use super::model3d::{self, Object3d};
 use super::{
-    AppBridge, CHEMDRAW_CLSID, CLSID, HostNames, ObjectId, ServerSide, ToApp, ToServer, compobj,
+    AppBridge, CHEMDRAW_CLSID, CLSID, CLSID_3D, HostNames, Kind, Native, ObjectId, ServerSide,
+    ToApp, ToServer, compobj, picture as picture3d,
 };
 use crate::io::{self, Format};
 
@@ -252,25 +263,35 @@ fn run(
     unsafe {
         let _ = CoRegisterMessageFilter(&filter, None);
     }
-    let factory: IClassFactory = Factory.into();
-    // SAFETY: a live class factory, registered for our class on this apartment.
-    let cookie = match unsafe {
-        CoRegisterClassObject(
-            &GUID::from_u128(CLSID),
-            &factory,
-            CLSCTX_LOCAL_SERVER,
-            REGCLS_SINGLEUSE,
-        )
-    } {
-        Ok(cookie) => cookie,
-        Err(e) => {
-            let _ = ready.send(Err(e.to_string()));
-            SERVER.with(|s| s.borrow_mut().take());
-            // SAFETY: pairs with OleInitialize.
-            unsafe { OleUninitialize() };
-            return;
+    // One factory a class: COM starts the same command for both, and either may be asked for.
+    let mut cookies = Vec::new();
+    for kind in [Kind::Structure, Kind::Model3d] {
+        let factory: IClassFactory = Factory { kind }.into();
+        // SAFETY: a live class factory, registered for its class on this apartment.
+        match unsafe {
+            CoRegisterClassObject(
+                &GUID::from_u128(kind.class()),
+                &factory,
+                CLSCTX_LOCAL_SERVER,
+                REGCLS_SINGLEUSE,
+            )
+        } {
+            Ok(cookie) => cookies.push(cookie),
+            Err(e) => {
+                let _ = ready.send(Err(e.to_string()));
+                for cookie in cookies {
+                    // SAFETY: revoking what was registered just above.
+                    unsafe {
+                        let _ = CoRevokeClassObject(cookie);
+                    }
+                }
+                SERVER.with(|s| s.borrow_mut().take());
+                // SAFETY: pairs with OleInitialize.
+                unsafe { OleUninitialize() };
+                return;
+            }
         }
-    };
+    }
     let _ = ready.send(Ok(()));
 
     let started = Instant::now();
@@ -291,6 +312,15 @@ fn run(
                     this.set_contents(cdx);
                     this.notify_changed();
                 }),
+                ToServer::Update3d { id, object } => with_object(id, |this| {
+                    super::log(&format!(
+                        "update 3D {id}: {} bytes of MOL2, {} of picture",
+                        object.mol2.len(),
+                        object.png.len()
+                    ));
+                    this.set_model(*object);
+                    this.notify_changed();
+                }),
                 ToServer::Closed { id } => with_object(id, |this| {
                     super::log(&format!("closed {id}"));
                     this.end_session();
@@ -307,10 +337,12 @@ fn run(
         });
     }
 
-    // SAFETY: revoking our own registration; then cutting off containers still holding
+    // SAFETY: revoking our own registrations; then cutting off containers still holding
     // objects (they keep the cached picture), on this thread.
-    unsafe {
-        let _ = CoRevokeClassObject(cookie);
+    for cookie in cookies {
+        unsafe {
+            let _ = CoRevokeClassObject(cookie);
+        }
     }
     let ids = with_server(|s| s.objects.keys().copied().collect::<Vec<_>>()).unwrap_or_default();
     for id in ids {
@@ -367,8 +399,11 @@ impl IMessageFilter_Impl for BusyRetry_Impl {
 
 // ─── Class factory ──────────────────────────────────────────────────────────────────────────
 
+/// Makes the objects of one class.
 #[implement(IClassFactory, Agile = false)]
-struct Factory;
+struct Factory {
+    kind: Kind,
+}
 
 impl IClassFactory_Impl for Factory_Impl {
     fn CreateInstance(
@@ -377,7 +412,7 @@ impl IClassFactory_Impl for Factory_Impl {
         riid: *const GUID,
         ppv: *mut *mut core::ffi::c_void,
     ) -> Result<()> {
-        super::log("IClassFactory::CreateInstance");
+        super::log(&format!("IClassFactory::CreateInstance ({:?})", self.kind));
         if ppv.is_null() || riid.is_null() {
             return Err(E_INVALIDARG.into());
         }
@@ -394,7 +429,7 @@ impl IClassFactory_Impl for Factory_Impl {
         .ok_or(E_FAIL)?;
         let obj = ComObject::new(EmbeddedObject {
             id,
-            state: RefCell::new(ObjState::new(own_class)),
+            state: RefCell::new(ObjState::new(own_class, self.kind)),
         });
         let ptr: *const EmbeddedObject_Impl = &*obj;
         with_server(|s| s.objects.insert(id, ptr));
@@ -420,8 +455,12 @@ impl IClassFactory_Impl for Factory_Impl {
 // ─── The embedded object ────────────────────────────────────────────────────────────────────
 
 struct ObjState {
+    /// What the object holds.
+    kind: Kind,
     /// The class the storage is written with.
     class: GUID,
+    /// A 3D object's model, look and picture; `None` for a new, empty one.
+    object3d: Option<Object3d>,
     /// The CDX as last saved by the user (or loaded); `None` for a new, empty object.
     cdx: Option<Vec<u8>>,
     /// [`ObjState::cdx`] read, for the picture.
@@ -439,9 +478,16 @@ struct ObjState {
 }
 
 impl ObjState {
-    fn new(own_class: bool) -> Self {
+    fn new(own_class: bool, kind: Kind) -> Self {
+        let class = match kind {
+            Kind::Model3d => CLSID_3D,
+            Kind::Structure if own_class => CLSID,
+            Kind::Structure => CHEMDRAW_CLSID,
+        };
         Self {
-            class: GUID::from_u128(if own_class { CLSID } else { CHEMDRAW_CLSID }),
+            kind,
+            class: GUID::from_u128(class),
+            object3d: None,
             cdx: None,
             molecule: None,
             storage: None,
@@ -478,12 +524,38 @@ impl Drop for EmbeddedObject {
 }
 
 impl EmbeddedObject_Impl {
+    fn kind(&self) -> Kind {
+        self.state.borrow().kind
+    }
+
     /// Take `cdx` as the object's contents (the user saved in the app).
     fn set_contents(&self, cdx: Vec<u8>) {
         let mut st = self.state.borrow_mut();
         st.molecule = io::decode(Format::Cdx, &cdx).ok().map(|l| l.molecule);
         st.cdx = Some(cdx);
         st.dirty = true;
+    }
+
+    /// Take `object` as the 3D object's contents (the user saved in the app). Without a
+    /// picture the one the object has is kept, with its size.
+    fn set_model(&self, mut object: Object3d) {
+        let mut st = self.state.borrow_mut();
+        if object.png.is_empty()
+            && let Some(old) = &st.object3d
+        {
+            object.png = old.png.clone();
+            object.look.extent = old.look.extent;
+        }
+        st.object3d = Some(object);
+        st.dirty = true;
+    }
+
+    /// Take what the app handed back on a close.
+    fn set_native(&self, native: Native) {
+        match native {
+            Native::Cdx(cdx) => self.set_contents(cdx),
+            Native::Model3d(object) => self.set_model(*object),
+        }
     }
 
     /// Tell the container the contents changed: new picture, and save the object into its
@@ -537,15 +609,27 @@ impl EmbeddedObject_Impl {
 
     /// Show the object in the app's window.
     fn show(&self) {
-        let (site, cdx, host, first) = {
+        let (site, message, first) = {
             let mut st = self.state.borrow_mut();
             let first = !st.open;
             st.open = true;
-            (st.site.clone(), st.cdx.clone(), st.host.clone(), first)
+            let (id, host) = (self.id, st.host.clone());
+            let message = match st.kind {
+                Kind::Structure => ToApp::Open {
+                    id,
+                    cdx: st.cdx.clone(),
+                    host,
+                },
+                Kind::Model3d => ToApp::Open3d {
+                    id,
+                    object: st.object3d.clone().map(Box::new),
+                    host,
+                },
+            };
+            (st.site.clone(), message, first)
         };
-        let id = self.id;
         with_server(|s| {
-            s.side.send(ToApp::Open { id, cdx, host });
+            s.side.send(message);
             if first {
                 let _ = s.to_main.send(MainEvent::Shown);
             }
@@ -568,9 +652,79 @@ impl EmbeddedObject_Impl {
     }
 
     fn write_to(&self, stg: &IStorage) -> Result<()> {
-        let class = self.state.borrow().class;
-        write_object(stg, &class, &self.cdx_or_empty())
+        let (kind, class) = {
+            let st = self.state.borrow();
+            (st.kind, st.class)
+        };
+        match kind {
+            Kind::Structure => write_object(stg, &class, &self.cdx_or_empty()),
+            Kind::Model3d => write_object_3d(stg, self.state.borrow().object3d.as_ref()),
+        }
     }
+
+    /// The object's native data, as the clipboard format names it: the CDX, or the MOL2.
+    fn native_bytes(&self) -> Vec<u8> {
+        if self.kind() == Kind::Structure {
+            return self.cdx_or_empty();
+        }
+        let st = self.state.borrow();
+        st.object3d
+            .as_ref()
+            .map(|o| o.mol2.clone().into_bytes())
+            .unwrap_or_default()
+    }
+
+    /// The picture the container shows; `opaque` lays a 3D model's over white (for a Windows
+    /// metafile, which has no alpha). The caller owns the handle.
+    fn presentation(&self, opaque: bool) -> HENHMETAFILE {
+        let st = self.state.borrow();
+        match st.kind {
+            Kind::Structure => picture(st.molecule.as_ref()),
+            Kind::Model3d => st
+                .object3d
+                .as_ref()
+                .and_then(|o| picture_3d(o, opaque))
+                .unwrap_or_else(|| picture(None)),
+        }
+    }
+}
+
+/// A 3D object's picture as an EMF: transparent, or over white when `opaque`. `None` without a
+/// picture. The caller owns the handle.
+pub(crate) fn picture_3d(object: &Object3d, opaque: bool) -> Option<HENHMETAFILE> {
+    let pixels = object.pixels()?;
+    let emf = if opaque {
+        picture3d::opaque_emf(&pixels, object.look.extent)
+    } else {
+        picture3d::alpha_emf(&pixels, object.look.extent)
+    };
+    emf.ok().map(picture3d::Emf::into_raw)
+}
+
+/// Write a 3D object's storage: the 3D class, its `\x01CompObj` and its streams (an empty
+/// `CONTENTS` for a new object nothing was made in yet).
+pub(crate) fn write_object_3d(stg: &IStorage, object: Option<&Object3d>) -> Result<()> {
+    let class = GUID::from_u128(CLSID_3D);
+    // SAFETY: a valid storage; streams are created (replacing old ones) and written in full.
+    unsafe {
+        WriteClassStg(stg, &class)?;
+        write_stream(stg, w!("\u{1}CompObj"), &compobj::for_class(CLSID_3D))?;
+        match object {
+            Some(object) => {
+                for (name, bytes) in object.streams() {
+                    write_stream(stg, &HSTRING::from(name), &bytes)?;
+                }
+            }
+            None => write_stream(stg, &HSTRING::from(model3d::CONTENTS), &[])?,
+        }
+    }
+    Ok(())
+}
+
+/// The 3D object in `stg`, as [`write_object_3d`] wrote it; `None` when it has no model.
+pub(crate) fn read_object_3d(stg: &IStorage) -> Option<Object3d> {
+    // SAFETY: reading streams of a valid storage.
+    Object3d::from_streams(|name| unsafe { read_stream(stg, &HSTRING::from(name)) })
 }
 
 /// Write an object's storage: class, `\x01CompObj` and `CONTENTS`.
@@ -588,7 +742,7 @@ pub(crate) fn write_object(stg: &IStorage, class: &GUID, cdx: &[u8]) -> Result<(
     Ok(())
 }
 
-unsafe fn write_stream(stg: &IStorage, name: PCWSTR, data: &[u8]) -> Result<()> {
+unsafe fn write_stream(stg: &IStorage, name: impl Param<PCWSTR>, data: &[u8]) -> Result<()> {
     // SAFETY: the caller passes a valid storage; data is written from a live slice.
     unsafe {
         let stream =
@@ -604,7 +758,7 @@ unsafe fn write_stream(stg: &IStorage, name: PCWSTR, data: &[u8]) -> Result<()> 
     Ok(())
 }
 
-pub(crate) unsafe fn read_stream(stg: &IStorage, name: PCWSTR) -> Option<Vec<u8>> {
+pub(crate) unsafe fn read_stream(stg: &IStorage, name: impl Param<PCWSTR>) -> Option<Vec<u8>> {
     // SAFETY: the caller passes a valid storage; reads go into a live buffer.
     unsafe {
         let stream = stg
@@ -687,7 +841,7 @@ fn picture_size(h: HENHMETAFILE) -> SIZE {
 
 /// The picture as a `METAFILEPICT` in global memory (`CF_METAFILEPICT`), for containers whose
 /// cache keeps Windows metafiles.
-fn metafile_pict(h: HENHMETAFILE) -> Result<HGLOBAL> {
+pub(crate) fn metafile_pict(h: HENHMETAFILE) -> Result<HGLOBAL> {
     let size = picture_size(h);
     // SAFETY: converts our own metafile against the screen DC; the result is copied into a
     // new handle owned by the METAFILEPICT, which the receiver frees.
@@ -731,6 +885,37 @@ fn global_bytes(bytes: &[u8]) -> Result<HGLOBAL> {
     }
 }
 
+/// The bytes of a compound file in memory that `write` fills.
+pub(crate) fn storage_bytes(write: impl FnOnce(&IStorage) -> Result<()>) -> Result<Vec<u8>> {
+    // SAFETY: an HGLOBAL-backed ILockBytes and a storage on it, committed and released before
+    // the bytes (as many as the ILockBytes says it holds) are copied out of the locked block.
+    unsafe {
+        let bytes = CreateILockBytesOnHGlobal(None, true)?;
+        {
+            let stg = StgCreateDocfileOnILockBytes(
+                &bytes,
+                STGM_CREATE | STGM_READWRITE | STGM_SHARE_EXCLUSIVE,
+                0,
+            )?;
+            write(&stg)?;
+            stg.Commit(0)?;
+        }
+        let mut stat = windows::Win32::System::Com::STATSTG::default();
+        bytes.Stat(
+            &mut stat,
+            windows::Win32::System::Com::STATFLAG_NONAME.0 as u32,
+        )?;
+        let g = GetHGlobalFromILockBytes(&bytes)?;
+        let p = GlobalLock(g).cast::<u8>();
+        if p.is_null() {
+            return Err(E_OUTOFMEMORY.into());
+        }
+        let out = std::slice::from_raw_parts(p, stat.cbSize as usize).to_vec();
+        let _ = GlobalUnlock(g);
+        Ok(out)
+    }
+}
+
 /// A new compound file in memory.
 pub(crate) fn memory_storage() -> Result<IStorage> {
     // SAFETY: an HGLOBAL-backed ILockBytes freed with the storage.
@@ -744,18 +929,23 @@ pub(crate) fn memory_storage() -> Result<IStorage> {
     }
 }
 
-/// The formats the object offers: its picture both ways, its CDX and itself as an embedding.
+/// The formats the object offers: its picture both ways, its native data (the CDX, or a 3D
+/// model's MOL2) and itself as an embedding.
 struct Formats {
-    cdx: u16,
+    native: u16,
     embed_source: u16,
 }
 
 impl Formats {
-    fn get() -> Self {
+    fn get(kind: Kind) -> Self {
+        let native = match kind {
+            Kind::Structure => HSTRING::from(super::CDX_FORMAT_NAME),
+            Kind::Model3d => HSTRING::from(model3d::MOL2_FORMAT_NAME),
+        };
         // SAFETY: registering (or looking up) named clipboard formats.
         unsafe {
             Self {
-                cdx: RegisterClipboardFormatW(w!("ChemDraw Interchange Format")) as u16,
+                native: RegisterClipboardFormatW(&native) as u16,
                 embed_source: RegisterClipboardFormatW(w!("Embed Source")) as u16,
             }
         }
@@ -772,7 +962,7 @@ impl Formats {
         vec![
             f(CF_ENHMETAFILE.0, TYMED_ENHMF.0),
             f(CF_METAFILEPICT.0, TYMED_MFPICT.0),
-            f(self.cdx, TYMED_HGLOBAL.0),
+            f(self.native, TYMED_HGLOBAL.0),
             f(self.embed_source, TYMED_ISTORAGE.0),
         ]
     }
@@ -806,14 +996,14 @@ impl IDataObject_Impl for EmbeddedObject_Impl {
             "IDataObject::GetData cf={} tymed={} aspect={}",
             f.cfFormat, f.tymed, f.dwAspect
         ));
-        let formats = Formats::get();
+        let formats = Formats::get(self.kind());
         formats.check(f).ok()?;
         let cf = f.cfFormat;
         if cf == CF_ENHMETAFILE.0 {
-            let h = picture(self.state.borrow().molecule.as_ref());
+            let h = self.presentation(false);
             Ok(medium(TYMED_ENHMF.0, STGMEDIUM_0 { hEnhMetaFile: h }))
         } else if cf == CF_METAFILEPICT.0 {
-            let h = picture(self.state.borrow().molecule.as_ref());
+            let h = self.presentation(true);
             let pict = metafile_pict(h);
             // SAFETY: our own metafile, no longer needed once converted.
             unsafe {
@@ -825,8 +1015,8 @@ impl IDataObject_Impl for EmbeddedObject_Impl {
                     hMetaFilePict: pict?.0,
                 },
             ))
-        } else if cf == formats.cdx {
-            let g = global_bytes(&self.cdx_or_empty())?;
+        } else if cf == formats.native {
+            let g = global_bytes(&self.native_bytes())?;
             Ok(medium(TYMED_HGLOBAL.0, STGMEDIUM_0 { hGlobal: g }))
         } else {
             let stg = memory_storage()?;
@@ -847,7 +1037,7 @@ impl IDataObject_Impl for EmbeddedObject_Impl {
         // SAFETY: COM passes valid pointers (or null, refused).
         let (f, m) = unsafe { (pformatetc.as_ref(), pmedium.as_ref()) };
         let (f, m) = (f.ok_or(E_INVALIDARG)?, m.ok_or(E_INVALIDARG)?);
-        let formats = Formats::get();
+        let formats = Formats::get(self.kind());
         if f.cfFormat != formats.embed_source || m.tymed != TYMED_ISTORAGE.0 as u32 {
             return Err(DV_E_FORMATETC.into());
         }
@@ -859,7 +1049,7 @@ impl IDataObject_Impl for EmbeddedObject_Impl {
     fn QueryGetData(&self, pformatetc: *const FORMATETC) -> HRESULT {
         // SAFETY: as in GetData.
         match unsafe { pformatetc.as_ref() } {
-            Some(f) => Formats::get().check(f),
+            Some(f) => Formats::get(self.kind()).check(f),
             None => E_INVALIDARG,
         }
     }
@@ -886,7 +1076,7 @@ impl IDataObject_Impl for EmbeddedObject_Impl {
             return Err(E_NOTIMPL.into());
         }
         // SAFETY: the shell copies the array.
-        unsafe { SHCreateStdEnumFmtEtc(&Formats::get().list()) }
+        unsafe { SHCreateStdEnumFmtEtc(&Formats::get(self.kind()).list()) }
     }
 
     fn DAdvise(
@@ -960,9 +1150,22 @@ impl IPersistStorage_Impl for EmbeddedObject_Impl {
         super::log("IPersistStorage::Load");
         let stg = pstg.ok()?.clone();
         // SAFETY: reading the container's storage.
-        let (class, cdx) = unsafe { (ReadClassStg(&stg).ok(), read_stream(&stg, w!("CONTENTS"))) };
+        let class = unsafe { ReadClassStg(&stg).ok() }.filter(|c| *c != GUID::zeroed());
+        if class.map_or(self.kind() == Kind::Model3d, |c| c.to_u128() == CLSID_3D) {
+            let object = read_object_3d(&stg);
+            let mut st = self.state.borrow_mut();
+            st.kind = Kind::Model3d;
+            st.class = GUID::from_u128(CLSID_3D);
+            st.object3d = object;
+            st.storage = Some(stg);
+            st.dirty = false;
+            return Ok(());
+        }
+        // SAFETY: reading the container's storage.
+        let cdx = unsafe { read_stream(&stg, w!("CONTENTS")) };
         let mut st = self.state.borrow_mut();
-        if let Some(class) = class.filter(|c| *c != GUID::zeroed()) {
+        st.kind = Kind::Structure;
+        if let Some(class) = class {
             st.class = class;
         }
         st.molecule = cdx
@@ -1065,8 +1268,8 @@ impl IOleObject_Impl for EmbeddedObject_Impl {
                 });
                 rx.recv_timeout(CLOSE_REPLY_TIMEOUT).ok().flatten()
             };
-            if let Some(cdx) = reply {
-                self.set_contents(cdx);
+            if let Some(native) = reply {
+                self.set_native(native);
                 self.notify_changed();
             }
             self.end_session();
@@ -1144,7 +1347,7 @@ impl IOleObject_Impl for EmbeddedObject_Impl {
     fn EnumVerbs(&self) -> Result<IEnumOLEVERB> {
         // Our class's verbs, whatever class the object is stored as.
         // SAFETY: reads the registry.
-        unsafe { OleRegEnumVerbs(&GUID::from_u128(CLSID)) }
+        unsafe { OleRegEnumVerbs(&GUID::from_u128(self.kind().class())) }
     }
 
     fn Update(&self) -> Result<()> {
@@ -1164,12 +1367,13 @@ impl IOleObject_Impl for EmbeddedObject_Impl {
 
     fn GetUserType(&self, form: &USERCLASSTYPE) -> Result<PWSTR> {
         super::log("IOleObject::GetUserType");
+        let kind = self.kind();
         co_string(if *form == USERCLASSTYPE_SHORT {
-            super::user_type_short()
+            kind.user_type_short()
         } else if *form == USERCLASSTYPE_APPNAME {
             crate::APP_NAME
         } else {
-            super::user_type()
+            kind.user_type()
         })
     }
 
@@ -1183,7 +1387,7 @@ impl IOleObject_Impl for EmbeddedObject_Impl {
         if aspect != DVASPECT_CONTENT {
             return Err(E_INVALIDARG.into());
         }
-        let h = picture(self.state.borrow().molecule.as_ref());
+        let h = self.presentation(false);
         let size = picture_size(h);
         // SAFETY: our own metafile.
         unsafe {
@@ -1306,6 +1510,181 @@ mod tests {
             assert_eq!(ReadClassStg(&stg).unwrap(), class);
             assert_eq!(read_stream(&stg, w!("CONTENTS")).unwrap(), cdx);
         }
+    }
+
+    /// A 3D object with a picture: ethanol in spheres, a half-transparent dot drawn.
+    fn object_3d() -> Object3d {
+        let model = model3d::tests::ethanol();
+        let look = model3d::Look3d {
+            style: crate::ui::viewport3d::Style3d::Spheres,
+            ..Default::default()
+        };
+        let mut object = Object3d::new(&model, look, None).unwrap();
+        let mut rgba = vec![0u8; 8 * 6 * 4];
+        rgba[(3 * 8 + 3) * 4..(3 * 8 + 3) * 4 + 4].copy_from_slice(&[90, 30, 10, 160]);
+        object.set_picture(&crate::ui::viewport3d::Picture {
+            rgba,
+            width: 8,
+            height: 6,
+            px_per_point: 2.0,
+        });
+        object
+    }
+
+    /// The record types of an EMF.
+    fn emf_records(h: HENHMETAFILE) -> Vec<u32> {
+        // SAFETY: reading our own metafile into a buffer of its size.
+        let bits = unsafe {
+            let size = windows::Win32::Graphics::Gdi::GetEnhMetaFileBits(h, None) as usize;
+            let mut bits = vec![0u8; size];
+            windows::Win32::Graphics::Gdi::GetEnhMetaFileBits(h, Some(&mut bits));
+            bits
+        };
+        let mut out = Vec::new();
+        let mut at = 0;
+        while at + 8 <= bits.len() {
+            out.push(u32::from_le_bytes(bits[at..at + 4].try_into().unwrap()));
+            let len = u32::from_le_bytes(bits[at + 4..at + 8].try_into().unwrap()) as usize;
+            if len == 0 {
+                break;
+            }
+            at += len;
+        }
+        out
+    }
+
+    const ALPHABLEND: u32 = windows::Win32::Graphics::Gdi::EMR_ALPHABLEND.0;
+
+    #[test]
+    fn a_3d_object_storage_round_trips_its_model_look_and_picture() {
+        let object = object_3d();
+        let stg = memory_storage().unwrap();
+        write_object_3d(&stg, Some(&object)).unwrap();
+        // SAFETY: reading back our own storage.
+        unsafe {
+            assert_eq!(ReadClassStg(&stg).unwrap(), GUID::from_u128(CLSID_3D));
+            assert_eq!(
+                read_stream(&stg, w!("\u{1}CompObj")).unwrap(),
+                compobj::for_class(CLSID_3D)
+            );
+            assert_eq!(
+                read_stream(&stg, w!("CONTENTS")).unwrap(),
+                object.mol2.as_bytes()
+            );
+        }
+        assert_eq!(read_object_3d(&stg).unwrap(), object);
+
+        // A new object writes an empty CONTENTS: no model to read.
+        let empty = memory_storage().unwrap();
+        write_object_3d(&empty, None).unwrap();
+        assert_eq!(read_object_3d(&empty), None);
+    }
+
+    #[test]
+    fn a_3d_objects_presentation_is_transparent_and_sized_as_its_look() {
+        let object = object_3d();
+        let h = picture_3d(&object, false).unwrap();
+        let records = emf_records(h);
+        assert!(records.contains(&ALPHABLEND), "{records:?}");
+        let size = picture_size(h);
+        assert_eq!([size.cx, size.cy], object.look.extent);
+        // The Windows metafile is made from the opaque one.
+        let opaque = picture_3d(&object, true).unwrap();
+        assert!(!emf_records(opaque).contains(&ALPHABLEND));
+        let g = metafile_pict(opaque).unwrap();
+        // SAFETY: freeing what was made here.
+        unsafe {
+            let _ = DeleteEnhMetaFile(Some(h));
+            let _ = DeleteEnhMetaFile(Some(opaque));
+            let p = GlobalLock(g).cast::<METAFILEPICT>();
+            assert_eq!(((*p).xExt, (*p).yExt), (size.cx, size.cy));
+            let _ = windows::Win32::Graphics::Gdi::DeleteMetaFile((*p).hMF);
+            let _ = GlobalUnlock(g);
+            let _ = windows::Win32::Foundation::GlobalFree(Some(g));
+        }
+        let mut no_picture = object.clone();
+        no_picture.png.clear();
+        assert!(picture_3d(&no_picture, false).is_none());
+    }
+
+    /// The object a container loads from a 3D storage serves the model, its MOL2 and its
+    /// transparent picture, and saves them back; whichever class factory made it.
+    #[test]
+    fn an_embedded_3d_object_loads_serves_and_saves() {
+        // SAFETY: OLE on this test thread (the storages and data objects need it).
+        unsafe { OleInitialize(None) }.unwrap();
+        let object = object_3d();
+        let stg = memory_storage().unwrap();
+        write_object_3d(&stg, Some(&object)).unwrap();
+        let format = |cf: u16, tymed: i32| FORMATETC {
+            cfFormat: cf,
+            ptd: std::ptr::null_mut(),
+            dwAspect: DVASPECT_CONTENT.0,
+            lindex: -1,
+            tymed: tymed as u32,
+        };
+        for factory in [Kind::Model3d, Kind::Structure] {
+            let unknown: IUnknown = EmbeddedObject {
+                id: 1,
+                state: RefCell::new(ObjState::new(false, factory)),
+            }
+            .into();
+            let persist: IPersistStorage = unknown.cast().unwrap();
+            let data: IDataObject = unknown.cast().unwrap();
+            // SAFETY: COM calls on our own object, on this thread.
+            unsafe {
+                persist.Load(&stg).unwrap();
+                assert_eq!(persist.GetClassID().unwrap(), GUID::from_u128(CLSID_3D));
+                let mut medium = data
+                    .GetData(&format(CF_ENHMETAFILE.0, TYMED_ENHMF.0))
+                    .unwrap();
+                assert!(emf_records(medium.u.hEnhMetaFile).contains(&ALPHABLEND));
+                windows::Win32::System::Ole::ReleaseStgMedium(&mut medium);
+
+                let mol2 = RegisterClipboardFormatW(&HSTRING::from(model3d::MOL2_FORMAT_NAME));
+                let mut medium = data.GetData(&format(mol2 as u16, TYMED_HGLOBAL.0)).unwrap();
+                let g = medium.u.hGlobal;
+                let p = GlobalLock(g).cast::<u8>();
+                let bytes = std::slice::from_raw_parts(p, object.mol2.len());
+                assert_eq!(bytes, object.mol2.as_bytes());
+                let _ = GlobalUnlock(g);
+                windows::Win32::System::Ole::ReleaseStgMedium(&mut medium);
+
+                let cdx = RegisterClipboardFormatW(w!("ChemDraw Interchange Format"));
+                assert_eq!(
+                    data.QueryGetData(&format(cdx as u16, TYMED_HGLOBAL.0)),
+                    DV_E_FORMATETC
+                );
+                let saved = memory_storage().unwrap();
+                persist.Save(&saved, true).unwrap();
+                assert_eq!(read_object_3d(&saved).unwrap(), object);
+            }
+        }
+    }
+
+    #[test]
+    fn a_3d_update_without_a_picture_keeps_the_objects_own() {
+        let object = object_3d();
+        let stg = memory_storage().unwrap();
+        write_object_3d(&stg, Some(&object)).unwrap();
+        let com = ComObject::new(EmbeddedObject {
+            id: 2,
+            state: RefCell::new(ObjState::new(false, Kind::Model3d)),
+        });
+        let persist: IPersistStorage = com.to_interface();
+        // SAFETY: a COM call on our own object, on this thread.
+        unsafe { persist.Load(&stg).unwrap() };
+        let mut edited = object.clone();
+        edited.png.clear();
+        edited.look.extent = [1, 1];
+        edited.look.style = crate::ui::viewport3d::Style3d::Wireframe;
+        com.set_model(edited);
+        let st = com.state.borrow();
+        let now = st.object3d.as_ref().unwrap();
+        assert!(st.dirty);
+        assert_eq!(now.png, object.png);
+        assert_eq!(now.look.extent, object.look.extent);
+        assert_eq!(now.look.style, crate::ui::viewport3d::Style3d::Wireframe);
     }
 
     #[test]

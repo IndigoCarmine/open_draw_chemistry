@@ -11,6 +11,11 @@
 //! ChemDraw's class at this server (`TreatAs`); where ChemDraw is installed, nothing of
 //! ChemDraw's is touched and only this app's own class ([`CLSID`]) is registered.
 //!
+//! The 3D view is embedded the same way as an object of this app's own 3D class
+//! ([`CLSID_3D`], [`model3d`]): its native data is the model as MOL2, with the look (style,
+//! camera) beside it and a picture with a transparent background. Double-clicking it opens the
+//! model here in the 3D view; saving or closing writes it back.
+//!
 //! The COM objects live on their own single-threaded apartment thread ([`com`]); the egui app
 //! runs on the main thread. They talk through the channels in [`AppBridge`] / [`ServerSide`]
 //! (this module, platform independent so the app's side is unit-testable anywhere).
@@ -18,6 +23,9 @@
 #[cfg(windows)]
 pub mod com;
 pub mod compobj;
+pub mod model3d;
+#[cfg(windows)]
+pub mod picture;
 #[cfg(windows)]
 pub mod register;
 pub mod script;
@@ -83,6 +91,56 @@ pub const PROG_ID: &str = "OpenDrawChemistry.Document.1";
 pub const PROG_ID_CURRENT: &str = "OpenDrawChemistry.Document";
 /// ChemDraw's ProgIDs (32- and 64-bit ChemDraw); either registered means ChemDraw is installed.
 pub const CHEMDRAW_PROG_IDS: [&str; 2] = ["ChemDraw.Document.6.0", "ChemDraw_x64.Document.6.0"];
+/// This app's 3D model class, `{35DB705A-FE80-473D-AE65-0D392D4E2B72}`: the 3D view embedded
+/// in an Office document (see [`model3d`]).
+pub const CLSID_3D: u128 = 0x35DB705A_FE80_473D_AE65_0D392D4E2B72;
+/// The versioned ProgID of [`CLSID_3D`].
+pub const PROG_ID_3D: &str = "OpenDrawChemistry.Model3D.1";
+/// The version-independent ProgID of [`CLSID_3D`].
+pub const PROG_ID_3D_CURRENT: &str = "OpenDrawChemistry.Model3D";
+
+/// What an embedded object holds: a 2D structure (CDX) or a 3D model (MOL2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Structure,
+    Model3d,
+}
+
+impl Kind {
+    /// The kind of objects of class `clsid`.
+    pub fn of_class(clsid: u128) -> Self {
+        if clsid == CLSID_3D {
+            Kind::Model3d
+        } else {
+            Kind::Structure
+        }
+    }
+
+    /// The class verbs and names are registered under.
+    pub fn class(self) -> u128 {
+        match self {
+            Kind::Structure => CLSID,
+            Kind::Model3d => CLSID_3D,
+        }
+    }
+
+    /// The user type (what Insert Object lists), in the UI language.
+    pub fn user_type(self) -> &'static str {
+        match self {
+            Kind::Structure => user_type(),
+            Kind::Model3d => t!("ole.server.user_type_3d"),
+        }
+    }
+
+    /// The short user type (the object's verbs menu), in the UI language.
+    pub fn user_type_short(self) -> &'static str {
+        match self {
+            Kind::Structure => user_type_short(),
+            Kind::Model3d => t!("ole.server.user_type_3d_short"),
+        }
+    }
+}
+
 /// The user type of [`CLSID`] (what Insert Object lists), in the UI language.
 pub fn user_type() -> &'static str {
     t!("ole.server.user_type")
@@ -151,11 +209,18 @@ pub enum ToApp {
         cdx: Option<Vec<u8>>,
         host: HostNames,
     },
+    /// Show an embedded 3D model for editing in the 3D view (see [`ToApp::Open`]).
+    Open3d {
+        id: ObjectId,
+        /// The object's model and look; `None` for a newly inserted object.
+        object: Option<Box<model3d::Object3d>>,
+        host: HostNames,
+    },
     /// The container closes the object: remove its tab. When `reply` is set the container
-    /// wants unsaved changes: answer with the CDX when there are any, `None` otherwise.
+    /// wants unsaved changes: answer with them when there are any, `None` otherwise.
     Close {
         id: ObjectId,
-        reply: Option<Sender<Option<Vec<u8>>>>,
+        reply: Option<Sender<Option<Native>>>,
     },
     /// No embedded object is left in the server: a COM-launched process can end.
     Idle,
@@ -171,17 +236,37 @@ impl ToApp {
                 host.app,
                 host.document
             ),
+            ToApp::Open3d { id, object, host } => format!(
+                "open 3D {id} ({} bytes of MOL2) from {:?} / {:?}",
+                object.as_ref().map_or(0, |o| o.mol2.len()),
+                host.app,
+                host.document
+            ),
             ToApp::Close { id, reply } => format!("close {id} (save: {})", reply.is_some()),
             ToApp::Idle => "idle".to_owned(),
         }
     }
 }
 
+/// An object's contents as the app hands them back.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Native {
+    /// A 2D structure's CDX.
+    Cdx(Vec<u8>),
+    /// A 3D model with its look and picture.
+    Model3d(Box<model3d::Object3d>),
+}
+
 /// From the app to the COM server.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ToServer {
     /// The user saved: write this CDX into the object and tell the container.
     Update { id: ObjectId, cdx: Vec<u8> },
+    /// The same for a 3D model. An object without a picture keeps the one it has.
+    Update3d {
+        id: ObjectId,
+        object: Box<model3d::Object3d>,
+    },
     /// The object's tab was closed: the editing session is over.
     Closed { id: ObjectId },
     /// The app is exiting.
@@ -304,6 +389,19 @@ mod tests {
             "{41BA6D21-A02E-11CE-8FD9-0020AFD1F20C}"
         );
         assert_eq!(guid_string(CLSID), "{E14F99CE-3139-403D-8F25-1E80D9DA8AE2}");
+        assert_eq!(
+            guid_string(CLSID_3D),
+            "{35DB705A-FE80-473D-AE65-0D392D4E2B72}"
+        );
+    }
+
+    #[test]
+    fn the_3d_class_is_a_kind_of_its_own() {
+        assert_eq!(Kind::of_class(CLSID_3D), Kind::Model3d);
+        assert_eq!(Kind::of_class(CLSID), Kind::Structure);
+        assert_eq!(Kind::of_class(CHEMDRAW_CLSID), Kind::Structure);
+        assert_eq!(Kind::Model3d.class(), CLSID_3D);
+        assert_ne!(Kind::Model3d.user_type(), Kind::Structure.user_type());
     }
 
     #[test]

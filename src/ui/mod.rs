@@ -128,6 +128,10 @@ pub enum Command {
     Export3d(Export3d),
     /// Save the 3D view as a picture with a transparent background (PNG).
     Export3dImage,
+    /// Copy the 3D view: on Windows an OLE object (its picture with a transparent background,
+    /// the model as MOL2) that Office embeds and that opens here again for editing; elsewhere
+    /// the picture.
+    Copy3d,
     /// The force field the active document's next generation or optimisation uses.
     SetForceField(ForceField),
     About,
