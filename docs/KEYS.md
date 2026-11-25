@@ -46,7 +46,7 @@ Only the most used operations. The conditions are in the sections below.
 | `Ctrl`+`C` / `Ctrl`+`V` | Copy / Paste |
 | `Ctrl`+`K` | Start or stop Clean Up |
 | `Delete` | Bond tool: delete the atom or bond under the pointer. Select tool: delete the selection |
-| A letter key over an atom (Bond tool) | `o` OH, `n` NH₂, `a` benzene ring, `6` six-membered ring, `1` one more carbon, and so on ([table](#atom-keys)) |
+| A letter key over an atom (Bond tool) | `o` OH, `n` NH₂, `a` or `3` benzene ring, `6` six-membered ring, `1` one more carbon, and so on ([table](#atom-keys)) |
 | `1` / `2` / `3` over a bond (Bond tool) | Single / double / triple bond |
 | `` ` `` over an atom (Bond tool) | Open the label box. Type a fragment name, then `x` expands it into the structure |
 | Right-click a bond | Menu of bond types |
@@ -170,12 +170,11 @@ Capitals are typed with `Shift`. ● marks the keys that are also element keys (
 | Key | On an atom | ● |
 | --- | --- | --- |
 | `0`, `1` | Add one carbon | |
-| `3` | Add three carbons | |
 | `z` / `Z` | Add a zigzag chain of 2 / 4 carbons | |
 | `v` | Three-membered ring | |
 | `4`, `u` | Four-membered ring | |
 | `5` / `6` / `7` / `8` | Five- / six- / seven- / eight-membered ring | |
-| `a`, `P` | Benzene ring | |
+| `a`, `3`, `P` | Benzene ring | |
 | `2` | Oxo (=O) | |
 | `c`, `m` | Me (one carbon) | ● |
 | `e` | Et | |
@@ -208,6 +207,7 @@ Capitals are typed with `Shift`. ● marks the keys that are also element keys (
 - A group that begins with a heteroatom (`o`, `n`, …) replaces the element of the atom it is pressed on (`o` on a carbon makes that carbon the O of OH).
 - A skeleton that begins with carbon (rings, `e`, `A`, `Q`, …) leaves the atom's element alone (`a` on an N gives pyridine).
 - Pressing a ring key again draws the next ring on from the one just drawn.
+- `3` on an atom draws the same benzene ring as `a`; on a bond it still makes a triple bond ([bond keys](#bond-keys)). A `chembuilder_config.json` saved while `3` added three carbons is read with `3` as the benzene ring too.
 
 #### Bond keys
 
