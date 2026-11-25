@@ -279,15 +279,14 @@ These do not work in the Select tool: the [bond keys](#bond-keys), `x` (expand a
 | Arrow | `Shift`+drag | | Draw an arrow in any direction |
 | Arrow | Click | | Place an arrow of the default length pointing right |
 | Arrow | `Delete` / `Backspace` | Something is hovered or targeted by the keyboard | Delete it (as in the Bond tool) |
-| Curly arrow | Drag from an atom | | Draw a curly arrow from that atom's lone pair (drawn as two dots) to the atom or bond where the drag ends (to empty space: a free end). The arrow bends away from the structure and is left selected |
-| Curly arrow | Drag from a bond | | The same, from the bond's electrons. The tail stands on the bond toward the atom nearer the press: the atom the electrons stay with |
-| Curly arrow | `Shift` held at the release | Ending on an atom | The head points between that atom and the atom the arrow starts from (the bond being formed) |
+| Curly arrow | Drag from an atom | | A curly arrow from that atom's lone pair (drawn as two dots) to the atom or bond where the drag ends (to empty space: a free end). The arrow records what it means — its source and its target — and is drawn automatically from that, clear of the atoms, labels and bonds around it, following them when they move. It is left selected; the status bar shows its roles, e.g. `O: → C` |
+| Curly arrow | Drag from a bond | | The same, from the bond's electrons, moving onto the atom of the bond nearer the press. Pressed on C=O near O and released on H, it records C=O, O and H (`C=O → (O) → H`) and is drawn as an S: off the bond, round O on the outside, into H along the O···H bond being made |
+| Curly arrow | `Shift` held at the release | Ending on an atom | The target is the gap between that atom and the source's atom (the bond being formed) |
 | Curly arrow | Click | On a curly arrow | Select it alone, showing its handles |
-| Any tool | Drag the round handle in the middle of the selected curly arrow | One curly arrow, and nothing else, selected, still a plain arc | Bend it: the middle of the arc follows the pointer (across its ends, it bends the other way). `Shift`: keep it a plain arc, only its depth changing |
-| Any tool | Drag one of the two small ring handles (the Bézier control points, each on a thin line from its end of the curve) | One curly arrow selected | Shape it freely: an S, a long U or L round other atoms. The shape is kept relative to the arrow's ends, so it follows the atoms |
+| Any tool | Drag a small ring handle (a Bézier control point, on a thin line from its end of the curve) | One curly arrow selected | Shape it by hand: an S, a long U or L round other atoms. The shape is kept relative to the arrow's ends, so it follows the atoms. Reaction > Back to automatic shape gives the automatic shape back |
 | Any tool | Double-click the curve of a curly arrow | | Add a knot there (a square handle), splitting the curve into two pieces with handles of their own. Drag the knot to route the arrow |
-| Any tool | Double-click a knot / a control point | One curly arrow selected | Take the knot out / make the arrow a plain arc again |
-| Any tool | Drag the diamond handle at either end | One curly arrow selected | Re-point that end: onto an atom (a lone pair at the tail), a bond, or empty space (a free end). `Shift` at the release on an atom: the head points between that atom and the tail's |
+| Any tool | Double-click a knot / a control point | One curly arrow selected | Take the knot out / back to the automatic shape |
+| Any tool | Drag the diamond handle at either end | One curly arrow selected | Re-point that end, which changes what the arrow means: the source onto an atom (its lone pair) or a bond (onto the atom of it nearer the pointer), the target onto an atom, a bond or empty space (a free end). `Shift` at the release on an atom: the target is the gap between that atom and the source's. An automatic arrow is drawn anew |
 | Text | Click | On a text | Open that text's box |
 | Text | Click | Elsewhere | Open a new text box there |
 

@@ -15,6 +15,7 @@ tooltip = "言語 (Language)"
 
 [app.status]
 no_curly_arrow_selected = "反転する巻き矢印を選択してください"
+no_shaped_curly_arrow = "手で形を変えた巻き矢印を選択してください"
 open_failed = "{path} を開けませんでした: {error}"
 opened = "{name} を開きました"
 opened_summary = "{name} を開きました（{summary}）"
@@ -135,6 +136,7 @@ embedded_named = "{app} の埋め込み — {name}"
 assembly = "集合体"
 
 [status_bar]
+curly_arrow = "巻き矢印："
 tool = "ツール："
 element = "元素："
 counts = "原子 {atoms} · 結合 {bonds}"
@@ -189,6 +191,7 @@ add_equilibrium_arrow = "平衡矢印を追加"
 add_curly_arrow = "巻き矢印を追加（電子対）"
 add_fishhook_arrow = "片羽矢印を追加（電子 1 個）"
 flip_curly_arrow = "巻き矢印を反転"
+reset_curly_arrow = "自動の形に戻す"
 conditions_text = "反応条件のテキスト"
 insert_table = "反応表を挿入"
 

@@ -683,6 +683,14 @@ impl OpenDrawApp {
                     crate::ui::palette::select_curly_tool(&mut doc.editor, kind);
                 }
             }
+            Command::ResetCurlyArrows => {
+                let reset = self
+                    .active_doc_mut()
+                    .is_some_and(|doc| doc.editor.reset_selected_curly_shapes());
+                if !reset {
+                    self.status = t!("app.status.no_shaped_curly_arrow").to_string();
+                }
+            }
             Command::FlipCurlyArrows => {
                 let flipped = self
                     .active_doc_mut()

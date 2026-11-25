@@ -11,6 +11,7 @@ tooltip = "Язык (Language)"
 
 [app.status]
 no_curly_arrow_selected = "Выберите изогнутую стрелку для отражения"
+no_shaped_curly_arrow = "Выберите изогнутую стрелку, форма которой задана вручную"
 open_failed = "Не удалось открыть {path}: {error}"
 opened = "Открыт файл {name}"
 opened_summary = "Открыт файл {name} ({summary})"
@@ -98,6 +99,7 @@ embedded_named = "Внедрено в {app} — {name}"
 assembly = "Ансамбль"
 
 [status_bar]
+curly_arrow = "Изогнутая стрелка: "
 tool = "Инструмент: "
 element = "Элемент: "
 counts = "Атомы {atoms} · Связи {bonds}"
@@ -152,6 +154,7 @@ add_equilibrium_arrow = "Добавить равновесную стрелку"
 add_curly_arrow = "Добавить изогнутую стрелку (электронная пара)"
 add_fishhook_arrow = "Добавить стрелку-крючок (один электрон)"
 flip_curly_arrow = "Отразить изгиб стрелки"
+reset_curly_arrow = "Вернуть автоматическую форму"
 conditions_text = "Текст условий реакции"
 insert_table = "Вставить таблицу реакции"
 

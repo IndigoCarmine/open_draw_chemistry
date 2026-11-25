@@ -11,6 +11,7 @@ tooltip = "Sprache (Language)"
 
 [app.status]
 no_curly_arrow_selected = "Wählen Sie einen gebogenen Pfeil zum Umkehren aus"
+no_shaped_curly_arrow = "Wählen Sie einen von Hand geformten gebogenen Pfeil aus"
 open_failed = "{path} konnte nicht geöffnet werden: {error}"
 opened = "{name} geöffnet"
 opened_summary = "{name} geöffnet ({summary})"
@@ -98,6 +99,7 @@ embedded_named = "Eingebettet in {app} — {name}"
 assembly = "Aggregat"
 
 [status_bar]
+curly_arrow = "Gebogener Pfeil: "
 tool = "Werkzeug: "
 element = "Element: "
 counts = "Atome {atoms} · Bindungen {bonds}"
@@ -152,6 +154,7 @@ add_equilibrium_arrow = "Gleichgewichtspfeil hinzufügen"
 add_curly_arrow = "Gebogenen Pfeil hinzufügen (Elektronenpaar)"
 add_fishhook_arrow = "Halbpfeil hinzufügen (ein Elektron)"
 flip_curly_arrow = "Krümmung des Pfeils umkehren"
+reset_curly_arrow = "Automatische Form wiederherstellen"
 conditions_text = "Text für Reaktionsbedingungen"
 insert_table = "Reaktionstabelle einfügen"
 

@@ -19,6 +19,7 @@ tooltip = "語言 (Language)"
 
 [app.status]
 no_curly_arrow_selected = "請選擇要翻轉的彎箭頭"
+no_shaped_curly_arrow = "請選擇手動調整過形狀的彎箭頭"
 open_failed = "無法開啟 {path}：{error}"
 opened = "已開啟 {name}"
 opened_summary = "已開啟 {name}（{summary}）"
@@ -109,6 +110,7 @@ embedded_named = "內嵌於 {app} — {name}"
 assembly = "組裝體"
 
 [status_bar]
+curly_arrow = "彎箭頭："
 tool = "工具："
 element = "元素："
 counts = "原子 {atoms} · 鍵 {bonds}"
@@ -163,6 +165,7 @@ add_equilibrium_arrow = "新增平衡箭頭"
 add_curly_arrow = "新增彎箭頭（電子對）"
 add_fishhook_arrow = "新增魚鉤箭頭（單電子）"
 flip_curly_arrow = "翻轉彎箭頭"
+reset_curly_arrow = "恢復自動形狀"
 conditions_text = "反應條件文字"
 insert_table = "插入反應表"
 

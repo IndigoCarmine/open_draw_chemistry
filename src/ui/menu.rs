@@ -317,6 +317,10 @@ pub fn menu_bar(
                         t!("menu.reaction.flip_curly_arrow"),
                         Command::FlipCurlyArrows,
                     ),
+                    (
+                        t!("menu.reaction.reset_curly_arrow"),
+                        Command::ResetCurlyArrows,
+                    ),
                 ] {
                     item(ui, label, "", state.has_document, command, out);
                 }

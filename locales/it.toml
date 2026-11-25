@@ -14,6 +14,7 @@ tooltip = "Lingua (Language)"
 
 [app.status]
 no_curly_arrow_selected = "Seleziona una freccia curva da invertire"
+no_shaped_curly_arrow = "Seleziona una freccia curva modellata a mano"
 open_failed = "Impossibile aprire {path}: {error}"
 opened = "Aperto: {name}"
 opened_summary = "Aperto: {name} ({summary})"
@@ -101,6 +102,7 @@ embedded_named = "Incorporato in {app} — {name}"
 assembly = "Assemblaggio"
 
 [status_bar]
+curly_arrow = "Freccia curva: "
 tool = "Strumento: "
 element = "Elemento: "
 counts = "Atomi {atoms} · Legami {bonds}"
@@ -155,6 +157,7 @@ add_equilibrium_arrow = "Aggiungi freccia di equilibrio"
 add_curly_arrow = "Aggiungi freccia curva (coppia di elettroni)"
 add_fishhook_arrow = "Aggiungi freccia ad amo (un elettrone)"
 flip_curly_arrow = "Inverti la curvatura della freccia"
+reset_curly_arrow = "Torna alla forma automatica"
 conditions_text = "Testo delle condizioni di reazione"
 insert_table = "Inserisci tabella di reazione"
 

@@ -100,11 +100,11 @@ pub fn paste_drawing(editor: &mut ChemStructEditor, pasted: &Molecule) -> bool {
                     let atom = |id: u32| atoms.get(&id).copied();
                     let moved = match e {
                         CurlyEnd::Atom(a) => atom(a).map(CurlyEnd::Atom),
-                        CurlyEnd::Bond { bond, side } => pasted.bond_by_id(bond).and_then(|b| {
+                        CurlyEnd::Bond { bond, onto } => pasted.bond_by_id(bond).and_then(|b| {
                             let bond = mol.bond_between(atom(b.begin)?, atom(b.end)?)?.id;
                             Some(CurlyEnd::Bond {
                                 bond,
-                                side: atom(side)?,
+                                onto: atom(onto)?,
                             })
                         }),
                         CurlyEnd::Between(a, b) => {
@@ -117,8 +117,8 @@ pub fn paste_drawing(editor: &mut ChemStructEditor, pasted: &Molecule) -> bool {
                         CurlyEnd::Point([p[0] + delta[0], p[1] + delta[1]])
                     })
                 };
-                c.tail = end(c.tail, path.as_ref().map(|p| p.tail));
-                c.head = end(c.head, path.as_ref().map(|p| p.head));
+                c.from = end(c.from, path.as_ref().map(|p| p.tail));
+                c.to = end(c.to, path.as_ref().map(|p| p.head));
             }
         }
         let old = object.id();

@@ -34,6 +34,8 @@ tooltip = "Language"
 [app.status]
 # Reaction > Flip curly arrow with no curly arrow selected.
 no_curly_arrow_selected = "Select a curly arrow to flip"
+# Reaction > Back to automatic shape with no hand-shaped curly arrow selected.
+no_shaped_curly_arrow = "Select a curly arrow shaped by hand"
 # Status bar messages. {path} is a file path, {error} the reason it failed.
 open_failed = "Could not open {path}: {error}"
 # {name} is the opened document's title (usually its file name).
@@ -197,6 +199,8 @@ embedded_named = "Embedded in {app} — {name}"
 assembly = "Assembly"
 
 [status_bar]
+# Before the roles of the selected curly arrow, e.g. "C=O → (O) → H".
+curly_arrow = "Curly arrow: "
 # Label before the current drawing tool's name.
 tool = "Tool: "
 # Label before the current element symbol.
@@ -263,6 +267,8 @@ add_curly_arrow = "Add curly arrow (electron pair)"
 add_fishhook_arrow = "Add fish-hook arrow (one electron)"
 # Makes the selected curly arrows bend to the other side.
 flip_curly_arrow = "Flip curly arrow"
+# Lets the selected curly arrows be drawn automatically again, dropping a shape set by hand.
+reset_curly_arrow = "Back to automatic shape"
 # Text tool for the reaction conditions written over/under an arrow.
 conditions_text = "Reaction conditions text"
 insert_table = "Insert reaction table"
