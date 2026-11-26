@@ -1053,6 +1053,7 @@ mod tests {
                 },
             ],
             force_field: ForceField::Uff,
+            solvation: crate::three_d::Solvation::default(),
             energy: 1.0,
             energy_unit: "kJ/mol".to_owned(),
             formula: "C2H2".to_owned(),
@@ -1312,7 +1313,13 @@ mod tests {
         .collect();
         let mol = crate::three_d::read_molfile(&crate::scan::energy::molfile(&atoms, &bonds))
             .expect("molfile");
-        crate::three_d::assemble(&mol, &mol.coords, ForceField::Uff, 1.0)
+        crate::three_d::assemble(
+            &mol,
+            &mol.coords,
+            ForceField::Uff,
+            crate::three_d::Solvation::default(),
+            1.0,
+        )
     }
 
     /// The model is whole: every bond joins two of its atoms, and its molfile, formula and
@@ -1386,8 +1393,14 @@ mod tests {
         assert_eq!(edit.undo_label(), Some(t!("three_d.edit.undo_delete")));
         assert!(edit.report.as_ref().is_some_and(|(_, problem)| !*problem));
         // The force field still takes it.
-        assert!(crate::three_d::energy(&m, ForceField::Uff).is_ok());
-        assert!(crate::three_d::energy(&m, ForceField::Mmff94).is_ok());
+        assert!(
+            crate::three_d::energy(&m, ForceField::Uff, crate::three_d::Solvation::default())
+                .is_ok()
+        );
+        assert!(
+            crate::three_d::energy(&m, ForceField::Mmff94, crate::three_d::Solvation::default())
+                .is_ok()
+        );
 
         // One undo puts everything back, one redo deletes again.
         let after = m.clone();
@@ -1443,8 +1456,12 @@ mod tests {
         // The open valences are left as they are: an optimisation keeps the same atoms, so it
         // stays one step of the same history.
         for ff in ForceField::ALL {
-            assert!(crate::three_d::energy(&m, ff).is_ok(), "{ff}");
-            let relaxed = crate::three_d::optimize(&m, ff).expect("optimises");
+            assert!(
+                crate::three_d::energy(&m, ff, crate::three_d::Solvation::default()).is_ok(),
+                "{ff}"
+            );
+            let relaxed = crate::three_d::optimize(&m, ff, crate::three_d::Solvation::default())
+                .expect("optimises");
             assert_eq!(relaxed.formula, "C2H6O2", "{ff}");
         }
     }
@@ -1522,7 +1539,12 @@ mod tests {
     /// Pentane as the 3D view generates it: C0–C4 in a chain, then their hydrogens.
     fn pentane() -> Model3d {
         let drawn = include_str!("../../tests/data/drawn/pentane.mol");
-        let m = crate::three_d::generate_from_molfile(drawn, ForceField::Uff).expect("pentane");
+        let m = crate::three_d::generate_from_molfile(
+            drawn,
+            ForceField::Uff,
+            crate::three_d::Solvation::default(),
+        )
+        .expect("pentane");
         assert_eq!(m.formula, "C5H12");
         assert!(m.atoms[..5].iter().all(|a| a.element == "C"));
         m
@@ -1566,7 +1588,10 @@ mod tests {
         let read = crate::three_d::read_molfile(&m.molfile).expect("reads");
         assert_eq!(crate::three_d::engine::fragment_count(&read), 2);
         for ff in ForceField::ALL {
-            assert!(crate::three_d::energy(&m, ff).is_ok(), "{ff}");
+            assert!(
+                crate::three_d::energy(&m, ff, crate::three_d::Solvation::default()).is_ok(),
+                "{ff}"
+            );
         }
 
         // One of them is dragged away; the other stays.
@@ -1609,7 +1634,12 @@ mod tests {
         assert_eq!(separate_molecule(&m, 0), None);
         // A ring opened: still one chain.
         let drawn = include_str!("../../tests/data/drawn/benzene.mol");
-        let mut ring = crate::three_d::generate_from_molfile(drawn, ForceField::Uff).unwrap();
+        let mut ring = crate::three_d::generate_from_molfile(
+            drawn,
+            ForceField::Uff,
+            crate::three_d::Solvation::default(),
+        )
+        .unwrap();
         assert!(delete_atoms(&mut ring, &mut Edit3d::default(), &[0]));
         assert_consistent(&ring);
         assert_eq!(molecules(&ring).len(), 1);

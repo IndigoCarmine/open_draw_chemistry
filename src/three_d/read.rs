@@ -289,12 +289,18 @@ mod engine {
         let (force_field, energy) = [ForceField::default(), ForceField::Uff]
             .into_iter()
             .find_map(|ff| {
-                let field = three_d::field(mol, ff, &[]).ok()?;
+                let field = three_d::field(mol, ff, three_d::Solvation::default(), &[]).ok()?;
                 let e = field.energy(&mol.flat_coords());
                 e.is_finite().then_some((ff, e))
             })
             .unwrap_or((ForceField::default(), f64::NAN));
-        three_d::assemble(mol, &mol.coords, force_field, energy)
+        three_d::assemble(
+            mol,
+            &mol.coords,
+            force_field,
+            three_d::Solvation::default(),
+            energy,
+        )
     }
 
     /// Whether atom `i` is a hydrogen the drawing leaves to its neighbour's label: one bonded

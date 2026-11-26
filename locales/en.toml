@@ -799,6 +799,14 @@ no_clashes = "No atom clashes"
 # {a} and {b} are atom names such as "C3", {distance} a number in Å.
 clashes = { one = "{n} atom clash (closest {a}···{b} {distance} Å) — structure optimization can resolve it", other = "{n} atom clashes (closest {a}···{b} {distance} Å) — structure optimization can resolve them" }
 force_field = "Force field"
+# The medium MMFF's electrostatics are computed in (a list of solvents, each with its ε).
+solvent = "Solvent"
+solvent_tip = "Screen the charges by the solvent's dielectric constant ε (MMFF only): a continuum's screening, without cavity or solvation energy terms"
+# Check box: the dielectric grows with the distance between the charges (ε·r).
+distance_dependent = "Distance-dependent (ε·r)"
+distance_dependent_tip = "Use a distance-dependent dielectric ε·r instead of a constant ε, so charges far apart are screened more"
+# Shown on the greyed-out solvent controls while UFF is chosen.
+solvent_uff_hint = "UFF has no electrostatics, so the solvent has no effect; choose MMFF94 or MMFF94s"
 # Button: build the 3D model again from the 2D drawing.
 regenerate = "Regenerate from 2D"
 regenerate_tip = "Rebuild the 3D model from the 2D structure"
@@ -837,6 +845,24 @@ copy_object = "Copy"
 copy_object_tip = "Copy the view (Ctrl+C): pastes into Word, PowerPoint and Excel as an object with a transparent background that opens here again for editing"
 # Its tooltip on other systems.
 copy_image_tip = "Copy the view as a picture with a transparent background (Ctrl+C)"
+
+# The solvents MMFF's charges can be screened by (shown with their dielectric constant ε).
+[three_d.solvent]
+vacuum = "Vacuum"
+hexane = "Hexane"
+toluene = "Toluene"
+diethyl_ether = "Diethyl ether"
+chloroform = "Chloroform"
+ethyl_acetate = "Ethyl acetate"
+thf = "THF"
+dichloromethane = "Dichloromethane"
+acetone = "Acetone"
+ethanol = "Ethanol"
+methanol = "Methanol"
+acetonitrile = "Acetonitrile"
+dmf = "DMF"
+dmso = "DMSO"
+water = "Water"
 
 [three_d.edit]
 # Kinds of optimization constraint, shown before the atoms they apply to.
@@ -1391,6 +1417,7 @@ slice_at_minimum_tip = "Move every slice to the values of the lowest point"
 # Tooltip line of a plotted point that is the lowest over some parameters; {axes}: their names.
 projected = "Lowest over {axes}"
 force_field = "Force field"
+solvent = "Solvent"
 # {total}: number of grid points; {atoms}: number of atoms; {unit}: energy unit such as kcal/mol.
 summary = "Points: {total} · atoms: {atoms} · single-point energy at each point, no optimization ({unit})"
 crystal_note = "Crystals are computed without periodic boundaries (the force fields do not support periodic systems, so this is the energy of the finite supercell that was built)"
@@ -1670,6 +1697,7 @@ rmsd_tip = "Conformers whose heavy atoms superpose within this are counted as on
 energy_window = "Energy window"
 energy_window_tip = "Keep conformers at most this far above the lowest (0: keep all)"
 force_field = "Force field"
+solvent = "Solvent"
 seed = "Random seed"
 seed_tip = "The same seed gives the same search"
 no_model = "Generate a 3D model first"

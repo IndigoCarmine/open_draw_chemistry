@@ -2,7 +2,7 @@
 //! (an arrow from the donor to the metal), from 2D to 3D.
 
 use chembuider_rs::{BondOrder, BondStereo, Config, Molecule};
-use open_draw_chemistry::three_d::{self, ForceField, Model3d};
+use open_draw_chemistry::three_d::{self, ForceField, Model3d, Solvation};
 
 /// 1,10-Phenanthroline in a frame of its own: its nitrogens on the u axis either side of the
 /// origin, the rings above them (v > 0). Kekulé bonds.
@@ -136,6 +136,7 @@ fn iron_tris_phenanthroline_is_built_octahedral() {
         &fe_phen3(BondStereo::Dative),
         &Config::default(),
         ForceField::default(),
+        Solvation::default(),
     )
     .unwrap();
     assert_eq!(model.force_field, ForceField::Uff);
@@ -176,7 +177,13 @@ fn ammine_ligands_keep_their_hydrogens() {
         let bond = mol.add_bond(n, co, BondOrder::Single);
         mol.bonds.iter_mut().find(|b| b.id == bond).unwrap().stereo = BondStereo::Dative;
     }
-    let model = three_d::generate(&mol, &Config::default(), ForceField::Uff).unwrap();
+    let model = three_d::generate(
+        &mol,
+        &Config::default(),
+        ForceField::Uff,
+        Solvation::default(),
+    )
+    .unwrap();
     assert_eq!(model.formula, "CoH18N6", "three hydrogens on each nitrogen");
 
     // Arrows drawn the wrong way round, from the cobalt, mean the same complex.
@@ -184,7 +191,13 @@ fn ammine_ligands_keep_their_hydrogens() {
     for b in &mut reversed.bonds {
         std::mem::swap(&mut b.begin, &mut b.end);
     }
-    let back = three_d::generate(&reversed, &Config::default(), ForceField::Uff).unwrap();
+    let back = three_d::generate(
+        &reversed,
+        &Config::default(),
+        ForceField::Uff,
+        Solvation::default(),
+    )
+    .unwrap();
     assert_eq!(back.formula, "CoH18N6", "arrows from the cobalt");
     let co = atoms_of(&model, "Co")[0];
     let n = atoms_of(&model, "N");
@@ -220,8 +233,13 @@ fn however_the_iron_is_drawn_it_stays_on_its_ligands() {
                     }
                 }
                 let what = format!("Fe{charge:+}, reversed {reversed}, {stereo:?}");
-                let model = three_d::generate(&mol, &Config::default(), ForceField::Uff)
-                    .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+                let model = three_d::generate(
+                    &mol,
+                    &Config::default(),
+                    ForceField::Uff,
+                    Solvation::default(),
+                )
+                .unwrap_or_else(|e| panic!("{what}: {e:?}"));
                 assert_eq!(model.formula, "C36H24FeN6", "{what}");
                 let fe = atoms_of(&model, "Fe")[0];
                 for n in atoms_of(&model, "N") {

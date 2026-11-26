@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use molecule_optimizer_rs::calc::assembly::geometric_schedule;
 use molecule_optimizer_rs::calc::{self, OptimizeOptions};
 use molecule_optimizer_rs::distgeom::EmbedParams;
-use molecule_optimizer_rs::ff::mmff::{MmffBuilder, MmffVariant};
+use molecule_optimizer_rs::ff::mmff::{DielectricModel, MmffBuilder, MmffVariant};
 use molecule_optimizer_rs::ff::softcore::{SoftCoreBuilder, SoftCoreParams};
 use molecule_optimizer_rs::ff::uff::UffBuilder;
 use molecule_optimizer_rs::ff::{self, ForceField as Field, ForceFieldBuilder};
@@ -18,7 +18,7 @@ use molecule_optimizer_rs::io::{self, Format};
 use molecule_optimizer_rs::optim::{self, IterationInfo, MinimizeOptions, MinimizeStatus};
 use molecule_optimizer_rs::{BondOrder, Molecule};
 
-use super::{Atom3d, Bond3d, Constraint, Error, Export3d, ForceField, Model3d};
+use super::{Atom3d, Bond3d, Constraint, Error, Export3d, ForceField, Model3d, Solvation};
 
 /// The embedding seeds tried in turn until one gives a usable model.
 const SEEDS: [i32; 3] = [42, 7, 1234];
@@ -51,13 +51,19 @@ pub(crate) fn read(molfile: &str) -> Result<Molecule, Error> {
     io::read_molfile(molfile).map_err(|_| Error::Unreadable)
 }
 
-/// MMFF94 or MMFF94s as the app sets them up: no cutoff, the molecules' interactions on.
-fn mmff_builder(variant: MmffVariant) -> MmffBuilder {
+/// MMFF94 or MMFF94s as the app sets them up: no cutoff, the molecules' interactions on, the
+/// charges screened by `solvation`'s dielectric. A vacuum leaves MMFF's own (ε a constant 1).
+fn mmff_builder(variant: MmffVariant, solvation: Solvation) -> MmffBuilder {
     MmffBuilder {
         variant,
         nonbonded_thresh: NO_CUTOFF,
         ignore_interfrag_interactions: false,
-        ..MmffBuilder::default()
+        dielectric_constant: solvation.solvent.dielectric(),
+        dielectric_model: if solvation.distance_dependent {
+            DielectricModel::Distance
+        } else {
+            DielectricModel::Constant
+        },
     }
 }
 
@@ -69,12 +75,20 @@ fn uff_builder() -> UffBuilder {
     }
 }
 
-/// The library's builder for `force_field`.
-fn builder(force_field: ForceField) -> Box<dyn ForceFieldBuilder> {
+/// The MMFF variant `force_field` is, or `None` for UFF.
+fn mmff_variant(force_field: ForceField) -> Option<MmffVariant> {
     match force_field {
-        ForceField::Mmff94 => Box::new(mmff_builder(MmffVariant::Mmff94)),
-        ForceField::Mmff94s => Box::new(mmff_builder(MmffVariant::Mmff94s)),
-        ForceField::Uff => Box::new(TypedUff(uff_builder())),
+        ForceField::Mmff94 => Some(MmffVariant::Mmff94),
+        ForceField::Mmff94s => Some(MmffVariant::Mmff94s),
+        ForceField::Uff => None,
+    }
+}
+
+/// The library's builder for `force_field` in `solvation` (which UFF ignores).
+fn builder(force_field: ForceField, solvation: Solvation) -> Box<dyn ForceFieldBuilder> {
+    match mmff_variant(force_field) {
+        Some(variant) => Box::new(mmff_builder(variant, solvation)),
+        None => Box::new(TypedUff(uff_builder())),
     }
 }
 
@@ -143,23 +157,27 @@ impl ForceFieldBuilder for TypedUff {
 
 /// The library's builder for `force_field`, shareable across threads: what a conformer search
 /// (see `crate::conformer`) minimises every conformer with, so its energies are the app's.
-pub(crate) fn shared_builder(force_field: ForceField) -> std::sync::Arc<dyn ForceFieldBuilder> {
-    std::sync::Arc::from(builder(force_field))
+pub(crate) fn shared_builder(
+    force_field: ForceField,
+    solvation: Solvation,
+) -> std::sync::Arc<dyn ForceFieldBuilder> {
+    std::sync::Arc::from(builder(force_field, solvation))
 }
 
 /// [`shared_builder`] whose every force field also holds `constraints`: a conformer search
 /// builds its one field itself, without restraints, so they ride in on the builder.
 pub(crate) fn restrained_builder(
     force_field: ForceField,
+    solvation: Solvation,
     constraints: &[Constraint],
     atoms: usize,
 ) -> std::sync::Arc<dyn ForceFieldBuilder> {
     let held = restraints(constraints, atoms);
     if held.is_empty() {
-        return shared_builder(force_field);
+        return shared_builder(force_field, solvation);
     }
     std::sync::Arc::new(Restrained {
-        inner: builder(force_field),
+        inner: builder(force_field, solvation),
         held,
     })
 }
@@ -215,14 +233,15 @@ pub(crate) fn restraint_energy(
     penalty.energy(&flat)
 }
 
-/// `force_field` set up for `mol` holding `constraints`, or [`Error::ForceField`] when it has
-/// no type or parameter for one of its atoms.
+/// `force_field` in `solvation` set up for `mol` holding `constraints`, or
+/// [`Error::ForceField`] when it has no type or parameter for one of its atoms.
 pub(crate) fn field(
     mol: &Molecule,
     force_field: ForceField,
+    solvation: Solvation,
     constraints: &[Constraint],
 ) -> Result<Box<dyn Field>, Error> {
-    builder(force_field)
+    builder(force_field, solvation)
         .build_dyn(mol, &restraints(constraints, mol.num_atoms()))
         .map_err(|_| Error::ForceField(force_field))
 }
@@ -293,8 +312,9 @@ impl StallWatch {
     }
 }
 
-/// Minimise `mol` from `coords` under `force_field` holding `constraints`, for at most `steps`
-/// iterations of the library's BFGS in all, looking at `cancel` (if any) after every one.
+/// Minimise `mol` from `coords` under `force_field` in `solvation` holding `constraints`, for
+/// at most `steps` iterations of the library's BFGS in all, looking at `cancel` (if any) after
+/// every one.
 ///
 /// BFGS stops on RDKit's convergence test, which scales the gradient by the energy and the
 /// coordinates: on a large, restrained structure it can stop on a slope that still leads half
@@ -312,11 +332,12 @@ pub(crate) fn relax(
     mol: &Molecule,
     coords: &[[f64; 3]],
     force_field: ForceField,
+    solvation: Solvation,
     constraints: &[Constraint],
     steps: u32,
     cancel: Option<&AtomicBool>,
 ) -> Result<Relaxed, Error> {
-    let builder = builder(force_field);
+    let builder = builder(force_field, solvation);
     let constraints = restraints(constraints, mol.num_atoms());
     let failed = || Error::ForceField(force_field);
     let mut left = steps.max(1) as usize;
@@ -392,11 +413,14 @@ pub(crate) fn fragment_count(mol: &Molecule) -> usize {
 /// [`SOFT_CORE_STEPS`] steps, the whole structure minimised by gradient (BFGS) for up to
 /// `steps` iterations at every step; then it is minimised as usual ([`relax`]) for up to
 /// `steps` more. Each molecule stays flexible; `constraints` hold throughout. `stage` hears of
-/// each step as it starts. The energy is the plain force field's.
+/// each step as it starts. The energy is the plain force field's, in `solvation` (whose
+/// dielectric the soft-core electrostatics share).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn soft_core(
     mol: &Molecule,
     coords: &[[f64; 3]],
     force_field: ForceField,
+    solvation: Solvation,
     constraints: &[Constraint],
     steps: u32,
     cancel: Option<&AtomicBool>,
@@ -409,18 +433,11 @@ pub(crate) fn soft_core(
     let held = restraints(constraints, mol.num_atoms());
     let mut placed = mol.clone();
     placed.coords = coords.to_vec();
-    let built = match force_field {
-        ForceField::Mmff94 | ForceField::Mmff94s => {
-            let variant = if force_field == ForceField::Mmff94 {
-                MmffVariant::Mmff94
-            } else {
-                MmffVariant::Mmff94s
-            };
-            SoftCoreBuilder::new(mmff_builder(variant))
-                .with_params(params)
-                .build_with_handle(&placed, &held)
-        }
-        ForceField::Uff => SoftCoreBuilder::new(uff_builder())
+    let built = match mmff_variant(force_field) {
+        Some(variant) => SoftCoreBuilder::new(mmff_builder(variant, solvation))
+            .with_params(params)
+            .build_with_handle(&placed, &held),
+        None => SoftCoreBuilder::new(uff_builder())
             .with_params(params)
             .build_with_handle(&placed, &held),
     };
@@ -455,7 +472,15 @@ pub(crate) fn soft_core(
     }
     stage(SoftCoreStage::Final);
     let built: Vec<[f64; 3]> = pos.as_chunks::<3>().0.to_vec();
-    relax(mol, &built, force_field, constraints, steps, cancel)
+    relax(
+        mol,
+        &built,
+        force_field,
+        solvation,
+        constraints,
+        steps,
+        cancel,
+    )
 }
 
 /// [`relax`] where nothing cancels it: Generate and Optimize run to the end.
@@ -463,10 +488,19 @@ fn relax_all(
     mol: &Molecule,
     coords: &[[f64; 3]],
     force_field: ForceField,
+    solvation: Solvation,
     constraints: &[Constraint],
     steps: u32,
 ) -> Result<(Vec<[f64; 3]>, f64), Error> {
-    match relax(mol, coords, force_field, constraints, steps, None)? {
+    match relax(
+        mol,
+        coords,
+        force_field,
+        solvation,
+        constraints,
+        steps,
+        None,
+    )? {
         Relaxed::Done { coords, energy, .. } => Ok((coords, energy)),
         Relaxed::Cancelled => unreachable!("nothing raises the flag"),
     }
@@ -485,9 +519,14 @@ pub(crate) fn descend(field: &dyn Field, pos: &mut [f64], steps: u32) -> u32 {
 }
 
 /// Build a 3D model from a 2D molfile: add the hydrogens, embed the structure with ETKDG (the
-/// stereo its wedges and double bonds show kept), then relax it under `force_field` for up to
-/// [`GENERATE_BUDGET`] × `steps` iterations.
-pub fn generate(molfile: &str, force_field: ForceField, steps: u32) -> Result<Model3d, Error> {
+/// stereo its wedges and double bonds show kept), then relax it under `force_field` in
+/// `solvation` for up to [`GENERATE_BUDGET`] × `steps` iterations.
+pub fn generate(
+    molfile: &str,
+    force_field: ForceField,
+    solvation: Solvation,
+    steps: u32,
+) -> Result<Model3d, Error> {
     let drawing = read(molfile)?;
     let mut last = Error::GenerationFailed;
     for seed in SEEDS {
@@ -496,8 +535,9 @@ pub fn generate(molfile: &str, force_field: ForceField, steps: u32) -> Result<Mo
             continue;
         };
         let budget = steps.saturating_mul(GENERATE_BUDGET);
-        let (coords, energy) = relax_all(&built, &built.coords, force_field, &[], budget)?;
-        match model(&built, &coords, force_field, energy) {
+        let (coords, energy) =
+            relax_all(&built, &built.coords, force_field, solvation, &[], budget)?;
+        match model(&built, &coords, force_field, solvation, energy) {
             // An sp³ centre left straight is a saddle point the minimiser cannot leave; another
             // embedding does not start there.
             Ok(model) if has_straightened_centre(&model) => last = Error::GenerationFailed,
@@ -571,6 +611,7 @@ fn has_straightened_centre(model: &Model3d) -> bool {
 pub fn optimize(
     molfile: &str,
     force_field: ForceField,
+    solvation: Solvation,
     steps: u32,
     constraints: &[Constraint],
 ) -> Result<Model3d, Error> {
@@ -580,14 +621,21 @@ pub fn optimize(
     } else {
         steps.saturating_mul(RESTRAINED_BUDGET)
     };
-    let (coords, energy) = relax_all(&mol, &mol.coords, force_field, constraints, steps)?;
-    model(&mol, &coords, force_field, energy)
+    let (coords, energy) = relax_all(
+        &mol,
+        &mol.coords,
+        force_field,
+        solvation,
+        constraints,
+        steps,
+    )?;
+    model(&mol, &coords, force_field, solvation, energy)
 }
 
-/// The single-point energy of a model's geometry (kcal/mol).
-pub fn energy(molfile: &str, force_field: ForceField) -> Result<f64, Error> {
+/// The single-point energy of a model's geometry (kcal/mol) in `solvation`.
+pub fn energy(molfile: &str, force_field: ForceField, solvation: Solvation) -> Result<f64, Error> {
     let mol = read(molfile)?;
-    let field = field(&mol, force_field, &[])?;
+    let field = field(&mol, force_field, solvation, &[])?;
     Some(field.energy(&mol.flat_coords()))
         .filter(|e| e.is_finite())
         .ok_or(Error::ForceField(force_field))
@@ -616,9 +664,10 @@ pub(crate) fn model(
     mol: &Molecule,
     coords: &[[f64; 3]],
     force_field: ForceField,
+    solvation: Solvation,
     energy: f64,
 ) -> Result<Model3d, Error> {
-    let model = assemble(mol, coords, force_field, energy);
+    let model = assemble(mol, coords, force_field, solvation, energy);
     if usable(&model) {
         Ok(model)
     } else {
@@ -627,10 +676,12 @@ pub(crate) fn model(
 }
 
 /// The model of `mol` at `coords`, as it is (a file opened keeps its geometry, usable or not).
+/// It records `solvation` only under MMFF: under UFF the solvent had no effect.
 pub(crate) fn assemble(
     mol: &Molecule,
     coords: &[[f64; 3]],
     force_field: ForceField,
+    solvation: Solvation,
     energy: f64,
 ) -> Model3d {
     let mut placed = mol.clone();
@@ -668,6 +719,7 @@ pub(crate) fn assemble(
         force_field,
         energy,
         energy_unit: ENERGY_UNIT.to_owned(),
+        solvation: solvation.under(force_field),
         molfile: molblock(&placed, coords),
     }
 }
@@ -720,7 +772,13 @@ pub(crate) fn without_atoms(
     // Read back as any model's molfile is, so the atoms are perceived as an optimisation or an
     // export will perceive them.
     let mol = read(&molblock(&next, &coords))?;
-    Ok(assemble(&mol, &coords, model.force_field, model.energy))
+    Ok(assemble(
+        &mol,
+        &coords,
+        model.force_field,
+        model.solvation,
+        model.energy,
+    ))
 }
 
 /// A V2000 count field is three digits wide; beyond it a molblock is written as V3000.
@@ -870,7 +928,13 @@ pub(super) mod tests {
             })
             .collect();
         let mol = read(&crate::scan::energy::molfile(&atoms, &bonds)).expect("read");
-        let model = assemble(&mol, &mol.coords, ForceField::Uff, 0.0);
+        let model = assemble(
+            &mol,
+            &mol.coords,
+            ForceField::Uff,
+            Solvation::default(),
+            0.0,
+        );
         assert!(model.molfile.lines().nth(3).unwrap().ends_with("V3000"));
         assert_eq!(
             read(&model.molfile).expect("reads back").num_atoms(),
@@ -915,10 +979,10 @@ pub(super) mod tests {
     /// The model of a 3D molfile under `force_field`, as the 3D view holds it.
     pub(crate) fn model_from_molfile(molfile: &str, force_field: ForceField) -> Model3d {
         let mol = read(molfile).expect("molfile");
-        let energy = field(&mol, force_field, &[])
+        let energy = field(&mol, force_field, Solvation::default(), &[])
             .expect("force field")
             .energy(&mol.flat_coords());
-        model(&mol, &mol.coords, force_field, energy).expect("model")
+        model(&mol, &mol.coords, force_field, Solvation::default(), energy).expect("model")
     }
 
     /// A 2D molfile as a structure editor writes it (laid out by RDKit once), from
@@ -948,8 +1012,13 @@ pub(super) mod tests {
     }
 
     fn built(name: &str, force_field: ForceField) -> Model3d {
-        generate(drawing(name), force_field, GENERATE_STEPS)
-            .unwrap_or_else(|e| panic!("{name} under {force_field}: {e:?}"))
+        generate(
+            drawing(name),
+            force_field,
+            Solvation::default(),
+            GENERATE_STEPS,
+        )
+        .unwrap_or_else(|e| panic!("{name} under {force_field}: {e:?}"))
     }
 
     fn pentane() -> Model3d {
@@ -981,7 +1050,7 @@ pub(super) mod tests {
                 let model = built(name, force_field);
                 assert_eq!(model.formula, formula, "{name} under {force_field}");
                 assert_eq!(model.energy_unit, "kcal/mol");
-                let again = energy(&model.molfile, force_field)
+                let again = energy(&model.molfile, force_field, Solvation::default())
                     .unwrap_or_else(|e| panic!("{name} under {force_field}: {e:?}"));
                 // Only as close as the molfile's coordinates, written to 1e-4 Å.
                 assert!(
@@ -1002,6 +1071,7 @@ pub(super) mod tests {
             let out = optimize(
                 &m.molfile,
                 ForceField::Uff,
+                Solvation::default(),
                 OPTIMIZE_STEPS,
                 &[Constraint::Torsion([0, 1, 2, 3], target)],
             )
@@ -1025,8 +1095,14 @@ pub(super) mod tests {
         ];
         let fixed = m.atoms[2].pos;
         for force_field in ForceField::ALL {
-            let out =
-                optimize(&m.molfile, force_field, OPTIMIZE_STEPS, &restrained).expect("optimise");
+            let out = optimize(
+                &m.molfile,
+                force_field,
+                Solvation::default(),
+                OPTIMIZE_STEPS,
+                &restrained,
+            )
+            .expect("optimise");
             let c = edit::coords(&out);
             assert!(
                 (out.distance(0, 4) - 3.2).abs() < 0.01,
@@ -1051,8 +1127,14 @@ pub(super) mod tests {
             Constraint::Torsion([1, 2, 3, 4], 65.0),
         ];
         for force_field in ForceField::ALL {
-            let out =
-                optimize(&m.molfile, force_field, OPTIMIZE_STEPS, &restrained).expect("optimise");
+            let out = optimize(
+                &m.molfile,
+                force_field,
+                Solvation::default(),
+                OPTIMIZE_STEPS,
+                &restrained,
+            )
+            .expect("optimise");
             let c = edit::coords(&out);
             let angle = geom::angle(c[0], c[1], c[2]);
             let dihedral = geom::dihedral(c[1], c[2], c[3], c[4]);
@@ -1083,6 +1165,7 @@ pub(super) mod tests {
             &butane_drawing(),
             &chembuider_rs::Config::default(),
             ForceField::Uff,
+            Solvation::default(),
         )
         .expect("generate");
         assert!(
@@ -1109,9 +1192,13 @@ pub(super) mod tests {
         drawing.add_bond(atoms[0], atoms[1], chembuider_rs::BondOrder::Single);
         drawing.add_bond(atoms[1], atoms[2], chembuider_rs::BondOrder::Double);
         drawing.add_bond(atoms[2], atoms[3], chembuider_rs::BondOrder::Single);
-        let mut m =
-            crate::three_d::generate(&drawing, &chembuider_rs::Config::default(), ForceField::Uff)
-                .expect("generate");
+        let mut m = crate::three_d::generate(
+            &drawing,
+            &chembuider_rs::Config::default(),
+            ForceField::Uff,
+            Solvation::default(),
+        )
+        .expect("generate");
         let torsion = |m: &Model3d| {
             let c = edit::coords(m);
             geom::dihedral(c[0], c[1], c[2], c[3])
@@ -1123,13 +1210,26 @@ pub(super) mod tests {
         assert!(edit::rotate_picked(&mut m, &mut edit3d, 180.0));
         assert!(torsion(&m).abs() < 20.0, "turned: {}", torsion(&m));
 
-        let relaxed = optimize(&m.molfile, ForceField::Uff, OPTIMIZE_STEPS, &[]).unwrap();
+        let relaxed = optimize(
+            &m.molfile,
+            ForceField::Uff,
+            Solvation::default(),
+            OPTIMIZE_STEPS,
+            &[],
+        )
+        .unwrap();
         assert!(
             torsion(&relaxed).abs() < 20.0,
             "optimised: {}",
             torsion(&relaxed)
         );
-        let embedded = generate(&m.molfile, ForceField::Uff, GENERATE_STEPS).unwrap();
+        let embedded = generate(
+            &m.molfile,
+            ForceField::Uff,
+            Solvation::default(),
+            GENERATE_STEPS,
+        )
+        .unwrap();
         assert!(
             torsion(&embedded).abs() < 20.0,
             "re-embedded: {}",
@@ -1167,7 +1267,7 @@ pub(super) mod tests {
     /// coordinates, by central differences of the energy.
     fn rms_gradient(model: &Model3d) -> f64 {
         let mol = read(&model.molfile).expect("molfile");
-        let field = field(&mol, model.force_field, &[]).expect("force field");
+        let field = field(&mol, model.force_field, Solvation::default(), &[]).expect("force field");
         let x0: Vec<f64> = model.atoms.iter().flat_map(|a| a.pos).collect();
         let h = 1e-5;
         let mut sum = 0.0;
@@ -1190,24 +1290,45 @@ pub(super) mod tests {
         for (name, force_field, molfile) in OPTIMIZE_STARTS {
             let what = format!("{name} under {force_field}");
             let model = model_from_molfile(molfile, force_field);
-            let once = optimize(&model.molfile, force_field, OPTIMIZE_STEPS, &[]).unwrap();
-            let twice = optimize(&once.molfile, force_field, OPTIMIZE_STEPS, &[]).unwrap();
+            let once = optimize(
+                &model.molfile,
+                force_field,
+                Solvation::default(),
+                OPTIMIZE_STEPS,
+                &[],
+            )
+            .unwrap();
+            let twice = optimize(
+                &once.molfile,
+                force_field,
+                Solvation::default(),
+                OPTIMIZE_STEPS,
+                &[],
+            )
+            .unwrap();
             assert!(
                 once.energy <= model.energy + 1e-6,
                 "{what}: E rose {} -> {}",
                 model.energy,
                 once.energy
             );
-            let at = energy(&once.molfile, force_field).unwrap();
+            let at = energy(&once.molfile, force_field, Solvation::default()).unwrap();
             assert!(
                 (at - once.energy).abs() < 1e-2,
                 "{what}: {at} vs {}",
                 once.energy
             );
             let mol = read(&model.molfile).unwrap();
-            let Relaxed::Done { converged, .. } =
-                relax(&mol, &mol.coords, force_field, &[], OPTIMIZE_STEPS, None).unwrap()
-            else {
+            let Relaxed::Done { converged, .. } = relax(
+                &mol,
+                &mol.coords,
+                force_field,
+                Solvation::default(),
+                &[],
+                OPTIMIZE_STEPS,
+                None,
+            )
+            .unwrap() else {
                 unreachable!()
             };
             assert!(
@@ -1236,7 +1357,16 @@ pub(super) mod tests {
             .enumerate()
             .map(|(i, p)| [p[0] + 0.1 * (i % 3) as f64, p[1], p[2]])
             .collect();
-        let relaxed = relax(&mol, &kicked, ForceField::Uff, &[], 100, Some(&cancel)).unwrap();
+        let relaxed = relax(
+            &mol,
+            &kicked,
+            ForceField::Uff,
+            Solvation::default(),
+            &[],
+            100,
+            Some(&cancel),
+        )
+        .unwrap();
         assert_eq!(relaxed, Relaxed::Cancelled);
     }
 
@@ -1279,7 +1409,16 @@ pub(super) mod tests {
             let mol = read(TAXOL_3D).unwrap();
             let Relaxed::Done {
                 energy, converged, ..
-            } = relax(&mol, &mol.coords, force_field, &[], OPTIMIZE_STEPS, None).unwrap()
+            } = relax(
+                &mol,
+                &mol.coords,
+                force_field,
+                Solvation::default(),
+                &[],
+                OPTIMIZE_STEPS,
+                None,
+            )
+            .unwrap()
             else {
                 unreachable!()
             };
@@ -1291,6 +1430,7 @@ pub(super) mod tests {
             let out = optimize(
                 TAXOL_3D,
                 force_field,
+                Solvation::default(),
                 OPTIMIZE_STEPS,
                 &[Constraint::Distance(ends, target)],
             )
@@ -1301,5 +1441,133 @@ pub(super) mod tests {
                 "{force_field}: {at}, restrained to {target}"
             );
         }
+    }
+
+    /// Sodium acetate as OpenBabel's builder once placed it under MMFF94: an ion pair, whose
+    /// energy is mostly the charges' attraction.
+    const SODIUM_ACETATE: &str =
+        include_str!("../../tests/data/optimize/sodium_acetate_mmff94.mol");
+
+    fn in_water(distance_dependent: bool) -> Solvation {
+        Solvation {
+            solvent: super::super::Solvent::Water,
+            distance_dependent,
+        }
+    }
+
+    /// The library's MMFF94 as the app sets it up, with the dielectric given.
+    fn direct_mmff94(model: DielectricModel, constant: f64) -> MmffBuilder {
+        MmffBuilder {
+            dielectric_constant: constant,
+            dielectric_model: model,
+            nonbonded_thresh: NO_CUTOFF,
+            ignore_interfrag_interactions: false,
+            ..MmffBuilder::default()
+        }
+    }
+
+    /// A solvent screens MMFF's charges exactly as the library's own dielectric settings do,
+    /// constant or distance-dependent, and a vacuum is MMFF as the library defaults it.
+    #[test]
+    fn a_solvent_screens_the_charges_as_the_library_does() {
+        let mol = read(SODIUM_ACETATE).unwrap();
+        let coords = mol.flat_coords();
+        let direct = |model, constant| {
+            direct_mmff94(model, constant)
+                .build_dyn(&mol, &[])
+                .expect("MMFF94")
+                .energy(&coords)
+        };
+        let vacuum = energy(SODIUM_ACETATE, ForceField::Mmff94, Solvation::default()).unwrap();
+        assert!(
+            (vacuum - direct(DielectricModel::Constant, 1.0)).abs() < 1e-9,
+            "a vacuum is MMFF's own: {vacuum}"
+        );
+        for (distance_dependent, model) in [
+            (false, DielectricModel::Constant),
+            (true, DielectricModel::Distance),
+        ] {
+            let ours = energy(
+                SODIUM_ACETATE,
+                ForceField::Mmff94,
+                in_water(distance_dependent),
+            )
+            .unwrap();
+            let theirs = direct(model, 78.4);
+            assert!(
+                (ours - theirs).abs() < 1e-9,
+                "{model:?}: {ours} vs the library's {theirs}"
+            );
+            // The ion pair's attraction, screened 78.4 times over.
+            assert!(
+                ours - vacuum > 10.0,
+                "{model:?}: in water {ours}, in a vacuum {vacuum}"
+            );
+        }
+    }
+
+    /// UFF has no electrostatics: a solvent changes no energy under it, and a model made
+    /// under it says it was made in a vacuum; under MMFF the model says which solvent, and its
+    /// energy is that solvent's.
+    #[test]
+    fn a_solvent_is_recorded_only_where_it_applies() {
+        let start = include_str!("../../tests/data/optimize/sodium_acetate_uff.mol");
+        for solvation in [in_water(false), in_water(true)] {
+            assert_eq!(
+                energy(start, ForceField::Uff, solvation).unwrap(),
+                energy(start, ForceField::Uff, Solvation::default()).unwrap()
+            );
+        }
+        let out = optimize(start, ForceField::Uff, in_water(false), OPTIMIZE_STEPS, &[]).unwrap();
+        assert!(out.solvation.is_vacuum(), "{:?}", out.solvation);
+
+        let out = optimize(
+            SODIUM_ACETATE,
+            ForceField::Mmff94,
+            in_water(false),
+            OPTIMIZE_STEPS,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(out.solvation, in_water(false));
+        let at = energy(&out.molfile, ForceField::Mmff94, in_water(false)).unwrap();
+        assert!((at - out.energy).abs() < 1e-2, "{at} vs {}", out.energy);
+    }
+
+    /// A soft-core build in water ends with the energy of the force field in water: the
+    /// solvent reaches its last, ordinary minimisation.
+    #[test]
+    fn a_soft_core_build_in_water_ends_in_water() {
+        let mol = read(SODIUM_ACETATE).unwrap();
+        assert_eq!(fragment_count(&mol), 2);
+        let water = in_water(false);
+        let Relaxed::Done { coords, energy, .. } = soft_core(
+            &mol,
+            &mol.coords,
+            ForceField::Mmff94,
+            water,
+            &[],
+            OPTIMIZE_STEPS,
+            None,
+            &mut |_| {},
+        )
+        .unwrap() else {
+            unreachable!("nothing raises the flag")
+        };
+        let flat: Vec<f64> = coords.iter().flatten().copied().collect();
+        let in_water = field(&mol, ForceField::Mmff94, water, &[])
+            .unwrap()
+            .energy(&flat);
+        let in_vacuum = field(&mol, ForceField::Mmff94, Solvation::default(), &[])
+            .unwrap()
+            .energy(&flat);
+        assert!(
+            (energy - in_water).abs() < 1e-6,
+            "{energy} vs {in_water} in water"
+        );
+        assert!(
+            (energy - in_vacuum).abs() > 1.0,
+            "{energy} vs {in_vacuum} in a vacuum"
+        );
     }
 }

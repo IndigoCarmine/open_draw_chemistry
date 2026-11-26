@@ -29,7 +29,7 @@ pub mod source;
 pub use param::{Param, PoseField, StepField};
 pub use run::{Progress, Run};
 
-use crate::three_d::ForceField;
+use crate::three_d::{ForceField, Solvation};
 
 /// How many points a scan over `axes` has (saturating: a product beyond `usize` is `MAX`).
 pub fn total_points(axes: &[Axis]) -> usize {
@@ -180,6 +180,8 @@ pub struct Scan {
     /// One per grid point, in [`grid`] order: `None` not computed (yet), `Some(NaN)` failed.
     pub energies: Vec<Option<f64>>,
     pub force_field: ForceField,
+    /// The solvent MMFF's charges were screened by (a vacuum under UFF).
+    pub solvation: Solvation,
     /// The energy unit (kcal/mol).
     pub unit: String,
     /// Whether the parameters are the assembly's (else the 3D model's).
@@ -210,17 +212,33 @@ impl ScanAxis {
 }
 
 impl Scan {
-    pub fn new(axes: Vec<ScanAxis>, force_field: ForceField, unit: String) -> Self {
+    pub fn new(
+        axes: Vec<ScanAxis>,
+        force_field: ForceField,
+        solvation: Solvation,
+        unit: String,
+    ) -> Self {
         let total = axes.iter().map(|a| a.values.len()).product();
         let assembly = axes.first().is_some_and(|a| a.param.is_assembly());
         Self {
             axes,
             energies: vec![None; total],
             force_field,
+            solvation: solvation.under(force_field),
             unit,
             assembly,
             relaxed: false,
             unconverged: vec![false; total],
+        }
+    }
+
+    /// How the energies were computed, in English for a file or an axis title: the force
+    /// field, and the solvent after a slash unless it is a vacuum ("MMFF94/water (ε 78.4)").
+    pub fn method(&self) -> String {
+        if self.solvation.is_vacuum() {
+            self.force_field.to_string()
+        } else {
+            format!("{}/{}", self.force_field, self.solvation.label())
         }
     }
 
@@ -385,7 +403,7 @@ impl Scan {
         let _ = write!(
             out,
             "{},{}",
-            quote(&format!("E {} ({})", self.force_field, self.unit)),
+            quote(&format!("E {} ({})", self.method(), self.unit)),
             quote(&format!("ΔE ({})", self.unit))
         );
         if self.relaxed {
@@ -484,6 +502,7 @@ mod tests {
                 })
                 .collect(),
             ForceField::Uff,
+            Solvation::default(),
             "kJ/mol".into(),
         );
         assert_eq!(scan.total(), 9);
@@ -503,6 +522,7 @@ mod tests {
                 values: axis(1.0, 2.0, energies.len()).values(),
             }],
             ForceField::Mmff94,
+            Solvation::default(),
             "kcal/mol".into(),
         );
         scan.energies = energies.to_vec();
@@ -561,7 +581,7 @@ mod tests {
                 values: axis(1.0, 1.0 + (n.max(2) - 1) as f64 / 10.0, n).values(),
             })
             .collect();
-        Scan::new(axes, ForceField::Uff, "kJ/mol".into())
+        Scan::new(axes, ForceField::Uff, Solvation::default(), "kJ/mol".into())
     }
 
     /// Every point's indices along the axes and its place in the grid round-trip, in

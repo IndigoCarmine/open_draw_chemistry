@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use chembuider_rs::{Config, Molecule};
 
 use super::part::{self, Scope};
-use super::{Edit3d, Error, ForceField, Model3d};
+use super::{Edit3d, Error, ForceField, Model3d, Solvation};
 
 /// What a [`Job`] is busy with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,12 +46,15 @@ pub enum JobState {
     Failed(String),
 }
 
-/// A document's 3D state: the model (or the work towards one) and the force field chosen.
+/// A document's 3D state: the model (or the work towards one) and the force field and solvent
+/// chosen.
 #[derive(Debug, Default)]
 pub struct Job {
     pub state: JobState,
     /// The force field the next generation or optimisation uses.
     pub force_field: ForceField,
+    /// The solvent the next generation or optimisation screens MMFF's charges by.
+    pub solvation: Solvation,
     /// Hand edits of the model: selection, restraints and the undo history.
     pub edit: Edit3d,
     /// The drawing (or the part of it, see [`Job::scope`]) the model was generated from, to
@@ -74,6 +77,7 @@ impl Job {
     pub fn with_model(model: Model3d, drawing: &Molecule) -> Self {
         Self {
             force_field: model.force_field,
+            solvation: model.solvation,
             state: JobState::Done(model),
             source: Some(drawing.clone()),
             ..Self::default()
@@ -162,9 +166,10 @@ impl Job {
             }
         };
         let force_field = self.force_field;
+        let solvation = self.solvation;
         self.previous = None;
         self.spawn(Task::Generate, move || {
-            super::generate_from_molfile(&molfile, force_field)
+            super::generate_from_molfile(&molfile, force_field, solvation)
         });
     }
 
@@ -178,10 +183,11 @@ impl Job {
             return;
         };
         let force_field = self.force_field;
+        let solvation = self.solvation;
         let constraints = self.edit.active_constraints(model.atoms.len());
         self.previous = Some(model.clone());
         self.spawn(Task::Optimize, move || {
-            super::optimize_with(&model, force_field, &constraints)
+            super::optimize_with(&model, force_field, solvation, &constraints)
         });
     }
 
@@ -231,7 +237,8 @@ impl Job {
         self.result = None;
         let previous = self.previous.take();
         // A force field with no type for an atom (MMFF94 and a metal) gave way to UFF: say
-        // so, and choose UFF for what follows.
+        // so, and choose UFF for what follows — in a vacuum, as UFF has no electrostatics for
+        // a solvent to screen.
         let fell_back = match &outcome {
             Ok(model) if model.force_field != self.force_field => {
                 let note = t!(
@@ -240,6 +247,7 @@ impl Job {
                     used = model.force_field
                 );
                 self.force_field = model.force_field;
+                self.solvation = model.solvation;
                 Some(note)
             }
             _ => None,
@@ -302,11 +310,14 @@ impl Job {
             return;
         };
         let revision = self.edit.revision();
-        let force_field = model.force_field;
+        let (force_field, solvation) = (model.force_field, model.solvation);
         let (send, receive) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("3d-energy".to_owned())
-            .spawn(move || send.send(super::energy(&model, force_field)).ok());
+            .spawn(move || {
+                send.send(super::energy(&model, force_field, solvation))
+                    .ok()
+            });
         if spawned.is_ok() {
             self.energy = Some((revision, receive));
         }
@@ -343,6 +354,7 @@ mod tests {
             atoms: Vec::new(),
             bonds: Vec::new(),
             force_field: ForceField::default(),
+            solvation: Solvation::default(),
             energy: 0.0,
             energy_unit: "kcal/mol".to_owned(),
             formula: "CH4O".to_owned(),
@@ -382,8 +394,56 @@ mod tests {
         }
     }
 
+    fn water() -> Solvation {
+        Solvation {
+            solvent: super::super::Solvent::Water,
+            distance_dependent: false,
+        }
+    }
+
+    /// The energy of an edited model is recomputed in the solvent the model was made in, not
+    /// in whatever solvent is chosen for the next run.
+    #[test]
+    fn an_edited_model_is_re_evaluated_in_its_own_solvent() {
+        let start = crate::three_d::model_from_molfile(
+            include_str!("../../tests/data/optimize/sodium_acetate_mmff94.mol"),
+            ForceField::Mmff94,
+        );
+        let model = super::super::optimize(&start, ForceField::Mmff94, water()).unwrap();
+        assert_eq!(model.solvation, water());
+        let mut job = Job::with_model(model, &Molecule::default());
+        assert_eq!(job.solvation, water(), "taken from the model");
+        job.solvation = Solvation::default();
+
+        let (model, edit3d) = job.model_and_edit().unwrap();
+        let mut coords = crate::three_d::edit::coords(model);
+        // Pull the sodium (the last atom drawn, the one not bonded) a little away.
+        let na = model
+            .atoms
+            .iter()
+            .position(|a| a.element == "Na")
+            .expect("sodium");
+        coords[na][0] += 0.3;
+        edit3d.apply(model, coords, "move");
+        while job.energy_pending() {
+            job.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let model = job.model().unwrap();
+        let in_water = super::super::energy(model, ForceField::Mmff94, water()).unwrap();
+        let in_vacuum =
+            super::super::energy(model, ForceField::Mmff94, Solvation::default()).unwrap();
+        assert!(
+            (model.energy - in_water).abs() < 1e-9,
+            "{} vs {in_water} in water",
+            model.energy
+        );
+        assert!((in_water - in_vacuum).abs() > 1.0);
+    }
+
     /// A metal complex under MMFF94, which has no metal: it is built with UFF, the status
-    /// says so, and UFF is chosen for what follows (optimising goes on with it).
+    /// says so, and UFF is chosen for what follows (optimising goes on with it) — in a vacuum,
+    /// as UFF has no electrostatics for the solvent chosen to screen.
     #[test]
     fn a_force_field_without_the_metal_gives_way_to_uff() {
         let mut drawing = Molecule::default();
@@ -397,7 +457,10 @@ mod tests {
             .unwrap()
             .stereo = chembuider_rs::BondStereo::Dative;
 
-        let mut job = Job::default();
+        let mut job = Job {
+            solvation: water(),
+            ..Job::default()
+        };
         assert_eq!(job.force_field, ForceField::Mmff94);
         job.generate(&drawing, &Config::default());
         let message = finish(&mut job);
@@ -409,6 +472,8 @@ mod tests {
         assert!(message.ends_with(&note), "{message}");
         assert_eq!(job.model().unwrap().force_field, ForceField::Uff);
         assert_eq!(job.force_field, ForceField::Uff);
+        assert!(job.model().unwrap().solvation.is_vacuum());
+        assert!(job.solvation.is_vacuum());
 
         job.optimize();
         let message = finish(&mut job);

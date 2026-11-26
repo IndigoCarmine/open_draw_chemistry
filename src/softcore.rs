@@ -18,7 +18,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use crate::assembly::build::Built;
-use crate::three_d::{self, Constraint, ForceField, Model3d, Relaxed, SoftCoreStage};
+use crate::three_d::{self, Constraint, ForceField, Model3d, Relaxed, SoftCoreStage, Solvation};
 
 /// Minimiser iterations at each step, and for the last minimisation.
 const STEPS: u32 = 1000;
@@ -64,6 +64,8 @@ enum Message {
 pub struct Run {
     pub target: Target,
     pub force_field: ForceField,
+    /// The solvent MMFF's charges are screened by (ignored under UFF).
+    pub solvation: Solvation,
     receiver: Option<Receiver<Message>>,
     cancel: Arc<AtomicBool>,
     stage: Stage,
@@ -101,10 +103,12 @@ pub fn molecule_count(model: &Model3d) -> usize {
 }
 
 impl Run {
-    /// Start building the 3D model `model` under `force_field`, holding `constraints`.
+    /// Start building the 3D model `model` under `force_field` in `solvation`, holding
+    /// `constraints`.
     pub fn start_model(
         model: &Model3d,
         force_field: ForceField,
+        solvation: Solvation,
         constraints: Vec<Constraint>,
     ) -> Result<Run, String> {
         if let Some(why) = refusal(molecule_count(model)) {
@@ -115,12 +119,17 @@ impl Run {
             &model.molfile,
             model,
             force_field,
+            solvation,
             constraints,
         )
     }
 
-    /// Start building the assembly `built` under `force_field`.
-    pub fn start_assembly(built: &Built, force_field: ForceField) -> Result<Run, String> {
+    /// Start building the assembly `built` under `force_field` in `solvation`.
+    pub fn start_assembly(
+        built: &Built,
+        force_field: ForceField,
+        solvation: Solvation,
+    ) -> Result<Run, String> {
         if let Some(why) = refusal(built.molecule_count()) {
             return Err(why);
         }
@@ -128,12 +137,13 @@ impl Run {
         let mol = three_d::read_molfile(&molfile).map_err(|e| e.to_string())?;
         // The assembly as a model (its energy is the build's business): what the build starts
         // from and is checked against.
-        let start = three_d::assemble(&mol, &mol.coords, force_field, f64::NAN);
+        let start = three_d::assemble(&mol, &mol.coords, force_field, solvation, f64::NAN);
         Self::start(
             Target::Assembly,
             &start.molfile,
             &start,
             force_field,
+            solvation,
             Vec::new(),
         )
     }
@@ -143,6 +153,7 @@ impl Run {
         molfile: &str,
         model: &Model3d,
         force_field: ForceField,
+        solvation: Solvation,
         constraints: Vec<Constraint>,
     ) -> Result<Run, String> {
         let mol = three_d::read_molfile(molfile).map_err(|e| e.to_string())?;
@@ -153,7 +164,7 @@ impl Run {
             return Err(t!("softcore.one_molecule").to_owned());
         }
         // Typed once here, so an atom the force field has no type for is said at once.
-        three_d::field(&mol, force_field, &[]).map_err(|e| e.to_string())?;
+        three_d::field(&mol, force_field, solvation, &[]).map_err(|e| e.to_string())?;
         let cancel = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
         let flag = cancel.clone();
@@ -173,6 +184,7 @@ impl Run {
                     &mol,
                     &mol.coords,
                     force_field,
+                    solvation,
                     &constraints,
                     STEPS,
                     Some(&flag),
@@ -180,7 +192,8 @@ impl Run {
                 );
                 let outcome = match relaxed {
                     Ok(Relaxed::Done { coords, energy, .. }) => {
-                        match three_d::checked_model(&mol, &coords, force_field, energy) {
+                        match three_d::checked_model(&mol, &coords, force_field, solvation, energy)
+                        {
                             Ok(model) => Outcome::Built(model),
                             Err(e) => Outcome::Failed(e.to_string()),
                         }
@@ -194,6 +207,7 @@ impl Run {
         Ok(Run {
             target,
             force_field,
+            solvation,
             receiver: Some(receiver),
             cancel,
             stage: Stage::Starting,
@@ -297,6 +311,7 @@ pub(crate) mod tests {
         three_d::generate_from_molfile(
             include_str!("../tests/data/drawn/butane.mol"),
             ForceField::Uff,
+            Solvation::default(),
         )
         .expect("butane")
     }
@@ -319,7 +334,13 @@ pub(crate) mod tests {
         }));
         let molfile = crate::scan::energy::molfile(&atoms, &bonds);
         let mol = three_d::read_molfile(&molfile).expect("molfile");
-        three_d::assemble(&mol, &mol.coords, ForceField::Uff, f64::NAN)
+        three_d::assemble(
+            &mol,
+            &mol.coords,
+            ForceField::Uff,
+            Solvation::default(),
+            f64::NAN,
+        )
     }
 
     fn closest_between(model: &Model3d, split: usize) -> f64 {
@@ -339,7 +360,8 @@ pub(crate) mod tests {
         let start = overlapping_butanes();
         assert!(closest_between(&start, start.atoms.len() / 2) < 0.6);
         for ff in ForceField::ALL {
-            let mut run = Run::start_model(&start, ff, Vec::new()).expect("starts");
+            let mut run =
+                Run::start_model(&start, ff, Solvation::default(), Vec::new()).expect("starts");
             let Outcome::Built(model) = run.wait() else {
                 panic!("{ff}: not built");
             };
@@ -357,8 +379,13 @@ pub(crate) mod tests {
     #[test]
     fn fixed_atoms_hold() {
         let start = overlapping_butanes();
-        let mut run =
-            Run::start_model(&start, ForceField::Uff, vec![Constraint::Fix(0)]).expect("starts");
+        let mut run = Run::start_model(
+            &start,
+            ForceField::Uff,
+            Solvation::default(),
+            vec![Constraint::Fix(0)],
+        )
+        .expect("starts");
         let Outcome::Built(model) = run.wait() else {
             panic!("not built");
         };
@@ -369,7 +396,9 @@ pub(crate) mod tests {
 
     #[test]
     fn one_molecule_is_refused() {
-        assert!(Run::start_model(&butane(), ForceField::Uff, Vec::new()).is_err());
+        assert!(
+            Run::start_model(&butane(), ForceField::Uff, Solvation::default(), Vec::new()).is_err()
+        );
         assert_eq!(molecule_count(&butane()), 1);
         assert_eq!(molecule_count(&overlapping_butanes()), 2);
         assert!(refusal(1).is_some());
@@ -379,8 +408,13 @@ pub(crate) mod tests {
     /// Cancel ends a build at once, with nothing built.
     #[test]
     fn cancel_ends_a_build() {
-        let mut run = Run::start_model(&overlapping_butanes(), ForceField::Mmff94, Vec::new())
-            .expect("starts");
+        let mut run = Run::start_model(
+            &overlapping_butanes(),
+            ForceField::Mmff94,
+            Solvation::default(),
+            Vec::new(),
+        )
+        .expect("starts");
         run.cancel();
         let asked = Instant::now();
         let outcome = run.wait();

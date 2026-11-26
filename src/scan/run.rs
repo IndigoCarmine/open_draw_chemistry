@@ -11,7 +11,7 @@ use super::energy::{self, Evaluator, Relaxation};
 use super::source::{Point, Reference, Source};
 use super::{Axis, Scan, ScanAxis, grid, previous_neighbour};
 use crate::three_d::geom::Vec3;
-use crate::three_d::{Constraint, ForceField, RESTRAINED_OPTIMIZE_STEPS};
+use crate::three_d::{Constraint, ForceField, RESTRAINED_OPTIMIZE_STEPS, Solvation};
 
 /// What the background thread reports.
 #[derive(Debug)]
@@ -122,11 +122,16 @@ pub struct Run {
 
 impl Run {
     /// Start scanning `axes` (any number, the parameters of `source` in order) under
-    /// `force_field`.
-    pub fn start(source: Source, axes: &[Axis], force_field: ForceField) -> Result<Run, String> {
+    /// `force_field` in `solvation`.
+    pub fn start(
+        source: Source,
+        axes: &[Axis],
+        force_field: ForceField,
+        solvation: Solvation,
+    ) -> Result<Run, String> {
         let points = grid(axes);
         let work = move |source: &Source, send: &Sender<Message>, cancel: &AtomicBool| {
-            let Some((_, mut evaluator)) = set_up(source, force_field, send) else {
+            let Some((_, mut evaluator)) = set_up(source, force_field, solvation, send) else {
                 return;
             };
             for (index, values) in points.iter().enumerate() {
@@ -136,7 +141,7 @@ impl Run {
                 let energy = match source.at(values) {
                     Ok(Point::Coords(coords)) => evaluator.energy(&coords),
                     Ok(Point::Rebuilt { atoms, bonds }) => {
-                        energy::single_point(&atoms, &bonds, force_field)
+                        energy::single_point(&atoms, &bonds, force_field, solvation)
                     }
                     Err(_) => f64::NAN,
                 };
@@ -146,12 +151,12 @@ impl Run {
                 }
             }
         };
-        Ok(Self::spawn(source, axes, force_field, work))
+        Ok(Self::spawn(source, axes, force_field, solvation, work))
     }
 
     /// Start a relaxed scan: at every point the scanned parameters are set and held while
-    /// everything else is minimised under `relax`, and the energy is that of the minimised
-    /// structure. Each point starts from its neighbour's minimised structure: one step back
+    /// everything else is minimised under `relax` (under `force_field` in `solvation`), and
+    /// the energy is that of the minimised structure. Each point starts from its neighbour's minimised structure: one step back
     /// along the last axis it is not at the start of ([`previous_neighbour`] — the previous
     /// point, else the first of the previous row, of the previous slab…).
     ///
@@ -176,6 +181,7 @@ impl Run {
         source: Source,
         axes: &[Axis],
         force_field: ForceField,
+        solvation: Solvation,
         relax: Relax,
     ) -> Result<Run, String> {
         let points = grid(axes);
@@ -219,7 +225,7 @@ impl Run {
             };
             relax_points(
                 source,
-                force_field,
+                (force_field, solvation),
                 &points,
                 &shape,
                 send,
@@ -227,7 +233,7 @@ impl Run {
                 relax_point,
             );
         };
-        let mut run = Self::spawn(source, axes, force_field, work);
+        let mut run = Self::spawn(source, axes, force_field, solvation, work);
         run.scan.relaxed = true;
         Ok(run)
     }
@@ -238,6 +244,7 @@ impl Run {
         source: Source,
         axes: &[Axis],
         force_field: ForceField,
+        solvation: Solvation,
         work: impl FnOnce(&Source, &Sender<Message>, &AtomicBool) + Send + 'static,
     ) -> Run {
         let scan_axes = axes
@@ -248,7 +255,7 @@ impl Run {
                 values: a.values(),
             })
             .collect();
-        let scan = Scan::new(scan_axes, force_field, energy::unit(force_field));
+        let scan = Scan::new(scan_axes, force_field, solvation, energy::unit(force_field));
         let source = Arc::new(source);
         let cancel = Arc::new(AtomicBool::new(false));
         let (send, receive) = mpsc::channel();
@@ -417,17 +424,19 @@ impl Drop for Run {
     }
 }
 
-/// Read the structure the scan starts from and set the force field up for it, telling the
-/// window how long that took; on failure the window is told why and `None` returned.
+/// Read the structure the scan starts from and set the force field up for it in `solvation`,
+/// telling the window how long that took; on failure the window is told why and `None`
+/// returned.
 fn set_up(
     source: &Source,
     force_field: ForceField,
+    solvation: Solvation,
     send: &Sender<Message>,
 ) -> Option<(Reference, Evaluator)> {
     let started = Instant::now();
     let set_up = source
         .reference()
-        .and_then(|r| Evaluator::new(&r.molfile, force_field).map(|e| (r, e)));
+        .and_then(|r| Evaluator::new(&r.molfile, force_field, solvation).map(|e| (r, e)));
     match set_up {
         Ok((reference, evaluator)) => {
             let _ = send.send(Message::Ready {
@@ -447,10 +456,11 @@ fn set_up(
 /// evaluator set up for the reference, the reference, the point's values and what its
 /// neighbour kept — see [`Run::start_relaxed`]), which returns how it went and what the points
 /// after it are to start from (`None` when they cannot: they start afresh). Sends each point's
-/// structure, energy and convergence, until done or cancelled.
+/// structure, energy and convergence, until done or cancelled. The evaluator is set up under
+/// the force field and in the solvent given.
 fn relax_points(
     source: &Source,
-    force_field: ForceField,
+    (force_field, solvation): (ForceField, Solvation),
     points: &[Vec<f64>],
     shape: &[usize],
     send: &Sender<Message>,
@@ -462,7 +472,7 @@ fn relax_points(
         Option<&[Vec3]>,
     ) -> (Relaxation, Option<Vec<Vec3>>),
 ) {
-    let Some((reference, mut evaluator)) = set_up(source, force_field, send) else {
+    let Some((reference, mut evaluator)) = set_up(source, force_field, solvation, send) else {
         return;
     };
     // What each point keeps for the points after it (its minimised structure).
@@ -545,8 +555,8 @@ fn relax_placed(
             }
         }
         Point::Rebuilt { atoms, bonds } => {
-            let force_field = evaluator.force_field();
-            relax_alone(atoms, bonds, &hold, force_field, steps, cancel)
+            let method = (evaluator.force_field(), evaluator.solvation());
+            relax_alone(atoms, bonds, &hold, method, steps, cancel)
         }
     };
     let keep = match (&relaxed, &placed.point) {
@@ -590,16 +600,18 @@ fn lower(a: Relaxation, b: Relaxation) -> Relaxation {
 }
 
 /// Relax a structure other than the scan's reference (an assembly point with other atoms)
-/// from where `atoms` are, held by `hold`, on a molecule read for it.
+/// from where `atoms` are, held by `hold`, on a molecule read for it, under the force field
+/// and in the solvent given.
 fn relax_alone(
     atoms: &[crate::three_d::Atom3d],
     bonds: &[crate::three_d::Bond3d],
     hold: &dyn Fn(&mut [Vec3]),
-    force_field: ForceField,
+    (force_field, solvation): (ForceField, Solvation),
     steps: u32,
     cancel: &AtomicBool,
 ) -> Relaxation {
-    let Ok(mut evaluator) = Evaluator::new(&energy::molfile(atoms, bonds), force_field) else {
+    let molfile = energy::molfile(atoms, bonds);
+    let Ok(mut evaluator) = Evaluator::new(&molfile, force_field, solvation) else {
         return Relaxation::Failed;
     };
     let coords: Vec<Vec3> = atoms.iter().map(|a| a.pos).collect();
@@ -655,6 +667,7 @@ impl Run {
             source,
             &[tests::dihedral_axis(3)],
             ForceField::Uff,
+            Solvation::default(),
             |_: &Source, _: &Sender<Message>, cancel: &AtomicBool| {
                 while !cancel.load(Ordering::Relaxed) {
                     std::thread::sleep(std::time::Duration::from_millis(1));
@@ -695,6 +708,7 @@ mod tests {
                 })
                 .collect(),
             force_field: ForceField::Uff,
+            solvation: Solvation::default(),
             energy: 0.0,
             energy_unit: "kJ/mol".into(),
             formula: "C4".into(),
@@ -748,6 +762,7 @@ mod tests {
             source,
             &[dihedral_axis(37)],
             ForceField::Uff,
+            Solvation::default(),
             fake_work(Duration::ZERO),
         );
         run.wait();
@@ -774,6 +789,7 @@ mod tests {
             source,
             &[dihedral_axis(37)],
             ForceField::Uff,
+            Solvation::default(),
             fake_work(Duration::from_millis(15)),
         );
         while run.scan.done() < 2 {
@@ -863,6 +879,7 @@ mod tests {
                 points: 2,
             }],
             ForceField::Uff,
+            Solvation::default(),
             Relax::new(vec![Constraint::Fix(0), Constraint::Fix(3)]),
         ) else {
             panic!("a scan that must move a fixed atom started");
@@ -900,6 +917,7 @@ mod tests {
                 })
                 .collect(),
             force_field: ForceField::Uff,
+            solvation: Solvation::default(),
             energy: 0.0,
             energy_unit: "kJ/mol".into(),
             formula: "C5".into(),
@@ -964,8 +982,13 @@ mod energy_tests {
     use chembuider_rs::BondOrder;
 
     fn generate(drawing: &chembuider_rs::Molecule, force_field: ForceField) -> Model3d {
-        crate::three_d::generate(drawing, &chembuider_rs::Config::default(), force_field)
-            .expect("generate")
+        crate::three_d::generate(
+            drawing,
+            &chembuider_rs::Config::default(),
+            force_field,
+            Solvation::default(),
+        )
+        .expect("generate")
     }
 
     /// Butane as [`crate::three_d::generate`] built it once under `force_field`; its carbons
@@ -982,7 +1005,7 @@ mod energy_tests {
         // Relaxed under the force field itself: the files are OpenBabel's minima, and a rigid
         // scan turns the methyls with the hydrogens where the start has them.
         let built = crate::three_d::model_from_molfile(molfile, force_field);
-        crate::three_d::optimize(&built, force_field).expect("relaxed butane")
+        crate::three_d::optimize(&built, force_field, Solvation::default()).expect("relaxed butane")
     }
 
     /// The butane torsion profile: anti (180°) lowest, gauche (±60°) above it, eclipsed (±120°)
@@ -1003,8 +1026,13 @@ mod energy_tests {
             };
             let source = Source::model(&model, None, vec![param]);
             let started = Instant::now();
-            let mut run =
-                Run::start(source, std::slice::from_ref(&axis), force_field).expect("start");
+            let mut run = Run::start(
+                source,
+                std::slice::from_ref(&axis),
+                force_field,
+                Solvation::default(),
+            )
+            .expect("start");
             run.wait();
             let elapsed = started.elapsed();
             assert_eq!(run.error, None);
@@ -1099,7 +1127,8 @@ mod energy_tests {
         let started = Instant::now();
         // UFF: van der Waals without the charges, whose quadrupole repulsion makes MMFF94's
         // face-to-face stack unbound.
-        let mut run = Run::start(source, &axes, ForceField::Uff).expect("start");
+        let mut run =
+            Run::start(source, &axes, ForceField::Uff, Solvation::default()).expect("start");
         run.wait();
         eprintln!("{:?}", run.scan.energies);
         eprintln!("35 points of 24 atoms: {:?}", started.elapsed());
@@ -1148,7 +1177,8 @@ mod energy_tests {
         let source = Source::assembly(&design, vec![rise]);
         // The moved structure keeps the reference's atoms: no re-parse per point.
         assert!(matches!(source.at(&[3.7]), Ok(Point::Coords(_))));
-        let mut run = Run::start(source, &[axis], ForceField::Mmff94).expect("start");
+        let mut run =
+            Run::start(source, &[axis], ForceField::Mmff94, Solvation::default()).expect("start");
         run.wait();
         let p = run.progress();
         eprintln!(
@@ -1211,6 +1241,7 @@ mod energy_tests {
                 Source::model(&model, None, params.clone()),
                 std::slice::from_ref(&axis),
                 force_field,
+                Solvation::default(),
             )
             .expect("rigid");
             rigid.wait();
@@ -1219,6 +1250,7 @@ mod energy_tests {
                 Source::model(&model, None, params),
                 std::slice::from_ref(&axis),
                 force_field,
+                Solvation::default(),
                 Relax::new(Vec::new()),
             )
             .expect("relaxed");
@@ -1290,6 +1322,7 @@ mod energy_tests {
             Source::model(&model, None, params),
             &axes,
             ForceField::Mmff94,
+            Solvation::default(),
             Relax::new(Vec::new()),
         )
         .expect("start");
@@ -1307,6 +1340,86 @@ mod energy_tests {
             let want = run.scan.values_at(i)[0];
             assert!((held - want).abs() < 0.01, "point {i}: {held} for {want}");
         }
+    }
+
+    /// A scan in water, rigid or relaxed, gives each point the energy of its structure under
+    /// MMFF94 with the charges screened by water — not the vacuum's — and its CSV says so.
+    #[test]
+    fn a_scan_in_water_matches_single_points_in_water() {
+        let water = Solvation {
+            solvent: crate::three_d::Solvent::Water,
+            distance_dependent: false,
+        };
+        let model = crate::three_d::model_from_molfile(
+            include_str!("../../tests/data/optimize/sodium_acetate_mmff94.mol"),
+            ForceField::Mmff94,
+        );
+        // The carboxylate's C–O⁻ bond, next to the sodium.
+        let axis = Axis {
+            param: Param::Bond([2, 4]),
+            start: 1.24,
+            end: 1.34,
+            points: 3,
+        };
+        let source = Source::model(&model, None, vec![axis.param.clone()]);
+        let reference = source.reference().unwrap();
+        let single_point = |coords: &[Vec3], solvation| {
+            let text = edit::molfile_with_coords(&reference.molfile, coords).unwrap();
+            Evaluator::new(&text, ForceField::Mmff94, solvation)
+                .unwrap()
+                .energy(coords)
+        };
+        let axes = std::slice::from_ref(&axis);
+        let mut rigid = Run::start(source.clone(), axes, ForceField::Mmff94, water).unwrap();
+        let mut relaxed = Run::start_relaxed(
+            source.clone(),
+            axes,
+            ForceField::Mmff94,
+            water,
+            Relax::new(Vec::new()),
+        )
+        .unwrap();
+        rigid.wait();
+        relaxed.wait();
+        for run in [&rigid, &relaxed] {
+            assert_eq!(run.error, None);
+            assert_eq!(run.scan.done(), 3);
+            assert_eq!(run.scan.solvation, water);
+            for i in 0..3 {
+                let coords = match run.structure(i) {
+                    Some(coords) => coords.to_vec(),
+                    None => {
+                        let Ok(Point::Coords(coords)) = source.at(&run.scan.values_at(i)) else {
+                            panic!("point {i}")
+                        };
+                        coords
+                    }
+                };
+                let scanned = run.scan.energies[i].unwrap();
+                let in_water = single_point(&coords, water);
+                let in_vacuum = single_point(&coords, Solvation::default());
+                assert!(
+                    (scanned - in_water).abs() <= 1e-6 * in_water.abs().max(1.0),
+                    "point {i}: scanned {scanned}, in water {in_water}"
+                );
+                assert!(
+                    (in_water - in_vacuum).abs() > 1.0,
+                    "point {i}: in water {in_water}, in a vacuum {in_vacuum}"
+                );
+            }
+            let csv = run.scan.to_csv();
+            assert!(
+                csv.lines()
+                    .next()
+                    .unwrap()
+                    .contains("\"E MMFF94/water (ε 78.4) (kcal/mol)\""),
+                "{csv}"
+            );
+        }
+        assert!(
+            relaxed.structure(0).is_some(),
+            "a relaxed scan keeps its structures"
+        );
     }
 
     /// A three-parameter scan of butane: every point's energy is that of the structure with
@@ -1333,7 +1446,8 @@ mod energy_tests {
         ];
         let params: Vec<Param> = axes.iter().map(|a| a.param.clone()).collect();
         let source = Source::model(&model, None, params);
-        let mut run = Run::start(source.clone(), &axes, force_field).expect("start");
+        let mut run =
+            Run::start(source.clone(), &axes, force_field, Solvation::default()).expect("start");
         run.wait();
         assert_eq!(run.error, None);
 
@@ -1366,7 +1480,9 @@ mod energy_tests {
                 assert!(off.abs() < 1e-6, "point {i}: {p:?} at {now}, not {v}");
             }
             let text = edit::molfile_with_coords(&reference.molfile, &coords).unwrap();
-            let direct = Evaluator::new(&text, force_field).unwrap().energy(&coords);
+            let direct = Evaluator::new(&text, force_field, Solvation::default())
+                .unwrap()
+                .energy(&coords);
             let scanned = run.scan.energies[i].unwrap();
             assert!(direct.is_finite(), "point {i}");
             assert!(
@@ -1393,6 +1509,7 @@ mod energy_tests {
             Source::model(&model, None, params),
             &axes,
             ForceField::Mmff94,
+            Solvation::default(),
             Relax::new(Vec::new()),
         )
         .expect("start");
@@ -1427,6 +1544,7 @@ mod energy_tests {
             Source::model(&model, Some(0), vec![axis.param.clone()]),
             std::slice::from_ref(&axis),
             ForceField::Uff,
+            Solvation::default(),
             Relax::new(vec![
                 Constraint::Fix(0),
                 // Over the scanned atoms: gives way to the scanned value.
@@ -1479,6 +1597,7 @@ mod energy_tests {
                 Source::model(&model, anchor, vec![axis.param.clone()]),
                 std::slice::from_ref(&axis),
                 ForceField::Uff,
+                Solvation::default(),
                 Relax::new(fixed.iter().map(|&a| Constraint::Fix(a)).collect()),
             )
             .expect("start");
@@ -1522,6 +1641,7 @@ mod energy_tests {
             Source::model(&model, None, vec![axis.param.clone()]),
             std::slice::from_ref(&axis),
             ForceField::Uff,
+            Solvation::default(),
             relax,
         )
         .expect("start");
@@ -1560,7 +1680,15 @@ mod energy_tests {
         let mol = crate::three_d::read_molfile(reference).expect("molfile");
         let held = [Constraint::Torsion(dihedral, degrees)];
         let steps = 20 * crate::three_d::RESTRAINED_OPTIMIZE_STEPS;
-        match crate::three_d::relax(&mol, coords, force_field, &held, steps, None) {
+        match crate::three_d::relax(
+            &mol,
+            coords,
+            force_field,
+            Solvation::default(),
+            &held,
+            steps,
+            None,
+        ) {
             Ok(crate::three_d::Relaxed::Done { energy, .. }) => energy,
             other => panic!("not minimised: {other:?}"),
         }
@@ -1589,6 +1717,7 @@ mod energy_tests {
             Source::model(&model, None, vec![axis.param.clone()]),
             std::slice::from_ref(&axis),
             force_field,
+            Solvation::default(),
             Relax::new(Vec::new()),
         )
         .expect("start");
@@ -1638,6 +1767,7 @@ mod energy_tests {
             Source::model(&model, None, vec![axis.param.clone()]),
             std::slice::from_ref(&axis),
             ForceField::Mmff94,
+            Solvation::default(),
             Relax::new(Vec::new()),
         )
         .expect("start");
@@ -1657,7 +1787,8 @@ mod energy_tests {
         // Within a point: a raised flag stops the minimiser before its budget is spent.
         let source = Source::model(&model, None, vec![axis.param.clone()]);
         let reference = source.reference().unwrap();
-        let mut evaluator = Evaluator::new(&reference.molfile, ForceField::Mmff94).unwrap();
+        let mut evaluator =
+            Evaluator::new(&reference.molfile, ForceField::Mmff94, Solvation::default()).unwrap();
         let cancel = AtomicBool::new(true);
         let relaxed = evaluator.relax(&reference.coords, &[], OPTIMIZE_STEPS, &cancel);
         assert_eq!(relaxed, Relaxation::Cancelled);
@@ -1673,7 +1804,8 @@ mod energy_tests {
         let param = Param::Dihedral([0, 1, 2, 3]);
         let source = Source::model(&model, None, vec![param.clone()]);
         let reference = source.reference().unwrap();
-        let mut evaluator = Evaluator::new(&reference.molfile, ForceField::Uff).unwrap();
+        let mut evaluator =
+            Evaluator::new(&reference.molfile, ForceField::Uff, Solvation::default()).unwrap();
         let Ok(Point::Coords(syn)) = source.at(&[0.0]) else {
             panic!("syn")
         };
@@ -1806,10 +1938,17 @@ mod energy_tests {
     /// A relaxed and a rigid scan of `source` over `axis` under `force_field`, both finished.
     fn relaxed_and_rigid(source: &Source, axis: &Axis, force_field: ForceField) -> (Run, Run) {
         let axes = std::slice::from_ref(axis);
-        let mut rigid = Run::start(source.clone(), axes, force_field).expect("rigid");
+        let mut rigid =
+            Run::start(source.clone(), axes, force_field, Solvation::default()).expect("rigid");
         rigid.wait();
-        let mut relaxed = Run::start_relaxed(source.clone(), axes, force_field, Relax::new(vec![]))
-            .expect("relaxed");
+        let mut relaxed = Run::start_relaxed(
+            source.clone(),
+            axes,
+            force_field,
+            Solvation::default(),
+            Relax::new(vec![]),
+        )
+        .expect("relaxed");
         relaxed.wait();
         assert_eq!(relaxed.error, None);
         assert!(relaxed.scan.relaxed && !rigid.scan.relaxed);
@@ -2111,7 +2250,8 @@ mod energy_tests {
     fn a_warm_start_worse_than_the_rigid_point_is_not_kept() {
         let source = Source::assembly(&stack_of(benzene(), 2), vec![stack_rise()]);
         let reference = source.reference().unwrap();
-        let mut evaluator = Evaluator::new(&reference.molfile, ForceField::Uff).unwrap();
+        let mut evaluator =
+            Evaluator::new(&reference.molfile, ForceField::Uff, Solvation::default()).unwrap();
         let never = AtomicBool::new(false);
         let placed = source.placed_at(&[3.6]).unwrap();
         let Point::Coords(rigid) = &placed.point else {
@@ -2266,7 +2406,8 @@ mod energy_tests {
         let z = 3.6;
         let source = tilted_pair([45.0, 20.0, 0.0], z);
         let reference = source.reference().unwrap();
-        let mut evaluator = Evaluator::new(&reference.molfile, ForceField::Uff).unwrap();
+        let mut evaluator =
+            Evaluator::new(&reference.molfile, ForceField::Uff, Solvation::default()).unwrap();
         let never = AtomicBool::new(false);
         let placed = source.placed_at(&[z]).unwrap();
         let Point::Coords(rigid) = &placed.point else {
@@ -2346,12 +2487,18 @@ mod energy_tests {
             source.clone(),
             std::slice::from_ref(&axis),
             ForceField::Uff,
+            Solvation::default(),
             relax,
         )
         .expect("start");
         run.wait();
-        let mut rigid = Run::start(source.clone(), std::slice::from_ref(&axis), ForceField::Uff)
-            .expect("rigid");
+        let mut rigid = Run::start(
+            source.clone(),
+            std::slice::from_ref(&axis),
+            ForceField::Uff,
+            Solvation::default(),
+        )
+        .expect("rigid");
         rigid.wait();
         assert_eq!(run.scan.done(), 3);
         for i in 0..3 {
@@ -2369,6 +2516,7 @@ mod energy_tests {
             source,
             std::slice::from_ref(&axis),
             ForceField::Uff,
+            Solvation::default(),
             Relax::new(Vec::new()),
         )
         .expect("start");
@@ -2412,7 +2560,7 @@ mod energy_tests {
                 let param = Param::Dihedral([0, 1, 2, 3]);
                 let source = Source::model(&model, None, vec![param.clone()]);
                 let reference = source.reference().unwrap();
-                let mut ev = Evaluator::new(&reference.molfile, ff).unwrap();
+                let mut ev = Evaluator::new(&reference.molfile, ff, Solvation::default()).unwrap();
                 let never = AtomicBool::new(false);
                 let mut point = Duration::ZERO;
                 for target in [60.0, 0.0, -120.0] {
@@ -2479,7 +2627,8 @@ mod energy_tests {
         let reference = source.reference().unwrap();
         for ff in ForceField::ALL {
             let t = Instant::now();
-            let mut ev = energy::Evaluator::new(&reference.molfile, ff).unwrap();
+            let mut ev =
+                energy::Evaluator::new(&reference.molfile, ff, Solvation::default()).unwrap();
             let setup = t.elapsed();
             let t = Instant::now();
             for k in 0..10 {
@@ -2495,7 +2644,8 @@ mod energy_tests {
                     panic!()
                 };
                 let text = crate::three_d::edit::molfile_with_coords(&reference.molfile, &c);
-                let mut fresh = energy::Evaluator::new(&text.unwrap(), ff).unwrap();
+                let mut fresh =
+                    energy::Evaluator::new(&text.unwrap(), ff, Solvation::default()).unwrap();
                 assert!(fresh.energy(&c).is_finite());
             }
             let reparse = t.elapsed() / 10;
