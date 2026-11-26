@@ -3024,6 +3024,8 @@ mod tests {
         on_toolbar(&mut h, &mut app, &mut bars, |h, show| {
             let font = h.value_pos(t!("text_format.font.default"));
             h.click_at(font, egui::PointerButton::Primary, &mut *show);
+            // The one among the recent fonts, laid out before the installed fonts' list,
+            // where another Georgia may be, scrolled out of sight.
             h.click("Georgia", show);
         });
         let georgia = Value::Same(Some(FontName::new("Georgia")));

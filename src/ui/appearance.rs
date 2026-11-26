@@ -549,18 +549,56 @@ pub(crate) mod tests {
         (ring, o, text)
     }
 
-    /// Where the widget labelled `label` is in the last frame's accessibility tree.
+    /// The last frame's accessibility nodes in the order their widgets were laid out: depth
+    /// first from the root, each node's children in the order they were added.
+    ///
+    /// The update's own list follows a hash map keyed by widget Ids, which egui hashes with
+    /// `ahash`, so its order changes with the `ahash` version and with Ids that depend on the
+    /// machine (such as the place of an installed font in the font list). Where two widgets
+    /// share a label (a font among the recent ones and among all of them), the first in this
+    /// order is the one laid out first, whatever the hasher.
+    fn nodes_in_order(output: &egui::FullOutput) -> Vec<&egui::accesskit::Node> {
+        let Some(update) = output.platform_output.accesskit_update.as_ref() else {
+            return Vec::new();
+        };
+        let by_id: std::collections::HashMap<_, _> =
+            update.nodes.iter().map(|(id, n)| (*id, n)).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut order = Vec::with_capacity(update.nodes.len());
+        let mut stack: Vec<_> = update.tree.as_ref().map(|t| t.root).into_iter().collect();
+        while let Some(id) = stack.pop() {
+            let Some(node) = by_id.get(&id) else { continue };
+            if seen.insert(id) {
+                order.push(*node);
+                stack.extend(node.children().iter().rev());
+            }
+        }
+        // Any node the root does not reach, after the others.
+        order.extend(
+            update
+                .nodes
+                .iter()
+                .filter(|(id, _)| !seen.contains(id))
+                .map(|(_, n)| n),
+        );
+        order
+    }
+
+    fn center(node: &egui::accesskit::Node) -> Option<egui::Pos2> {
+        let b = node.bounds()?;
+        Some(egui::pos2(
+            ((b.x0 + b.x1) / 2.0) as f32,
+            ((b.y0 + b.y1) / 2.0) as f32,
+        ))
+    }
+
+    /// Where the widget labelled `label` is in the last frame's accessibility tree: the first
+    /// one laid out, if several are (see [`nodes_in_order`]).
     pub fn find(output: &egui::FullOutput, label: &str) -> Option<egui::Pos2> {
-        let update = output.platform_output.accesskit_update.as_ref()?;
-        update.nodes.iter().find_map(|(_, node)| {
-            (node.label() == Some(label)).then(|| {
-                let b = node.bounds()?;
-                Some(egui::pos2(
-                    ((b.x0 + b.x1) / 2.0) as f32,
-                    ((b.y0 + b.y1) / 2.0) as f32,
-                ))
-            })?
-        })
+        nodes_in_order(output)
+            .into_iter()
+            .find(|n| n.label() == Some(label))
+            .and_then(center)
     }
 
     /// A headless egui context, clicked by the accessible labels of its widgets.
@@ -602,19 +640,14 @@ pub(crate) mod tests {
                 .unwrap_or_else(|| panic!("no widget labelled {label:?} in {:?}", self.labels()))
         }
 
-        /// The last frame's node labelled `label`.
+        /// The last frame's nodes, in layout order (see [`nodes_in_order`]).
+        fn nodes(&self) -> Vec<&egui::accesskit::Node> {
+            self.last.as_ref().map(nodes_in_order).unwrap_or_default()
+        }
+
+        /// The last frame's (first) node labelled `label`.
         fn node(&self, label: &str) -> Option<&egui::accesskit::Node> {
-            let update = self
-                .last
-                .as_ref()?
-                .platform_output
-                .accesskit_update
-                .as_ref()?;
-            update
-                .nodes
-                .iter()
-                .find(|(_, n)| n.label() == Some(label))
-                .map(|(_, n)| n)
+            self.nodes().into_iter().find(|n| n.label() == Some(label))
         }
 
         /// The state of the toggle labelled `label`.
@@ -636,16 +669,10 @@ pub(crate) mod tests {
             what: &str,
             pred: impl Fn(&egui::accesskit::Node) -> bool,
         ) -> egui::Pos2 {
-            let update = self
-                .last
-                .as_ref()
-                .and_then(|o| o.platform_output.accesskit_update.as_ref());
-            update
+            self.nodes()
                 .into_iter()
-                .flat_map(|u| u.nodes.iter())
-                .find(|(_, n)| pred(n))
-                .and_then(|(_, n)| n.bounds())
-                .map(|b| egui::pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32))
+                .find(|n| pred(n))
+                .and_then(center)
                 .unwrap_or_else(|| panic!("no {what} in {:?}", self.labels()))
         }
 
@@ -680,15 +707,10 @@ pub(crate) mod tests {
 
         /// The labels of the last frame's widgets, and the texts of its labels.
         pub fn labels(&self) -> Vec<String> {
-            let nodes = self
-                .last
-                .as_ref()
-                .and_then(|o| o.platform_output.accesskit_update.as_ref());
-            nodes
+            self.nodes()
                 .into_iter()
-                .flat_map(|u| u.nodes.iter())
                 // A label's text is its value.
-                .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
+                .filter_map(|n| n.label().or(n.value()).map(str::to_owned))
                 .collect()
         }
 
