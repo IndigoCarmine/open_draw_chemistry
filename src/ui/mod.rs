@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::assembly::AssemblyExport;
 use crate::io::Export;
-use crate::three_d::{Export3d, ForceField};
+use crate::three_d::{Export3d, ForceField, Solvation};
 
 pub mod appearance;
 pub mod assembly;
@@ -134,6 +134,9 @@ pub enum Command {
     Copy3d,
     /// The force field the active document's next generation or optimisation uses.
     SetForceField(ForceField),
+    /// The solvent the active document's next generation or optimisation screens MMFF's
+    /// charges by.
+    SetSolvation(Solvation),
     About,
     /// Open the 断片の管理 window.
     ManageFragments,

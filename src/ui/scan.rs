@@ -18,7 +18,7 @@ use crate::scan::run::format_duration;
 use crate::scan::source::{Point, Source};
 use crate::scan::{self, Axis, Param, Reduce, Run, Scan};
 use crate::theme;
-use crate::three_d::{ForceField, edit};
+use crate::three_d::{ForceField, Solvation, edit};
 
 /// What a scan varies, following the view it is opened from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +93,8 @@ pub struct ScanWindow {
     axes: Vec<AxisForm>,
     /// The force field chosen here; the document's own until changed.
     force_field: Option<ForceField>,
+    /// The solvent chosen here; the document's own until changed.
+    solvation: Option<Solvation>,
     /// Minimise everything but the scanned parameters at every point (the 3D model only).
     relax: bool,
     /// Show the energy relative to the lowest point (ΔE).
@@ -432,6 +434,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
     }
     let running = doc.scan.as_ref().is_some_and(Run::is_running);
     let force_field = *win.force_field.get_or_insert(doc.three_d.force_field);
+    let mut solvation = *win.solvation.get_or_insert(doc.three_d.solvation);
 
     let heading = match target {
         Target::Assembly => t!("scan.window.target_assembly"),
@@ -561,6 +564,13 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
                 }
             });
     });
+    ui.horizontal_wrapped(|ui| {
+        ui.label(t!("scan.window.solvent"));
+        let mmff = force_field != ForceField::Uff;
+        if super::view3d::solvation_picker(ui, "scan_solvent", &mut solvation, mmff) {
+            win.solvation = Some(solvation);
+        }
+    });
 
     let mut relax = win.relax;
     let relax_tip = match target {
@@ -622,7 +632,7 @@ fn setup(ui: &mut egui::Ui, win: &mut ScanWindow, doc: &mut Document, target: Ta
             .on_disabled_hover_text(t!("scan.window.start_disabled_tip"))
             .clicked()
         {
-            start(win, doc, target, &axes, force_field, relax);
+            start(win, doc, target, &axes, force_field, solvation, relax);
         }
     });
 }
@@ -734,6 +744,7 @@ fn start(
     target: Target,
     axes: &[Axis],
     ff: ForceField,
+    solvation: Solvation,
     relax: bool,
 ) {
     let params: Vec<Param> = axes.iter().map(|a| a.param.clone()).collect();
@@ -750,9 +761,9 @@ fn start(
         }
     };
     let started = if relax {
-        Run::start_relaxed(source, axes, ff, Relax::new(restraints))
+        Run::start_relaxed(source, axes, ff, solvation, Relax::new(restraints))
     } else {
-        Run::start(source, axes, ff)
+        Run::start(source, axes, ff, solvation)
     };
     match started {
         Ok(run) => {
@@ -1051,7 +1062,7 @@ fn plot(
     let y_title = format!(
         "{}E [{}] ({})",
         if relative { "Δ" } else { "" },
-        scan.force_field,
+        scan.method(),
         scan.unit
     );
     let whole;
@@ -1609,6 +1620,7 @@ mod tests {
                 })
                 .collect(),
             force_field: ForceField::Uff,
+            solvation: crate::three_d::Solvation::default(),
             energy: 0.0,
             energy_unit: "kJ/mol".into(),
             formula: "C4".into(),
@@ -1626,6 +1638,7 @@ mod tests {
                 })
                 .collect(),
             ForceField::Uff,
+            crate::three_d::Solvation::default(),
             "kJ/mol".into(),
         );
         for i in 0..scan.total() {

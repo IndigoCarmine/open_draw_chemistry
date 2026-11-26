@@ -6,7 +6,7 @@ use std::path::Path;
 use chembuider_rs::{BondOrder, BondStereo, Config, Molecule};
 use open_draw_chemistry::io;
 use open_draw_chemistry::three_d::read::Format3d;
-use open_draw_chemistry::three_d::{self, Export3d, ForceField, Model3d};
+use open_draw_chemistry::three_d::{self, Export3d, ForceField, Model3d, Solvation};
 
 /// Bonded pairs of carbons in `model`, with their lengths.
 fn carbon_carbon_bonds(model: &Model3d) -> Vec<f64> {
@@ -30,7 +30,13 @@ fn ethanol() -> Molecule {
 
 #[test]
 fn ethanol_gets_its_hydrogens_and_a_relaxed_geometry() {
-    let model = three_d::generate(&ethanol(), &Config::default(), ForceField::Mmff94).unwrap();
+    let model = three_d::generate(
+        &ethanol(),
+        &Config::default(),
+        ForceField::Mmff94,
+        Solvation::default(),
+    )
+    .unwrap();
     assert_eq!(model.formula, "C2H6O");
     assert_eq!(model.atoms.len(), 9);
     assert_eq!(model.hydrogen_count(), 6);
@@ -47,7 +53,13 @@ fn ethanol_gets_its_hydrogens_and_a_relaxed_geometry() {
 fn chemdraw_benzene_becomes_a_flat_hexagon_with_six_hydrogens() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/chemdraw26_benzene.cdx");
     let drawing = io::load(&path).unwrap().molecule;
-    let model = three_d::generate(&drawing, &Config::default(), ForceField::Mmff94).unwrap();
+    let model = three_d::generate(
+        &drawing,
+        &Config::default(),
+        ForceField::Mmff94,
+        Solvation::default(),
+    )
+    .unwrap();
     assert_eq!(model.formula, "C6H6");
     assert_eq!(model.hydrogen_count(), 6);
     assert!(model.energy.is_finite());
@@ -90,6 +102,7 @@ fn wedges_decide_the_enantiomer() {
             &bromochlorofluoromethane(stereo),
             &Config::default(),
             ForceField::Mmff94,
+            Solvation::default(),
         )
         .unwrap()
     };
@@ -107,7 +120,7 @@ fn wedges_decide_the_enantiomer() {
 #[test]
 fn every_force_field_relaxes_ethanol() {
     for ff in ForceField::ALL {
-        let model = three_d::generate(&ethanol(), &Config::default(), ff)
+        let model = three_d::generate(&ethanol(), &Config::default(), ff, Solvation::default())
             .unwrap_or_else(|e| panic!("{ff}: {e}"));
         assert!(model.energy.is_finite(), "{ff}: energy {}", model.energy);
         assert_eq!(model.force_field, ff);
@@ -116,8 +129,14 @@ fn every_force_field_relaxes_ethanol() {
 
 #[test]
 fn optimising_does_not_raise_the_energy() {
-    let model = three_d::generate(&ethanol(), &Config::default(), ForceField::Uff).unwrap();
-    let optimized = three_d::optimize(&model, ForceField::Uff).unwrap();
+    let model = three_d::generate(
+        &ethanol(),
+        &Config::default(),
+        ForceField::Uff,
+        Solvation::default(),
+    )
+    .unwrap();
+    let optimized = three_d::optimize(&model, ForceField::Uff, Solvation::default()).unwrap();
     assert_eq!(optimized.atoms.len(), model.atoms.len());
     assert!(
         optimized.energy <= model.energy + 1e-3,
@@ -129,7 +148,13 @@ fn optimising_does_not_raise_the_energy() {
 
 #[test]
 fn exports_read_back_with_every_atom() {
-    let model = three_d::generate(&ethanol(), &Config::default(), ForceField::Mmff94).unwrap();
+    let model = three_d::generate(
+        &ethanol(),
+        &Config::default(),
+        ForceField::Mmff94,
+        Solvation::default(),
+    )
+    .unwrap();
     for format in Export3d::ALL {
         let text = three_d::export(&model, format).unwrap_or_else(|e| panic!("{format:?}: {e}"));
         let back = read_back(&text, format);
@@ -146,7 +171,13 @@ fn mol2_export_reads_back_with_the_same_coordinates() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/chemdraw26_benzene.cdx");
     let benzene = io::load(&path).unwrap().molecule;
     for drawing in [ethanol(), benzene] {
-        let model = three_d::generate(&drawing, &Config::default(), ForceField::Mmff94).unwrap();
+        let model = three_d::generate(
+            &drawing,
+            &Config::default(),
+            ForceField::Mmff94,
+            Solvation::default(),
+        )
+        .unwrap();
         let text = three_d::export(&model, Export3d::Mol2).unwrap();
         assert!(text.contains("@<TRIPOS>BOND"), "{text}");
         let back = three_d::read::read(Format3d::Mol2, &text)

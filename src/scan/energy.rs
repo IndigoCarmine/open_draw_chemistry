@@ -9,7 +9,7 @@ use molecule_optimizer_rs::Molecule;
 use molecule_optimizer_rs::ff::ForceField as Field;
 
 use crate::three_d::geom::Vec3;
-use crate::three_d::{self, Atom3d, Bond3d, Constraint, ForceField, Relaxed};
+use crate::three_d::{self, Atom3d, Bond3d, Constraint, ForceField, Relaxed, Solvation};
 
 /// A V2000 count field is three digits wide; beyond it the molfile is written as V3000.
 const V2000_MAX: usize = 999;
@@ -84,17 +84,24 @@ pub struct Evaluator {
     mol: Molecule,
     field: Box<dyn Field>,
     force_field: ForceField,
+    /// The solvent the field screens its charges by (and every relaxation's field too).
+    solvation: Solvation,
     /// Where the structure's atoms are now (flat): the last energy's coordinates, or where a
     /// segment of [`Evaluator::relax_held`] left them.
     at: Vec<f64>,
 }
 
 impl Evaluator {
-    /// Read `molfile` once. Fails on an unreadable file, or when the force
-    /// field cannot be set up for the structure (an atom it has no type for).
-    pub fn new(molfile: &str, force_field: ForceField) -> Result<Self, String> {
+    /// Read `molfile` once, and set `force_field` up for it in `solvation`. Fails on an
+    /// unreadable file, or when the force field cannot be set up for the structure (an atom it
+    /// has no type for).
+    pub fn new(
+        molfile: &str,
+        force_field: ForceField,
+        solvation: Solvation,
+    ) -> Result<Self, String> {
         let mol = three_d::read_molfile(molfile).map_err(|e| e.to_string())?;
-        let field = three_d::field(&mol, force_field, &[]).map_err(|e| e.to_string())?;
+        let field = three_d::field(&mol, force_field, solvation, &[]).map_err(|e| e.to_string())?;
         let at = mol.flat_coords();
         if !field.energy(&at).is_finite() {
             return Err(three_d::Error::ForceField(force_field).to_string());
@@ -103,6 +110,7 @@ impl Evaluator {
             mol,
             field,
             force_field,
+            solvation,
             at,
         })
     }
@@ -113,6 +121,10 @@ impl Evaluator {
 
     pub fn force_field(&self) -> ForceField {
         self.force_field
+    }
+
+    pub fn solvation(&self) -> Solvation {
+        self.solvation
     }
 
     /// The energy with the atoms at `coords` (NaN when it cannot be had).
@@ -182,6 +194,7 @@ impl Evaluator {
             &self.mol,
             coords,
             self.force_field,
+            self.solvation,
             constraints,
             steps,
             Some(cancel),
@@ -332,8 +345,13 @@ impl Evaluator {
 
 /// The energy of a structure read afresh (a grid point whose atoms differ from the
 /// reference's). NaN when it cannot be had.
-pub fn single_point(atoms: &[Atom3d], bonds: &[Bond3d], force_field: ForceField) -> f64 {
-    let Ok(mut evaluator) = Evaluator::new(&molfile(atoms, bonds), force_field) else {
+pub fn single_point(
+    atoms: &[Atom3d],
+    bonds: &[Bond3d],
+    force_field: ForceField,
+    solvation: Solvation,
+) -> f64 {
+    let Ok(mut evaluator) = Evaluator::new(&molfile(atoms, bonds), force_field, solvation) else {
         return f64::NAN;
     };
     let coords: Vec<Vec3> = atoms.iter().map(|a| a.pos).collect();
@@ -425,7 +443,12 @@ mod tests {
                     order: b.order,
                 }));
             }
-            let mut ev = Evaluator::new(&molfile(&atoms, &bonds), ForceField::Uff).unwrap();
+            let mut ev = Evaluator::new(
+                &molfile(&atoms, &bonds),
+                ForceField::Uff,
+                Solvation::default(),
+            )
+            .unwrap();
             assert_eq!(ev.atoms(), atoms.len());
             let mut moved = atoms.clone();
             // Stretch every O–H bond a little and push the molecules closer.
@@ -437,7 +460,7 @@ mod tests {
             }
             let coords: Vec<Vec3> = moved.iter().map(|a| a.pos).collect();
             let in_place = ev.energy(&coords);
-            let fresh = single_point(&moved, &bonds, ForceField::Uff);
+            let fresh = single_point(&moved, &bonds, ForceField::Uff, Solvation::default());
             assert!(in_place.is_finite());
             assert!(
                 (in_place - fresh).abs() < 1e-3 * fresh.abs().max(1.0),

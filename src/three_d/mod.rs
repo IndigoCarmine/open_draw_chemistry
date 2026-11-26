@@ -62,6 +62,154 @@ impl fmt::Display for ForceField {
     }
 }
 
+/// The medium MMFF's electrostatics are computed in: its relative permittivity ε divides every
+/// charge–charge term, as RDKit's `setMMFFDielectricConstant` does. Only MMFF94/94s has such
+/// terms; UFF has no electrostatics, so a solvent changes nothing under it. It is the
+/// continuum's screening of the charges and nothing more: no cavity, no solvation free energy.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub enum Solvent {
+    #[default]
+    Vacuum,
+    Hexane,
+    Toluene,
+    DiethylEther,
+    Chloroform,
+    EthylAcetate,
+    Thf,
+    Dichloromethane,
+    Acetone,
+    Ethanol,
+    Methanol,
+    Acetonitrile,
+    Dmf,
+    Dmso,
+    Water,
+}
+
+impl Solvent {
+    /// Every solvent offered, roughly from the least polar to the most.
+    pub const ALL: [Solvent; 15] = [
+        Solvent::Vacuum,
+        Solvent::Hexane,
+        Solvent::Toluene,
+        Solvent::DiethylEther,
+        Solvent::Chloroform,
+        Solvent::EthylAcetate,
+        Solvent::Thf,
+        Solvent::Dichloromethane,
+        Solvent::Acetone,
+        Solvent::Ethanol,
+        Solvent::Methanol,
+        Solvent::Acetonitrile,
+        Solvent::Dmf,
+        Solvent::Dmso,
+        Solvent::Water,
+    ];
+
+    /// The solvent's English name: what files record (a scan's CSV, a conformer SD file),
+    /// whatever the UI language.
+    pub fn id(self) -> &'static str {
+        match self {
+            Solvent::Vacuum => "vacuum",
+            Solvent::Hexane => "hexane",
+            Solvent::Toluene => "toluene",
+            Solvent::DiethylEther => "diethyl ether",
+            Solvent::Chloroform => "chloroform",
+            Solvent::EthylAcetate => "ethyl acetate",
+            Solvent::Thf => "THF",
+            Solvent::Dichloromethane => "dichloromethane",
+            Solvent::Acetone => "acetone",
+            Solvent::Ethanol => "ethanol",
+            Solvent::Methanol => "methanol",
+            Solvent::Acetonitrile => "acetonitrile",
+            Solvent::Dmf => "DMF",
+            Solvent::Dmso => "DMSO",
+            Solvent::Water => "water",
+        }
+    }
+
+    /// The solvent's name in the UI language.
+    pub fn name(self) -> &'static str {
+        match self {
+            Solvent::Vacuum => t!("three_d.solvent.vacuum"),
+            Solvent::Hexane => t!("three_d.solvent.hexane"),
+            Solvent::Toluene => t!("three_d.solvent.toluene"),
+            Solvent::DiethylEther => t!("three_d.solvent.diethyl_ether"),
+            Solvent::Chloroform => t!("three_d.solvent.chloroform"),
+            Solvent::EthylAcetate => t!("three_d.solvent.ethyl_acetate"),
+            Solvent::Thf => t!("three_d.solvent.thf"),
+            Solvent::Dichloromethane => t!("three_d.solvent.dichloromethane"),
+            Solvent::Acetone => t!("three_d.solvent.acetone"),
+            Solvent::Ethanol => t!("three_d.solvent.ethanol"),
+            Solvent::Methanol => t!("three_d.solvent.methanol"),
+            Solvent::Acetonitrile => t!("three_d.solvent.acetonitrile"),
+            Solvent::Dmf => t!("three_d.solvent.dmf"),
+            Solvent::Dmso => t!("three_d.solvent.dmso"),
+            Solvent::Water => t!("three_d.solvent.water"),
+        }
+    }
+
+    /// The relative permittivity ε at 25 °C (1 for a vacuum).
+    pub fn dielectric(self) -> f64 {
+        match self {
+            Solvent::Vacuum => 1.0,
+            Solvent::Hexane => 1.88,
+            Solvent::Toluene => 2.38,
+            Solvent::DiethylEther => 4.33,
+            Solvent::Chloroform => 4.81,
+            Solvent::EthylAcetate => 6.02,
+            Solvent::Thf => 7.58,
+            Solvent::Dichloromethane => 8.93,
+            Solvent::Acetone => 20.7,
+            Solvent::Ethanol => 24.5,
+            Solvent::Methanol => 32.7,
+            Solvent::Acetonitrile => 37.5,
+            Solvent::Dmf => 36.7,
+            Solvent::Dmso => 46.7,
+            Solvent::Water => 78.4,
+        }
+    }
+}
+
+/// How MMFF screens its charges: by the solvent's ε, and whether that also grows with the
+/// distance (ε·r, RDKit's distance-dependent dielectric, a common stand-in for the solvent
+/// that gets between charges far apart). The default — a vacuum, ε a constant 1 — is MMFF as
+/// it was parametrised. Ignored under UFF, which has no electrostatics.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub struct Solvation {
+    pub solvent: Solvent,
+    /// ε·r rather than ε: each charge–charge term falls with the square of the distance.
+    pub distance_dependent: bool,
+}
+
+impl Solvation {
+    /// MMFF's own electrostatics: a vacuum, ε constant.
+    pub fn is_vacuum(self) -> bool {
+        self == Solvation::default()
+    }
+
+    /// The setting as it applies under `force_field`: itself under MMFF, a vacuum under UFF
+    /// (which has no electrostatics for a solvent to screen), so what was computed in effect
+    /// is what is recorded and shown.
+    pub fn under(self, force_field: ForceField) -> Solvation {
+        match force_field {
+            ForceField::Mmff94 | ForceField::Mmff94s => self,
+            ForceField::Uff => Solvation::default(),
+        }
+    }
+
+    /// The setting in English, for a file or an info row: "water (ε 78.4)", or with a
+    /// distance-dependent dielectric "water (ε 78.4·r)".
+    pub fn label(self) -> String {
+        let r = if self.distance_dependent { "·r" } else { "" };
+        format!("{} (ε {}{r})", self.solvent.id(), self.solvent.dielectric())
+    }
+}
+
 /// A file format a 3D model can be exported to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Export3d {
@@ -131,6 +279,9 @@ pub struct Model3d {
     pub energy: f64,
     /// The energy's unit (kcal/mol).
     pub energy_unit: String,
+    /// The solvent MMFF's charges were screened by, for the geometry and the energy (always a
+    /// vacuum under UFF, which has no electrostatics).
+    pub solvation: Solvation,
     /// The molecular formula, hydrogens included (Hill order).
     pub formula: String,
     /// The model as a 3D MDL molfile: the source for [`optimize`] and [`export`].
@@ -195,27 +346,33 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// Generate a 3D model of `mol` relaxed under `force_field`. Slow on a large structure (it is
-/// embedded and minimised): call it off the UI thread, as [`Job`] does.
+/// Generate a 3D model of `mol` relaxed under `force_field` in `solvation`. Slow on a large
+/// structure (it is embedded and minimised): call it off the UI thread, as [`Job`] does.
 pub fn generate(
     mol: &Molecule,
     config: &Config,
     force_field: ForceField,
+    solvation: Solvation,
 ) -> Result<Model3d, Error> {
     let molfile = molfile::to_molfile(mol, config)?;
-    generate_from_molfile(&molfile, force_field)
+    generate_from_molfile(&molfile, force_field, solvation)
 }
 
 /// [`generate`] from a 2D molfile already made by [`molfile::to_molfile`].
-pub fn generate_from_molfile(molfile: &str, force_field: ForceField) -> Result<Model3d, Error> {
+pub fn generate_from_molfile(
+    molfile: &str,
+    force_field: ForceField,
+    solvation: Solvation,
+) -> Result<Model3d, Error> {
     with_uff_fallback(force_field, |ff| {
-        engine::generate(molfile, ff, GENERATE_STEPS)
+        engine::generate(molfile, ff, solvation, GENERATE_STEPS)
     })
 }
 
 /// `work` under `force_field`, or under UFF when `force_field` has no type for one of the
 /// structure's atoms: MMFF94 knows no metal, UFF the whole periodic table, so a complex is
-/// still built and relaxed. The model says which force field it was made with.
+/// still built and relaxed. The model says which force field it was made with — and, as UFF
+/// ignores the solvent, a model that fell back says it was made in a vacuum.
 fn with_uff_fallback(
     force_field: ForceField,
     work: impl Fn(ForceField) -> Result<Model3d, Error>,
@@ -226,19 +383,25 @@ fn with_uff_fallback(
     }
 }
 
-/// Minimise `model` further under `force_field`, which may differ from the one it was made with.
-pub fn optimize(model: &Model3d, force_field: ForceField) -> Result<Model3d, Error> {
-    optimize_with(model, force_field, &[])
+/// Minimise `model` further under `force_field` in `solvation`, which may differ from those it
+/// was made with.
+pub fn optimize(
+    model: &Model3d,
+    force_field: ForceField,
+    solvation: Solvation,
+) -> Result<Model3d, Error> {
+    optimize_with(model, force_field, solvation, &[])
 }
 
 /// [`optimize`] holding `constraints` (fixed atoms, restrained lengths, angles and dihedrals).
 pub fn optimize_with(
     model: &Model3d,
     force_field: ForceField,
+    solvation: Solvation,
     constraints: &[Constraint],
 ) -> Result<Model3d, Error> {
     with_uff_fallback(force_field, |ff| {
-        engine::optimize(&model.molfile, ff, OPTIMIZE_STEPS, constraints)
+        engine::optimize(&model.molfile, ff, solvation, OPTIMIZE_STEPS, constraints)
     })
 }
 
@@ -256,9 +419,13 @@ pub(crate) use engine::tests::model_from_molfile;
 /// The most minimiser iterations a restrained [`optimize_with`] takes.
 pub const RESTRAINED_OPTIMIZE_STEPS: u32 = OPTIMIZE_STEPS * engine::RESTRAINED_BUDGET;
 
-/// The single-point energy of `model`'s current geometry under `force_field` (kcal/mol). For the energy after a hand edit; slow-ish, so off the UI thread.
-pub fn energy(model: &Model3d, force_field: ForceField) -> Result<f64, Error> {
-    engine::energy(&model.molfile, force_field)
+/// The single-point energy of `model`'s current geometry under `force_field` in `solvation` (kcal/mol). For the energy after a hand edit; slow-ish, so off the UI thread.
+pub fn energy(
+    model: &Model3d,
+    force_field: ForceField,
+    solvation: Solvation,
+) -> Result<f64, Error> {
+    engine::energy(&model.molfile, force_field, solvation)
 }
 
 /// `model` as the text of a file in `format`.

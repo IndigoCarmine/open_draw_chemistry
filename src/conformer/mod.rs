@@ -34,7 +34,7 @@ use molecule_optimizer_rs::optim::{MinimizeOptions, MinimizeStatus, Observer};
 use molecule_optimizer_rs::tasks::{Engine, JobHandle};
 
 use crate::three_d::geom::Vec3;
-use crate::three_d::{self, Constraint, ForceField, Model3d};
+use crate::three_d::{self, Constraint, ForceField, Model3d, Solvation};
 
 /// Two conformers closer than the RMSD threshold are the same one only if their energies are
 /// also within this (kcal/mol): minimisations of one conformer end a little apart.
@@ -79,6 +79,8 @@ pub struct Settings {
     /// Keep conformers at most this far (kcal/mol) above the lowest; not finite keeps all.
     pub energy_window: f64,
     pub force_field: ForceField,
+    /// The solvent MMFF's charges are screened by while minimising (ignored under UFF).
+    pub solvation: Solvation,
     /// The random stream's seed: the same seed, the same search.
     pub seed: u64,
 }
@@ -91,6 +93,7 @@ impl Default for Settings {
             rmsd_threshold: 0.5,
             energy_window: 10.0,
             force_field: ForceField::default(),
+            solvation: Solvation::default(),
             seed: 42,
         }
     }
@@ -191,7 +194,8 @@ impl Run {
             .filter(|c| c.is_valid_for(mol.num_atoms()))
             .copied()
             .collect();
-        three_d::field(&mol, settings.force_field, &constraints).map_err(|e| e.to_string())?;
+        three_d::field(&mol, settings.force_field, settings.solvation, &constraints)
+            .map_err(|e| e.to_string())?;
         let mut options = settings.options();
         if !constraints.is_empty() {
             options.generator = match settings.method {
@@ -207,7 +211,12 @@ impl Run {
         }
         let handle = Engine::global().conformer_search(
             Arc::new(mol.clone()),
-            three_d::restrained_builder(settings.force_field, &constraints, mol.num_atoms()),
+            three_d::restrained_builder(
+                settings.force_field,
+                settings.solvation,
+                &constraints,
+                mol.num_atoms(),
+            ),
             options,
         );
         Ok(Run {
@@ -353,10 +362,16 @@ impl Run {
     }
 
     /// Every conformer as one SD file, lowest energy first, each with its energy, its energy
-    /// above the lowest and the force field as data fields.
+    /// above the lowest, the force field and the solvent (as it applied: a vacuum under UFF)
+    /// as data fields.
     pub fn to_sdf(&self) -> String {
         let lowest = self.lowest().unwrap_or(0.0);
         let force_field = self.settings.force_field.id();
+        let solvent = self
+            .settings
+            .solvation
+            .under(self.settings.force_field)
+            .label();
         self.conformers
             .iter()
             .enumerate()
@@ -370,6 +385,7 @@ impl Run {
                         ("RelativeEnergy", format!("{:.4}", c.energy - lowest)),
                         ("EnergyUnit", three_d::ENERGY_UNIT.to_owned()),
                         ("ForceField", force_field.to_owned()),
+                        ("Solvent", solvent.clone()),
                     ],
                 )
             })
@@ -554,6 +570,7 @@ pub(crate) mod tests {
         three_d::generate_from_molfile(
             include_str!("../../tests/data/drawn/butane.mol"),
             force_field,
+            Solvation::default(),
         )
         .expect("butane")
     }
@@ -562,6 +579,7 @@ pub(crate) mod tests {
         three_d::generate_from_molfile(
             include_str!("../../tests/data/drawn/pentane.mol"),
             force_field,
+            Solvation::default(),
         )
         .expect("pentane")
     }
@@ -664,12 +682,54 @@ pub(crate) mod tests {
         );
         let mut placed = model.clone();
         crate::three_d::edit::set_coords(&mut placed, &run.conformers[0].coords);
-        let energy = three_d::energy(&placed, ForceField::Uff).expect("energy");
+        let energy =
+            three_d::energy(&placed, ForceField::Uff, Solvation::default()).expect("energy");
         assert!(
             (energy - run.conformers[0].energy).abs() < 1e-3,
             "{energy} vs {}",
             run.conformers[0].energy
         );
+    }
+
+    /// A search in water minimises under MMFF with the charges screened by water's ε: its
+    /// energies are the single points in water, not in a vacuum, and its SD file says so.
+    #[test]
+    fn energies_in_water_match_the_screened_force_field() {
+        let water = Solvation {
+            solvent: three_d::Solvent::Water,
+            distance_dependent: false,
+        };
+        let model = three_d::generate_from_molfile(
+            include_str!("../../tests/data/drawn/acetic_acid.mol"),
+            ForceField::Mmff94,
+            Solvation::default(),
+        )
+        .expect("acetic acid");
+        let run = search(
+            &model,
+            Settings {
+                method: Method::RandomTorsion,
+                starts: 8,
+                force_field: ForceField::Mmff94,
+                solvation: water,
+                ..Settings::default()
+            },
+        );
+        let mut placed = model.clone();
+        crate::three_d::edit::set_coords(&mut placed, &run.conformers[0].coords);
+        let in_water = three_d::energy(&placed, ForceField::Mmff94, water).expect("energy");
+        let in_vacuum =
+            three_d::energy(&placed, ForceField::Mmff94, Solvation::default()).expect("energy");
+        assert!(
+            (in_water - run.conformers[0].energy).abs() < 1e-3,
+            "{in_water} vs {}",
+            run.conformers[0].energy
+        );
+        assert!(
+            (in_water - in_vacuum).abs() > 0.1,
+            "water {in_water}, vacuum {in_vacuum}"
+        );
+        assert!(run.to_sdf().contains("> <Solvent>\nwater (ε 78.4)\n"));
     }
 
     /// The SD file holds one record per conformer, each with its energy.
@@ -766,7 +826,8 @@ pub(crate) mod tests {
                 assert!((length - 3.0).abs() < 0.05, "{method:?}: H–H {length:.3} Å");
                 let mut placed = model.clone();
                 crate::three_d::edit::set_coords(&mut placed, &c.coords);
-                let energy = three_d::energy(&placed, ForceField::Uff).expect("energy");
+                let energy = three_d::energy(&placed, ForceField::Uff, Solvation::default())
+                    .expect("energy");
                 assert!(
                     (energy - c.energy).abs() < 1e-3,
                     "{method:?}: {energy} vs {}",

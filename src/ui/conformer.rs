@@ -16,9 +16,11 @@ use crate::three_d::{ENERGY_UNIT, ForceField};
 #[derive(Debug, Default)]
 pub struct ConformerWindow {
     pub open: bool,
-    /// The settings as being edited; the force field is the document's until changed.
+    /// The settings as being edited; the force field and the solvent are the document's until
+    /// changed.
     settings: Settings,
     force_field_chosen: bool,
+    solvation_chosen: bool,
     /// The conformer last put into the model (its rank).
     applied: Option<usize>,
     /// The last problem or confirmation, and whether it is a problem.
@@ -93,6 +95,9 @@ fn body(
     };
     if !win.force_field_chosen {
         win.settings.force_field = doc.three_d.force_field;
+    }
+    if !win.solvation_chosen {
+        win.settings.solvation = doc.three_d.solvation;
     }
     setup(ui, win, doc);
     if let Some((text, problem)) = &win.message {
@@ -171,6 +176,20 @@ fn setup(ui: &mut egui::Ui, win: &mut ConformerWindow, doc: &mut Document) {
                 if s.force_field != before {
                     win.force_field_chosen = true;
                 }
+                ui.end_row();
+
+                ui.label(t!("conformer.window.solvent"));
+                let mmff = s.force_field != ForceField::Uff;
+                ui.horizontal(|ui| {
+                    if crate::ui::view3d::solvation_picker(
+                        ui,
+                        "conformer_solvent",
+                        &mut s.solvation,
+                        mmff,
+                    ) {
+                        win.solvation_chosen = true;
+                    }
+                });
                 ui.end_row();
 
                 ui.label(t!("conformer.window.seed"));

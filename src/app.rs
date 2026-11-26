@@ -708,6 +708,11 @@ impl OpenDrawApp {
                     doc.three_d.force_field = ff;
                 }
             }
+            Command::SetSolvation(solvation) => {
+                if let Some(doc) = self.active_doc_mut() {
+                    doc.three_d.solvation = solvation;
+                }
+            }
             Command::ManageFragments => {
                 // Pick up files added to the folder by hand since the last look.
                 self.reload_fragments();
@@ -1133,7 +1138,7 @@ impl OpenDrawApp {
         if doc.softcore.as_ref().is_some_and(softcore::Run::is_running) {
             return;
         }
-        let force_field = doc.three_d.force_field;
+        let (force_field, solvation) = (doc.three_d.force_field, doc.three_d.solvation);
         let started = match target {
             softcore::Target::Model => {
                 if doc.three_d.is_running() {
@@ -1143,10 +1148,10 @@ impl OpenDrawApp {
                     return;
                 };
                 let constraints = doc.three_d.edit.active_constraints(model.atoms.len());
-                softcore::Run::start_model(model, force_field, constraints)
+                softcore::Run::start_model(model, force_field, solvation, constraints)
             }
             softcore::Target::Assembly => match doc.assembly.built() {
-                Ok(built) => softcore::Run::start_assembly(&built, force_field),
+                Ok(built) => softcore::Run::start_assembly(&built, force_field, solvation),
                 Err(e) => Err(e.to_string()),
             },
         };
@@ -1989,7 +1994,12 @@ mod tests {
             component_of_molecule: vec![0, 0],
             ..Default::default()
         };
-        let run = softcore::Run::start_assembly(&built, three_d::ForceField::Uff).unwrap();
+        let run = softcore::Run::start_assembly(
+            &built,
+            three_d::ForceField::Uff,
+            three_d::Solvation::default(),
+        )
+        .unwrap();
         app.docs[0].softcore = Some(run);
         let ctx = egui::Context::default();
         while app.work_is_running() {
@@ -2262,6 +2272,32 @@ mod tests {
         assert_eq!(sanitized_ui_zoom(1.25), 1.25);
     }
 
+    /// The solvent chosen in the 3D panel is the one the next generation runs in, and the
+    /// model says so.
+    #[test]
+    fn the_solvent_chosen_is_the_one_generated_in() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_one_untitled();
+        let mol = &mut app.docs[0].editor.molecule;
+        let c = mol.add_atom("C".to_owned(), [0.0, 0.0], 0);
+        let o = mol.add_atom("O".to_owned(), [1.5, 0.0], 0);
+        mol.add_bond(c, o, chembuider_rs::BondOrder::Single);
+        let water = three_d::Solvation {
+            solvent: three_d::Solvent::Water,
+            distance_dependent: true,
+        };
+        app.run(&ctx, Command::SetSolvation(water));
+        assert_eq!(app.docs[0].three_d.solvation, water);
+        app.run(&ctx, Command::Generate3d);
+        while app.docs[0].three_d.is_running() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            app.poll_3d(&ctx);
+        }
+        let model = app.docs[0].three_d.model().expect(&app.status);
+        assert_eq!(model.force_field, three_d::ForceField::Mmff94);
+        assert_eq!(model.solvation, water);
+    }
+
     /// The 3D menu's generate → (poll) → optimise path, and the panel drawing the result.
     #[test]
     fn the_3d_menu_generates_and_optimises_in_the_background() {
@@ -2413,6 +2449,7 @@ mod tests {
                 },
             ],
             force_field: three_d::ForceField::Uff,
+            solvation: crate::three_d::Solvation::default(),
             energy: 0.0,
             energy_unit: String::new(),
             formula: "H2O".to_owned(),

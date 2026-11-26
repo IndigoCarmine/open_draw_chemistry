@@ -23,7 +23,9 @@ use crate::theme::{self, dark};
 use crate::three_d::edit::{self, Measure, MoleculeDrag, Motion, Target};
 use crate::three_d::geom::{self, Clash, Goal};
 use crate::three_d::interactions::{self, Interactions};
-use crate::three_d::{self, Constraint, Export3d, ForceField, JobState, Model3d};
+use crate::three_d::{
+    self, Constraint, Export3d, ForceField, JobState, Model3d, Solvation, Solvent,
+};
 use eframe::egui_wgpu::RenderState;
 
 /// Degrees one wheel notch (or step button) turns a bond; Shift for fine, Ctrl for coarse.
@@ -1262,6 +1264,18 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
             }
         });
         ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(t!("three_d.view.solvent"))
+                    .size(11.0)
+                    .color(ink.muted),
+            );
+            let mmff = job.is_none_or(|j| j.force_field != ForceField::Uff);
+            let mut solvation = job.map(|j| j.solvation).unwrap_or_default();
+            if solvation_picker(ui, "solvent", &mut solvation, mmff) {
+                out.push(Command::SetSolvation(solvation));
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .button(t!("three_d.view.regenerate"))
                 .on_hover_text(t!("three_d.view.regenerate_tip"))
@@ -1364,6 +1378,12 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
     } else {
         format!("E = {:.1} {}", m.energy, m.energy_unit)
     };
+    // The solvent the energy is in, unless a vacuum (MMFF's own).
+    let energy = if m.solvation.is_vacuum() {
+        energy
+    } else {
+        format!("{energy} · {}", solvation_text(m.solvation))
+    };
     ui.label(RichText::new(energy).monospace().size(12.0));
     let mut about = tn!(
         "three_d.view.about",
@@ -1383,6 +1403,59 @@ fn model_section(ui: &mut egui::Ui, doc: Option<&Document>, ink: &Ink, out: &mut
         )
         .on_hover_text(t!("three_d.view.stale_tip"));
     }
+}
+
+/// `solvent` as the solvent pickers show it: its name in the UI language and its ε, "water
+/// (ε 78.4)".
+fn solvent_text(solvent: Solvent) -> String {
+    format!("{} (ε {})", solvent.name(), solvent.dielectric())
+}
+
+/// `solvation` as the model's info shows it: [`solvent_text`], with "·r" after the ε when it
+/// is distance-dependent.
+fn solvation_text(solvation: Solvation) -> String {
+    let r = if solvation.distance_dependent {
+        "·r"
+    } else {
+        ""
+    };
+    format!(
+        "{} (ε {}{r})",
+        solvation.solvent.name(),
+        solvation.solvent.dielectric()
+    )
+}
+
+/// The solvent picker the 3D panel, the scan window and the conformer search share: a list of
+/// the solvents (`id_salt` tells this one apart) and the distance-dependent (ε·r) box, laid
+/// out in `ui` as it lays out. Greyed out, saying why, when `enabled` is false: under UFF,
+/// which has no electrostatics for a solvent to screen. Whether `solvation` was changed.
+pub(crate) fn solvation_picker(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    solvation: &mut Solvation,
+    enabled: bool,
+) -> bool {
+    let before = *solvation;
+    ui.add_enabled_ui(enabled, |ui| {
+        egui::ComboBox::from_id_salt(id_salt)
+            .selected_text(solvent_text(solvation.solvent))
+            .show_ui(ui, |ui| {
+                for solvent in Solvent::ALL {
+                    ui.selectable_value(&mut solvation.solvent, solvent, solvent_text(solvent));
+                }
+            })
+            .response
+            .on_hover_text(t!("three_d.view.solvent_tip"))
+            .on_disabled_hover_text(t!("three_d.view.solvent_uff_hint"));
+        ui.checkbox(
+            &mut solvation.distance_dependent,
+            t!("three_d.view.distance_dependent"),
+        )
+        .on_hover_text(t!("three_d.view.distance_dependent_tip"))
+        .on_disabled_hover_text(t!("three_d.view.solvent_uff_hint"));
+    });
+    *solvation != before
 }
 
 /// The panel body when there is no model to show: why, and what to do.
@@ -1433,6 +1506,13 @@ fn summary(ui: &mut egui::Ui, state: Option<&JobState>, stale: bool, can_render:
                         t!("three_d.view.force_field"),
                         model.force_field.id().to_owned(),
                     );
+                    if !model.solvation.is_vacuum() {
+                        row(
+                            ui,
+                            t!("three_d.view.solvent"),
+                            solvation_text(model.solvation),
+                        );
+                    }
                 });
             ui.add_space(10.0);
             if stale {
@@ -1475,6 +1555,7 @@ mod tests {
                 })
                 .collect(),
             force_field: ForceField::default(),
+            solvation: crate::three_d::Solvation::default(),
             energy: 0.0,
             energy_unit: String::new(),
             formula: String::new(),
@@ -1543,7 +1624,8 @@ mod tests {
     /// Pentane as the 3D view generates it (C0–C4 in a chain, then the hydrogens).
     fn pentane() -> Model3d {
         let drawn = include_str!("../../tests/data/drawn/pentane.mol");
-        three_d::generate_from_molfile(drawn, ForceField::Uff).expect("pentane")
+        three_d::generate_from_molfile(drawn, ForceField::Uff, crate::three_d::Solvation::default())
+            .expect("pentane")
     }
 
     /// A molecule a deletion cut in two is taken hold of as either half; before the deletion
@@ -1805,6 +1887,7 @@ mod tests {
                 .collect(),
             bonds: Vec::new(),
             force_field: ForceField::default(),
+            solvation: crate::three_d::Solvation::default(),
             energy: 0.0,
             energy_unit: String::new(),
             formula: "C4".to_owned(),
